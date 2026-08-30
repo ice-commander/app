@@ -1,0 +1,107 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<gresources>
+  <gresource prefix="/com/icecommander/gtk">
+    <file compressed="true" preprocess="xml-stripblanks">add.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">add-file.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">close.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">close-white.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">collapse.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">connect.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">copy.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">cut.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">delete-file.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">delete-folder.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">disconnect.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">done.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">file.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">fileexplorer.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">folder.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">ftp.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">music.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">login.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">list-icons.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">logout.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">next.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">open.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">open-document.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">os-android.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">os-console.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">os-iphone.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">os-linux.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">os-mac.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">os-win.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">pause.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">play.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">prev.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">paste.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">refresh.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">registry.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">print.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">edit-property.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">cellular-network.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">save.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">setting.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">stop.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">tune.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">unix-console.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">win-console.svg</file>
+
+    <file>app-logo.svg</file>
+    <file>app-logo-128.png</file>
+    <file>app-logo-512.png</file>
+    <file>tiles.svg</file>
+    <file>small-icons.svg</file>
+    
+    <file>medium-icons.svg</file>
+    
+    <file>thumbnails.svg</file>
+
+    <file>download.svg</file>
+    
+    <file>upload.svg</file>
+    
+    <file>software-installer.svg</file>
+
+    <file>webui/bundle.js</file>
+    <file compressed="true">webui/style.css</file>
+
+    <file>arrow-up.svg</file>
+
+    <file>arrow-left.svg</file>
+    <file>arrow-right.svg</file>
+
+    <file>edit-pencil.svg</file>
+
+    <file>home.svg</file>
+
+    <file>add-folder.svg</file>
+    <file>party-balloons.svg</file>
+
+    <file compressed="true" preprocess="xml-stripblanks">agreement.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">afternoon.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">display.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">edit-file.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">empty-star.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">expand.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">netdrive.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">night.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">at-home.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">ssd.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">star.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">sysinfo.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">processes.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">search.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">start.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">hidden.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">non-hidden.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">zoom-in.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">zoom-out.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">high-volume.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">low-volume.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">eject.svg</file>
+
+    <!-- Theme preview screenshots for the setup wizard's clickable theme picker. -->
+    <file>ice-commander-gtk-light.jpg</file>
+    <file>ice-commander-gtk-dark.jpg</file>
+  </gresource>
+</gresources>

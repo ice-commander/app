@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/com/fm-ui/gtk">
+    <file compressed="true" preprocess="xml-stripblanks">add-folder.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">arrow-left.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">arrow-right.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">arrow-up.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">at-home.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">close.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">connect.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">disconnect.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">download.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">edit-pencil.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">edit-property.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">empty-star.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">file.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">fileexplorer.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">folder.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">ftp.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">home.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">list-icons.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">medium-icons.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">netdrive.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">refresh.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">small-icons.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">ssd.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">star.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">start.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">thumbnails.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">upload.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">webdav.svg</file>
+  </gresource>
+</gresources>

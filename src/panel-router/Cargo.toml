@@ -1,0 +1,21 @@
+[package]
+name = "panel-router"
+version = "0.1.45"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Navigation stack router and filesystem providers for Ice Commander"
+
+[dependencies]
+gtk = { package = "gtk4", version = "0.9", features = ["v4_12"] }
+common = { workspace = true }
+client-config = { workspace = true }
+gtk-fm-ui = { workspace = true }
+fm-core = { workspace = true }
+panel-core = { workspace = true }
+relm4 = { workspace = true }
+chrono = "0.4"
+async-trait = "0.1"
+futures = "0.3"
+uuid = { version = "1", features = ["v4"] }
+

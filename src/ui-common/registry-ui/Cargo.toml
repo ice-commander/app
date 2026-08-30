@@ -1,0 +1,21 @@
+[package]
+name = "gtk-registry-ui"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Common Windows Registry Editor GTK4/Libadwaita UI View for Ice Commander"
+
+[dependencies]
+gtk = { package = "gtk4", version = "0.9", features = ["v4_12"] }
+adw = { package = "libadwaita", version = "0.7", features = ["v1_6"] }
+relm4 = { workspace = true }
+ic-model = { workspace = true }
+gdk-pixbuf = { version = "0.20", package = "gdk-pixbuf" }
+ic-i18n = { workspace = true }
+
+[dev-dependencies]
+ic-platform = { workspace = true }
+
+[build-dependencies]
+glib-build-tools = "0.20"

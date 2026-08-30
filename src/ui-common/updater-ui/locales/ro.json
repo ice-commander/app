@@ -1,0 +1,22 @@
+{
+  "updater.available_body_1": "O nouă versiune a",
+  "updater.available_body_2": "Doriți să îl descărcați și să îl instalați acum?",
+  "updater.available_title": "Actualizare software disponibilă",
+  "updater.download_dialog_title": "Se descarcă actualizarea",
+  "updater.downloading_label": "Se descarcă versiunea",
+  "updater.error_body": "Nu s-au putut verifica/descărca actualizările.",
+  "updater.error_title": "Verificarea actualizărilor a eșuat",
+  "updater.install_btn": "Descarcă și instalează",
+  "updater.install_dialog_title": "Se instalează actualizarea",
+  "updater.installing_label": "Se instalează pachetele de sistem...",
+  "updater.later_btn": "Mai târziu",
+  "updater.not_now_btn": "Nu acum",
+  "updater.ok_btn": "OK",
+  "updater.restart_btn": "Repornește aplicația",
+  "updater.success_body": "Actualizarea a fost instalată cu succes. Reporniți aplicația pentru a aplica modificările.",
+  "updater.success_title": "Actualizare instalată",
+  "updater.up_to_date_body_1": "este la zi.",
+  "updater.up_to_date_body_2": "Versiune",
+  "updater.up_to_date_body_3": "este cea mai recentă versiune.",
+  "updater.up_to_date_title": "La zi"
+}

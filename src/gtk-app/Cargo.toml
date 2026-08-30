@@ -1,0 +1,102 @@
+[package]
+name = "ice-commander-gtk"
+version = "0.7.112"
+edition = "2021"
+description = "Ice Commander - Dual-Pane File Manager"
+authors = ["Igor Savchenko <igor.savchenko@icecommander.com>"]
+license = "MIT OR Apache-2.0"
+publish = false
+build = "build.rs"
+default-run = "ice-commander"
+
+[[bin]]
+name = "ice-commander"
+path = "src/main.rs"
+
+[dependencies]
+gtk = { package = "gtk4", version = "0.9", features = ["v4_12"] }
+adw = { package = "libadwaita", version = "0.7", features = ["v1_6"] }
+libc = "0.2"
+tokio = { version = "1.36", features = ["full", "rt-multi-thread"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+common = { workspace = true }
+ic-model = { workspace = true }
+ic-utils = { workspace = true }
+sysinfo = "0.29"
+client-config = { workspace = true }
+ic-logging = { workspace = true }
+hostname = "0.4"
+gtk-fm-ui = { workspace = true }
+ic-i18n = { workspace = true }
+fm-core = { workspace = true }
+relm4 = { workspace = true }
+gtk-terminal-ui = { workspace = true }
+gtk-registry-ui = { workspace = true }
+gtk-process-ui = { workspace = true }
+gtk-updater-ui = { workspace = true }
+gtk-viewer-ui = { workspace = true }
+panel-router = { path = "../panel-router" }
+panel-server = { workspace = true }
+virtualfs = { workspace = true }
+md5 = "0.8.0"
+reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls-webpki-roots"] }
+# Connection-secret encryption at rest (machine-derived key) + protected export.
+secret-store = { workspace = true }
+transfer-core = { workspace = true }
+gtk-sysinfo-ui = { workspace = true }
+
+uuid = { version = "1.8", features = ["v4", "v5"] }
+async-trait = "0.1"
+ic-platform = { workspace = true, features = ["video-codecs"] }
+dirs = "6.0.0"
+chrono = { version = "0.4", features = ["serde"] }
+rodio = { version = "0.19", default-features = false, features = ["mp3", "flac", "vorbis", "wav", "symphonia-aac", "symphonia-isomp4"] }
+pdfium-render = { version = "0.9.2" }
+image = "0.24.2"
+kamadak-exif = "0.5"
+
+
+
+[build-dependencies]
+glib-build-tools = "0.20"
+winresource = "0.1"
+
+[package.metadata.bundle]
+name = "IceCommander"
+identifier = "org.icecommander.gtkapp"
+icon = ["assets/app-logo-512.png"]
+version = "0.1.45"
+copyright = "Copyright © 2026 Ice Commander"
+category = "Utility"
+short_description = "Dual-Pane File Manager"
+
+[package.metadata.deb]
+maintainer = "Ice Commander Team <support@icecommander.com>"
+copyright = "2026, Ice Commander Team"
+depends = "$auto, libgtk-4-1, libadwaita-1-0"
+section = "utils"
+priority = "optional"
+assets = [
+    ["../../bin/gtk-app/release/ice-commander", "/usr/bin/ice-commander", "755" ],
+    ["assets/com.icecommander.gtkapp.desktop", "usr/share/applications/com.icecommander.gtkapp.desktop", "644"],
+    ["assets/app-logo-512.png", "usr/share/icons/hicolor/512x512/apps/com.icecommander.gtkapp.png", "644"],
+    ["../../artifacts/libpdfium.so", "/usr/lib/ice-commander/libpdfium.so", "644"],
+    ["../../assets/licenses/*", "/usr/share/doc/ice-commander/licenses/", "644"]
+]
+
+[package.metadata.generate-rpm]
+assets = [
+    { source = "../../bin/gtk-app/release/ice-commander", dest = "/usr/bin/ice-commander", mode = "755" },
+    { source = "assets/com.icecommander.gtkapp.desktop", dest = "/usr/share/applications/com.icecommander.gtkapp.desktop", mode = "644" },
+    { source = "assets/app-logo-512.png", dest = "/usr/share/icons/hicolor/512x512/apps/com.icecommander.gtkapp.png", mode = "644" },
+    { source = "../../artifacts/libpdfium.so", dest = "/usr/lib/ice-commander/libpdfium.so", mode = "644" },
+    { source = "../../assets/licenses/*", dest = "/usr/share/doc/ice-commander/licenses/", mode = "644" }
+]
+
+[package.metadata.generate-rpm.requires]
+gtk4 = "*"
+libadwaita = "*"
+
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+libmpv2 = "6.0"

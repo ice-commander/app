@@ -1,0 +1,22 @@
+{
+  "updater.available_body_1": "Доступна нова версія",
+  "updater.available_body_2": "Бажаєте завантажити та встановити її зараз?",
+  "updater.available_title": "Доступне оновлення ПЗ",
+  "updater.download_dialog_title": "Завантаження оновлення",
+  "updater.downloading_label": "Завантаження версії",
+  "updater.error_body": "Не вдалося перевірити або завантажити оновлення.",
+  "updater.error_title": "Помилка оновлення",
+  "updater.install_btn": "Завантажити та встановити",
+  "updater.install_dialog_title": "Встановлення оновлення",
+  "updater.installing_label": "Встановлення системних пакетів...",
+  "updater.later_btn": "Пізніше",
+  "updater.not_now_btn": "Не зараз",
+  "updater.ok_btn": "OK",
+  "updater.restart_btn": "Перезапустити програму",
+  "updater.success_body": "Оновлення успішно встановлено. Будь ласка, перезапустіть програму, щоб застосувати зміни.",
+  "updater.success_title": "Оновлення встановлено",
+  "updater.up_to_date_body_1": "використовує актуальну версію.",
+  "updater.up_to_date_body_2": "Версія",
+  "updater.up_to_date_body_3": "є найновішою.",
+  "updater.up_to_date_title": "Оновлення не потрібне"
+}

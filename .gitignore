@@ -1,0 +1,24 @@
+node_modules
+bin
+distr
+.vscode
+Cargo.lock
+package-lock.json
+.env
+.DS_Store
+src/web-app/dist
+
+# Prebuilt native libraries for the Windows and macOS bundles (~190 MB, and
+# libmpv-2.dll is a 93 MB GPL build of libmpv). Deliberately kept out of the
+# repository: see THIRD-PARTY-LICENSES.md. Fetch them separately before
+# building those targets; Linux builds do not need them.
+artifacts/
+
+# Internal working notes — to be reworked before they are published.
+AGENTS.md
+user_preferences.md
+ARCHITECTURE.md
+GTK_CONCURRENCY.md
+USER_PREFERENCES.md
+specs/
+.claude/

@@ -1,0 +1,22 @@
+{
+  "updater.available_body_1": "Új verzió érhető el ehhez:",
+  "updater.available_body_2": "Szeretné letölteni és telepíteni most?",
+  "updater.available_title": "Szoftverfrissítés elérhető",
+  "updater.download_dialog_title": "Frissítés letöltése",
+  "updater.downloading_label": "Verzió letöltése",
+  "updater.error_body": "Nem sikerült ellenőrizni vagy letölteni a frissítéseket.",
+  "updater.error_title": "Frissítés sikertelen",
+  "updater.install_btn": "Letöltés és telepítés",
+  "updater.install_dialog_title": "Frissítés telepítése",
+  "updater.installing_label": "Rendszercsomagok telepítése...",
+  "updater.later_btn": "Később",
+  "updater.not_now_btn": "Most nem",
+  "updater.ok_btn": "OK",
+  "updater.restart_btn": "Alkalmazás újraindítása",
+  "updater.success_body": "A frissítés sikeresen telepítve. Kérjük, indítsa újra az alkalmazást a változtatások érvényesítéséhez.",
+  "updater.success_title": "Frissítés telepítve",
+  "updater.up_to_date_body_1": "naprakész.",
+  "updater.up_to_date_body_2": "A(z)",
+  "updater.up_to_date_body_3": "verzió a legújabb.",
+  "updater.up_to_date_title": "Naprakész"
+}

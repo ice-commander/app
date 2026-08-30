@@ -1,0 +1,22 @@
+{
+  "updater.available_body_1": "Une nouvelle version de",
+  "updater.available_body_2": "Voulez-vous la télécharger et l'installer maintenant ?",
+  "updater.available_title": "Mise à jour disponible",
+  "updater.download_dialog_title": "Téléchargement de la mise à jour",
+  "updater.downloading_label": "Téléchargement de la version",
+  "updater.error_body": "Impossible de vérifier ou de télécharger les mises à jour.",
+  "updater.error_title": "Échec de la mise à jour",
+  "updater.install_btn": "Télécharger & Installer",
+  "updater.install_dialog_title": "Installation de la mise à jour",
+  "updater.installing_label": "Installation des paquets système...",
+  "updater.later_btn": "Plus tard",
+  "updater.not_now_btn": "Plus tard",
+  "updater.ok_btn": "OK",
+  "updater.restart_btn": "Redémarrer l'application",
+  "updater.success_body": "La mise à jour a été installée avec succès. Veuillez redémarrer l'application pour appliquer les modifications.",
+  "updater.success_title": "Mise à jour installée",
+  "updater.up_to_date_body_1": "est à jour.",
+  "updater.up_to_date_body_2": "La version",
+  "updater.up_to_date_body_3": "est la plus récente.",
+  "updater.up_to_date_title": "À jour"
+}

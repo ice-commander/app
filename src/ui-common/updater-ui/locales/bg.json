@@ -1,0 +1,22 @@
+{
+  "updater.available_body_1": "Налична е нова версия на",
+  "updater.available_body_2": "Искате ли да я изтеглите и инсталирате сега?",
+  "updater.available_title": "Налична актуализация на софтуера",
+  "updater.download_dialog_title": "Изтегляне на актуализация",
+  "updater.downloading_label": "Изтегляне на версия",
+  "updater.error_body": "Неуспешна проверка или изтегляне на актуализации.",
+  "updater.error_title": "Актуализацията неуспешна",
+  "updater.install_btn": "Изтегляне и инсталиране",
+  "updater.install_dialog_title": "Инсталиране на актуализация",
+  "updater.installing_label": "Инсталиране на системни пакети...",
+  "updater.later_btn": "По-късно",
+  "updater.not_now_btn": "Не сега",
+  "updater.ok_btn": "ОК",
+  "updater.restart_btn": "Рестартиране на приложението",
+  "updater.success_body": "Актуализацията беше инсталирана успешно. Моля, рестартирайте приложението, за да приложите промените.",
+  "updater.success_title": "Актуализацията е инсталирана",
+  "updater.up_to_date_body_1": "е актуален.",
+  "updater.up_to_date_body_2": "Версия",
+  "updater.up_to_date_body_3": "е най-новата.",
+  "updater.up_to_date_title": "Актуален софтуер"
+}

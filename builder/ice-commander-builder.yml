@@ -1,0 +1,119 @@
+
+services:
+  deb:
+    image: debian13-builder
+    working_dir: /home/builder/
+    user: builder
+    entrypoint: ["/home/builder/workdir/builder/debian-gtk.sh"]
+    stdin_open: true
+    tty: true
+    volumes:
+      - ../:/home/builder/workdir
+  deb-webserver:
+    image: debian13-builder
+    working_dir: /home/builder/
+    user: builder
+    entrypoint: ["/home/builder/workdir/builder/debian-webserver.sh"]
+    stdin_open: true
+    tty: true
+    volumes:
+      - ../:/home/builder/workdir
+  deb-console:
+    image: debian13-builder
+    working_dir: /home/builder/
+    user: builder
+    entrypoint: ["/home/builder/workdir/builder/debian-console.sh"]
+    stdin_open: true
+    tty: true
+    volumes:
+      - ../:/home/builder/workdir
+  apt:
+    image: debian13-builder
+    working_dir: /home/builder
+    user: builder
+    entrypoint: ["/home/builder/workdir/builder/android.sh"]
+    stdin_open: true
+    tty: true
+    volumes:
+      - ../:/home/builder/workdir
+  rpm:
+    image: fedora41-builder
+    working_dir: /home/builder
+    user: builder
+    entrypoint: ["/home/builder/workdir/builder/fedora-gtk.sh"]
+    stdin_open: true
+    tty: true
+    volumes:
+      - ../:/home/builder/workdir
+  rpm-webserver:
+    image: fedora41-builder
+    working_dir: /home/builder
+    user: builder
+    entrypoint: ["/home/builder/workdir/builder/fedora-webserver.sh"]
+    stdin_open: true
+    tty: true
+    volumes:
+      - ../:/home/builder/workdir
+  rpm-console:
+    image: fedora41-builder
+    working_dir: /home/builder
+    user: builder
+    entrypoint: ["/home/builder/workdir/builder/fedora-console.sh"]
+    stdin_open: true
+    tty: true
+    volumes:
+      - ../:/home/builder/workdir
+  zst:
+    image: arch-builder
+    working_dir: /home/builder
+    user: builder
+    entrypoint: ["/home/builder/workdir/builder/arch-gtk.sh"]
+    stdin_open: true
+    tty: true
+    volumes:
+      - ../:/home/builder/workdir
+  zst-webserver:
+    image: arch-builder
+    working_dir: /home/builder
+    user: builder
+    entrypoint: ["/home/builder/workdir/builder/arch-webserver.sh"]
+    stdin_open: true
+    tty: true
+    volumes:
+      - ../:/home/builder/workdir
+  zst-console:
+    image: arch-builder
+    working_dir: /home/builder
+    user: builder
+    entrypoint: ["/home/builder/workdir/builder/arch-console.sh"]
+    stdin_open: true
+    tty: true
+    volumes:
+      - ../:/home/builder/workdir
+  exe:
+    image: msys-builder
+    working_dir: /home/builder
+    user: builder
+    entrypoint: ["/home/builder/workdir/builder/wine-msys-gtk.sh"]
+    stdin_open: true
+    tty: true
+    volumes:
+      - ../:/home/builder/workdir/
+  exe-webserver:
+    image: msys-builder
+    working_dir: /home/builder
+    user: builder
+    entrypoint: ["/home/builder/workdir/builder/wine-msys-webserver.sh"]
+    stdin_open: true
+    tty: true
+    volumes:
+      - ../:/home/builder/workdir/
+  exe-console:
+    image: msys-builder
+    working_dir: /home/builder
+    user: builder
+    entrypoint: ["/home/builder/workdir/builder/wine-msys-console.sh"]
+    stdin_open: true
+    tty: true
+    volumes:
+      - ../:/home/builder/workdir/

@@ -1,0 +1,17 @@
+[build]
+target-dir = "bin/target"
+
+[env]
+LIBSSH2_SYS_USE_PKG_CONFIG = "0"
+
+[target.aarch64-apple-darwin]
+rustflags = [
+    "-C", "link-arg=-Wl,-rpath,/Library/Developer/CommandLineTools/usr/lib/swift-5.5/macosx",
+    "-C", "link-arg=-Wl,-rpath,/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.5/macosx",
+]
+
+[target.x86_64-apple-darwin]
+rustflags = [
+    "-C", "link-arg=-Wl,-rpath,/Library/Developer/CommandLineTools/usr/lib/swift-5.5/macosx",
+    "-C", "link-arg=-Wl,-rpath,/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.5/macosx",
+]

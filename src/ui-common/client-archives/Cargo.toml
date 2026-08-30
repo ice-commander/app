@@ -1,0 +1,15 @@
+[package]
+name = "client-archives"
+version = "0.1.14"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+zip = "0.6.6"
+walkdir = "2.5.0"
+tar = "0.4.40"
+bzip2 = "0.4.4"
+flate2 = "1.0.30"
+
+

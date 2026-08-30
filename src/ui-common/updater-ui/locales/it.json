@@ -1,0 +1,22 @@
+{
+  "updater.available_body_1": "Una nuova versione di",
+  "updater.available_body_2": "Vuoi scaricarla e installarla ora?",
+  "updater.available_title": "Aggiornamento software disponibile",
+  "updater.download_dialog_title": "Download dell'aggiornamento",
+  "updater.downloading_label": "Download della versione",
+  "updater.error_body": "Impossibile verificare o scaricare gli aggiornamenti.",
+  "updater.error_title": "Aggiornamento fallito",
+  "updater.install_btn": "Scarica e installa",
+  "updater.install_dialog_title": "Installazione dell'aggiornamento",
+  "updater.installing_label": "Installazione dei pacchetti di sistema...",
+  "updater.later_btn": "Più tardi",
+  "updater.not_now_btn": "Non ora",
+  "updater.ok_btn": "OK",
+  "updater.restart_btn": "Riavvia l'applicazione",
+  "updater.success_body": "L'aggiornamento è stato installato con successo. Riavvia l'applicazione per applicare le modifiche.",
+  "updater.success_title": "Aggiornamento installato",
+  "updater.up_to_date_body_1": "è aggiornato.",
+  "updater.up_to_date_body_2": "La versione",
+  "updater.up_to_date_body_3": "è la più recente.",
+  "updater.up_to_date_title": "Aggiornato"
+}

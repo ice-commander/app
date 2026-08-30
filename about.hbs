@@ -1,0 +1,71 @@
+# Third-party licenses
+
+Ice Commander itself is licensed under **MIT OR Apache-2.0** (see
+[LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE)). This file
+lists everything else that ships with it.
+
+The Rust section below is generated — do not edit it by hand:
+
+```sh
+cargo about generate --config about.toml about.hbs -o THIRD-PARTY-LICENSES.md
+```
+
+## Bundled native libraries
+
+These are C libraries linked by the application. They are not Rust crates, so
+they are not covered by the generated section — this list is maintained by hand.
+
+| Library | License | Where | Linking |
+| --- | --- | --- | --- |
+| GTK 4, libadwaita, GLib, Pango, Cairo, gdk-pixbuf, librsvg | LGPL-2.1-or-later | all platforms | dynamic |
+| GStreamer (video playback) | LGPL-2.1-or-later | Linux | dynamic |
+| libmpv, FFmpeg, x264 (video playback) | **GPL-2.0-or-later** | Windows, macOS | dynamic |
+| PDFium | BSD-3-Clause | all platforms | dynamic |
+| libssh2 | BSD-3-Clause | all platforms | static |
+| OpenSSL 3.x | Apache-2.0 | where system TLS is used | dynamic |
+
+**LGPL components** are linked dynamically and shipped as separate shared
+libraries, so they may be replaced by the user. Their license texts are
+included in the release packages.
+
+**libmpv is the one GPL component.** It is used only by the video viewer on
+Windows and macOS ([`src/gtk-app/src/viewer/video.rs`](src/gtk-app/src/viewer/video.rs));
+the Linux build plays video through GStreamer and links no GPL code at all.
+The Windows and macOS bundles that ship a GPL build of libmpv are therefore
+distributed under GPL-2.0-or-later as a whole, and the corresponding source is
+available from the upstream mpv and FFmpeg projects.
+
+This affects redistribution of those *binary bundles* only. This source tree
+stays MIT OR Apache-2.0, and using the application — including inside a
+company — carries no obligation under any of these licenses.
+
+## Rust dependencies
+
+{{#each overview}}
+- **{{{name}}}** (`{{id}}`) — {{count}} crate{{#if (ne count 1)}}s{{/if}}
+{{/each}}
+
+### Crates
+
+| Crate | Version | License |
+| --- | --- | --- |
+{{#each crates}}
+| {{package.name}} | {{package.version}} | {{{license}}} |
+{{/each}}
+
+`Unknown` in the table means the crate declares no SPDX expression in its
+`Cargo.toml` — its terms come from the license file it ships, which is
+reproduced in full below. It does not mean the license is unidentified.
+
+### License texts
+
+Each license appears once below; the table above says which crates it covers.
+
+{{#each overview}}
+#### {{{name}}} (`{{id}}`)
+
+```
+{{{text}}}
+```
+
+{{/each}}

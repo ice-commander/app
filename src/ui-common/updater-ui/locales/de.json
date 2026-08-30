@@ -1,0 +1,22 @@
+{
+  "updater.available_body_1": "Eine neue Version von",
+  "updater.available_body_2": "Möchten Sie diese jetzt herunterladen und installieren?",
+  "updater.available_title": "Softwareaktualisierung verfügbar",
+  "updater.download_dialog_title": "Update wird heruntergeladen",
+  "updater.downloading_label": "Version wird heruntergeladen",
+  "updater.error_body": "Updates konnten nicht überprüft oder heruntergeladen werden.",
+  "updater.error_title": "Softwareaktualisierung fehlgeschlagen",
+  "updater.install_btn": "Herunterladen & Installieren",
+  "updater.install_dialog_title": "Update wird installiert",
+  "updater.installing_label": "Systempakete werden installiert...",
+  "updater.later_btn": "Später",
+  "updater.not_now_btn": "Nicht jetzt",
+  "updater.ok_btn": "OK",
+  "updater.restart_btn": "Anwendung neu starten",
+  "updater.success_body": "Das Update wurde erfolgreich installiert. Bitte starten Sie die Anwendung neu, um die Änderungen zu übernehmen.",
+  "updater.success_title": "Update installiert",
+  "updater.up_to_date_body_1": "ist auf dem neuesten Stand.",
+  "updater.up_to_date_body_2": "Version",
+  "updater.up_to_date_body_3": "ist die neueste Version.",
+  "updater.up_to_date_title": "Auf dem neuesten Stand"
+}

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Ice Commander
+Comment=Ice Commander - Dual-Pane File Manager
+Exec=ice-commander
+Icon=com.icecommander.gtkapp
+Terminal=false
+Type=Application
+Categories=System;Utility;Security;Network;Internet
+StartupNotify=true

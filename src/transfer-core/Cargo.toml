@@ -1,0 +1,16 @@
+[package]
+name = "transfer-core"
+version = "0.1.0"
+edition = "2021"
+description = "Toolkit-free copy/move engine shared by the GTK app and its test harnesses"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+name = "transfer_core"
+path = "src/lib.rs"
+
+[dependencies]
+common = { workspace = true }
+fm-core = { workspace = true }
+tokio = { workspace = true }

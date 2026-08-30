@@ -1,0 +1,22 @@
+{
+  "updater.available_body_1": "Даступна новая версія",
+  "updater.available_body_2": "Хочаце спампаваць і ўсталяваць яе зараз?",
+  "updater.available_title": "Даступна абнаўленне ПЗ",
+  "updater.download_dialog_title": "Спампоўванне абнаўлення",
+  "updater.downloading_label": "Спампоўванне версіі",
+  "updater.error_body": "Не ўдалося праверыць або спампаваць абнаўленне.",
+  "updater.error_title": "Памылка абнаўлення",
+  "updater.install_btn": "Спампаваць і ўсталяваць",
+  "updater.install_dialog_title": "Усталёўка абнаўлення",
+  "updater.installing_label": "Усталёўка сістэмных пакетаў...",
+  "updater.later_btn": "Пазней",
+  "updater.not_now_btn": "Не зараз",
+  "updater.ok_btn": "ОК",
+  "updater.restart_btn": "Перазапусціць праграму",
+  "updater.success_body": "Абнаўленне было паспяхова ўсталявана. Калі ласка, перазапусціце праграму, каб прымяніць змены.",
+  "updater.success_title": "Абнаўленне ўсталявана",
+  "updater.up_to_date_body_1": "выкарыстоўвае актуальную версію.",
+  "updater.up_to_date_body_2": "Версія",
+  "updater.up_to_date_body_3": "з'яўляецца самай апошняй.",
+  "updater.up_to_date_title": "Абнаўленне не патрабуецца"
+}

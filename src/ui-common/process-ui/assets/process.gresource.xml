@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/com/process-ui/gtk">
+    <file compressed="true" preprocess="xml-stripblanks">arrow-left.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">close.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">refresh.svg</file>
+  </gresource>
+</gresources>

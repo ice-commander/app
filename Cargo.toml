@@ -1,0 +1,84 @@
+[workspace]
+members = [
+    "src/gtk-app",
+    "src/webserver-app",
+    "src/console-app",
+    "src/secret-store",
+    "src/transfer-core",
+    "src/panel-core",
+    "src/panel-router",
+    "src/panel-server",
+    "src/virtualfs",
+    "src/ui-common/client-archives",
+    "src/common/client-config",
+    "src/common/logging",
+    "src/common/ic-model",
+    "src/common/ic-platform",
+    "src/common/common",
+    "src/common/utils",
+    "src/ui-common/i18n",
+    "src/ui-common/fm-core",
+    "src/ui-common/fm-ui",
+    "src/ui-common/sysinfo-ui",
+	"src/ui-common/terminal-ui",
+	"src/ui-common/registry-ui",
+	"src/ui-common/viewer-ui",
+	"src/ui-common/process-ui",
+	"src/ui-common/updater-ui"
+]
+resolver = "2"
+
+[workspace.dependencies]
+actix-web = "4.5.1"
+actix-web-httpauth = "0.8.1"
+actix-ws = "0.3"
+bytes = { version = "1.6.0", features = ["serde"] }
+jsonwebtoken = "9.3.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.36", features = ["full"] }
+rand = "0.9.2"
+dotenvy = "0.15"
+rust-i18n = "3"
+# relm4: UI framework the shared ui-common components target. Pairs with gtk4 0.9 /
+# libadwaita 0.7 (see Cargo.lock). Required as a workspace dep because every ui crate
+# declares `relm4 = { workspace = true }`; without it the whole workspace fails to resolve.
+relm4 = "0.9"
+
+# Common P2P dependencies
+common = { path = "src/common/common" }
+ic-utils = { path = "src/common/utils" }
+client-config = { path = "src/common/client-config" }
+ic-logging = { path = "src/common/logging" }
+ic-model = { path = "src/common/ic-model" }
+ic-platform = { path = "src/common/ic-platform" }
+# The p2p protocol itself: commands, node model, signalling, crypto, BSON wire format.
+# Capability handlers served over p2p; installed by the app at startup.
+client-archives = { path = "src/ui-common/client-archives" }
+
+# panel-core (GTK-free routing core: NavPath, RouterState, path helpers)
+panel-core = { path = "src/panel-core" }
+
+# panel-router (GTK routing logic layer)
+panel-router = { path = "src/panel-router" }
+
+# panel-server (GTK-free actix HTTP/WS server + ApiCmd/DTOs)
+panel-server = { path = "src/panel-server" }
+secret-store = { path = "src/secret-store" }
+transfer-core = { path = "src/transfer-core" }
+
+# virtualfs (all FileSystemRpc providers: local, archive, drives-root, network)
+virtualfs = { path = "src/virtualfs" }
+
+# UI dependencies
+fm-core = { path = "src/ui-common/fm-core" }
+gtk-viewer-ui = { path = "src/ui-common/viewer-ui" }
+gtk-fm-ui = { path = "src/ui-common/fm-ui", features = ["support-archives"] }
+ic-i18n = { path = "src/ui-common/i18n" }
+gtk-sysinfo-ui = { path = "src/ui-common/sysinfo-ui" }
+gtk-terminal-ui = { path = "src/ui-common/terminal-ui" }
+gtk-registry-ui = { path = "src/ui-common/registry-ui" }
+gtk-process-ui = { path = "src/ui-common/process-ui" }
+gtk-updater-ui = { path = "src/ui-common/updater-ui" }
+
+

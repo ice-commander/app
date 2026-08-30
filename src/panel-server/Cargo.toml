@@ -1,0 +1,17 @@
+[package]
+name = "panel-server"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+
+# GTK-free HTTP/WS server for the two-pane web UI: the actix routes + WebSocket
+# registry + notifier, the `ApiCmd` command enum and the JSON DTOs. Clients own the
+# command dispatcher (GTK app: on the GLib loop; webserver-app: a tokio LocalSet) and
+[dependencies]
+actix-web = { workspace = true }
+actix-ws = { workspace = true }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.36", features = ["full", "rt-multi-thread"] }
+async-trait = "0.1"

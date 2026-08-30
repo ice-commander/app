@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/com/sysinfo-ui/gtk">
+    <file compressed="true" preprocess="xml-stripblanks">arrow-left.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">motherboard.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">os-android.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">os-console.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">os-iphone.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">os-linux.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">os-mac.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">os-win.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">system-task.svg</file>
+  </gresource>
+</gresources>

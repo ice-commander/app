@@ -1,0 +1,22 @@
+{
+  "updater.available_body_1": "Nová verze",
+  "updater.available_body_2": "Chcete ji nyní stáhnout a nainstalovat?",
+  "updater.available_title": "Dostupná aktualizace softwaru",
+  "updater.download_dialog_title": "Stahování aktualizace",
+  "updater.downloading_label": "Stahování verze",
+  "updater.error_body": "Nepodařilo se zkontrolovat nebo stáhnout aktualizace.",
+  "updater.error_title": "Aktualizace selhala",
+  "updater.install_btn": "Stáhnout a nainstalovat",
+  "updater.install_dialog_title": "Instalace aktualizace",
+  "updater.installing_label": "Instalace systémových balíčků...",
+  "updater.later_btn": "Později",
+  "updater.not_now_btn": "Nyní ne",
+  "updater.ok_btn": "OK",
+  "updater.restart_btn": "Restartovat aplikaci",
+  "updater.success_body": "Aktualizace byla úspěšně nainstalována. Restartujte aplikaci pro projev změn.",
+  "updater.success_title": "Aktualizace nainstalována",
+  "updater.up_to_date_body_1": "je aktuální.",
+  "updater.up_to_date_body_2": "Verze",
+  "updater.up_to_date_body_3": "je nejnovější.",
+  "updater.up_to_date_title": "Aktuální"
+}

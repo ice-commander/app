@@ -1,0 +1,55 @@
+[package]
+name = "console-app"
+version = "0.7.92"
+edition = "2021"
+publish = false
+description = "Ice Commander Console - Dual-Pane Terminal File Manager (TUI, à la Midnight Commander)"
+authors = ["Igor Savchenko <igor.savchenko@icecommander.com>"]
+license = "MIT OR Apache-2.0"
+
+# The real console build: a terminal TUI (ratatui) over the same GTK-free `panel-core` the
+# GTK app and the web-server use. Two `RouterState` cores drive two panels; keypresses call
+# the core's navigation/file ops directly — no HTTP, no `panel-server`, no `ApiCmd`. v1 =
+[[bin]]
+name = "ice-console"
+path = "src/main.rs"
+
+[dependencies]
+panel-core = { workspace = true }
+virtualfs = { path = "../virtualfs", default-features = false }
+fm-core = { workspace = true }
+ic-platform = { workspace = true }
+client-config = { workspace = true }
+secret-store = { workspace = true }
+tokio = { version = "1.36", features = ["full", "rt-multi-thread"] }
+ratatui = "0.29"
+serde = { version = "1.0", features = ["derive"] }
+# Same crossterm ratatui 0.29 uses, plus its async EventStream (so PTY output and keystrokes
+# can be awaited together). vt100 is the terminal emulator: it turns the raw PTY byte stream
+# into a virtual cell grid we blit into the panel — no coordinate math of our own.
+crossterm = { version = "0.28", features = ["event-stream"] }
+vt100 = "0.15"
+futures = "0.3"
+chrono = "0.4"
+dirs = "6.0.0"
+
+# Linux packaging — a single GTK-free binary, exactly like the web-server build. No
+# gtk/adwaita/desktop/icon: it's a terminal app, launched from a shell (ssh2 uses
+# vendored-openssl, so no runtime ssl dep either). The distro scripts copy the release
+# binary to bin/console-app/release/ before packaging.
+[package.metadata.deb]
+name = "ice-commander-console"
+maintainer = "Ice Commander Team <support@icecommander.com>"
+copyright = "2026, Ice Commander Team"
+depends = "$auto"
+section = "utils"
+priority = "optional"
+assets = [
+    ["../../bin/console-app/release/ice-console", "/usr/bin/ice-console", "755"],
+]
+
+[package.metadata.generate-rpm]
+name = "ice-commander-console"
+assets = [
+    { source = "../../bin/console-app/release/ice-console", dest = "/usr/bin/ice-console", mode = "755" },
+]

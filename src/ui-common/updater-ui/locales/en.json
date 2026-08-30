@@ -1,0 +1,22 @@
+{
+  "updater.available_body_1": "A new version of",
+  "updater.available_body_2": "Would you like to download and install it now?",
+  "updater.available_title": "Software Update Available",
+  "updater.download_dialog_title": "Downloading Update",
+  "updater.downloading_label": "Downloading version",
+  "updater.error_body": "Could not check/download updates.",
+  "updater.error_title": "Update Check Failed",
+  "updater.install_btn": "Download & Install",
+  "updater.install_dialog_title": "Installing Update",
+  "updater.installing_label": "Installing system packages...",
+  "updater.later_btn": "Later",
+  "updater.not_now_btn": "Not Now",
+  "updater.ok_btn": "OK",
+  "updater.restart_btn": "Restart Application",
+  "updater.success_body": "The update was installed successfully. Please restart the application to apply changes.",
+  "updater.success_title": "Update Installed",
+  "updater.up_to_date_body_1": "is up to date.",
+  "updater.up_to_date_body_2": "Version",
+  "updater.up_to_date_body_3": "is the latest version.",
+  "updater.up_to_date_title": "Up to Date"
+}

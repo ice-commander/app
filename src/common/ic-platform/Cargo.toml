@@ -1,0 +1,29 @@
+[package]
+name = "ic-platform"
+version = "0.1.0"
+edition = "2021"
+description = "Local platform services: filesystem, pseudo-terminal, system information, registry"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[features]
+default = []
+# GStreamer-backed codec detection for the video viewer.
+video-codecs = ["dep:gstreamer"]
+
+[dependencies]
+ic-model = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+sysinfo = "0.29"
+portable-pty = "0.9.0"
+chrono = "0.4"
+network-interface = "1.1.1"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gstreamer = { package = "gstreamer", version = "0.22", optional = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+winreg = "0.52"
+
+[dev-dependencies]
+tempfile = "3"

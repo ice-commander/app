@@ -1,0 +1,16 @@
+[package]
+name = "panel-core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+
+# GTK-free heart of the two-pane router: the flat NavPath model, the routing state
+# (navigation, history, selection memory) and the path helpers. Holds providers as
+# `fm_core::FileSystemRpc` objects only — no widgets — so it builds without GTK and is
+# the core a headless (console/web-server) backend drives, the same one the GTK app's
+[dependencies]
+common = { workspace = true }
+fm-core = { workspace = true }
+virtualfs = { path = "../virtualfs", default-features = false }
+async-trait = "0.1"

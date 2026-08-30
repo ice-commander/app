@@ -1,0 +1,22 @@
+{
+  "updater.available_body_1": "Доступна новая версия",
+  "updater.available_body_2": "Хотите скачать и установить её сейчас?",
+  "updater.available_title": "Доступно обновление ПО",
+  "updater.download_dialog_title": "Скачивание обновления",
+  "updater.downloading_label": "Скачивание версии",
+  "updater.error_body": "Не удалось проверить или скачать обновление.",
+  "updater.error_title": "Ошибка обновления",
+  "updater.install_btn": "Скачать и установить",
+  "updater.install_dialog_title": "Установка обновления",
+  "updater.installing_label": "Установка системных пакетов...",
+  "updater.later_btn": "Позже",
+  "updater.not_now_btn": "Не сейчас",
+  "updater.ok_btn": "ОК",
+  "updater.restart_btn": "Перезапустить приложение",
+  "updater.success_body": "Обновление было успешно установлено. Пожалуйста, перезапустите приложение, чтобы применить изменения.",
+  "updater.success_title": "Обновление установлено",
+  "updater.up_to_date_body_1": "использует актуальную версию.",
+  "updater.up_to_date_body_2": "Версия",
+  "updater.up_to_date_body_3": "является самой последней.",
+  "updater.up_to_date_title": "Обновлений не требуется"
+}

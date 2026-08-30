@@ -1,0 +1,22 @@
+{
+  "updater.available_body_1": "Нова верзија",
+  "updater.available_body_2": "Желите ли да га преузмете и инсталирате сада?",
+  "updater.available_title": "Доступно је ажурирање софтвера",
+  "updater.download_dialog_title": "Преузимање ажурирања",
+  "updater.downloading_label": "Преузимање верзије",
+  "updater.error_body": "Није могуће проверити/преузети ажурирања.",
+  "updater.error_title": "Провера ажурирања није успела",
+  "updater.install_btn": "Преузми и инсталирај",
+  "updater.install_dialog_title": "Инсталирање ажурирања",
+  "updater.installing_label": "Инсталирање системских пакета...",
+  "updater.later_btn": "Касније",
+  "updater.not_now_btn": "Не сада",
+  "updater.ok_btn": "У реду",
+  "updater.restart_btn": "Поново покрени апликацију",
+  "updater.success_body": "Ажурирање је успешно инсталирано. Поново покрените апликацију да бисте применили измене.",
+  "updater.success_title": "Ажурирање инсталирано",
+  "updater.up_to_date_body_1": "је ажурна.",
+  "updater.up_to_date_body_2": "Верзија",
+  "updater.up_to_date_body_3": "је најновија верзија.",
+  "updater.up_to_date_title": "Ажурно"
+}

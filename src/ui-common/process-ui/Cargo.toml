@@ -1,0 +1,17 @@
+[package]
+name = "gtk-process-ui"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Common Process Manager GTK4/Libadwaita UI View for Ice Commander"
+
+[dependencies]
+gtk = { package = "gtk4", version = "0.9", features = ["v4_12"] }
+adw = { package = "libadwaita", version = "0.7", features = ["v1_6"] }
+relm4 = { workspace = true }
+serde = { workspace = true }
+ic-i18n = { workspace = true }
+
+[build-dependencies]
+glib-build-tools = "0.20"

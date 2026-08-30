@@ -1,0 +1,63 @@
+# cargo-about configuration — generates THIRD-PARTY-LICENSES.md.
+#
+#   cargo about generate --config about.toml about.hbs -o THIRD-PARTY-LICENSES.md
+#
+# `accepted` is the allow-list: a crate offering several licenses gets the
+# first match from this list, and an unlisted license fails the run. That is
+# the point — a new dependency under GPL/AGPL breaks the build instead of
+# quietly changing what the project may be licensed as.
+
+accepted = [
+    "Apache-2.0",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "BSL-1.0",
+    "0BSD",
+    "Unlicense",
+    "CC0-1.0",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "OpenSSL",
+    # File-level copyleft only (symphonia, resvg/usvg, webpki-roots …). It binds
+    # those crates' own files, not this project's code.
+    "MPL-2.0",
+    # libmpv2 / libmpv2-sys — the Rust bindings to libmpv, used by the video
+    # viewer on Windows and macOS only. LGPL is satisfied here because this
+    # source tree is published and can be relinked.
+    "LGPL-2.1",
+    "LGPL-2.1-or-later",
+]
+
+# The desktop app is built for these; the list decides which platform-only
+# dependencies show up in the report.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-pc-windows-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+]
+
+# Build scripts and test-only crates ship no code to users.
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+
+# Workspace crates carry no license file of their own; they are this project.
+private = { ignore = true }
+
+# ── Clarifications ────────────────────────────────────────────────────────
+# Crates whose license text cannot be matched automatically (custom LICENSE
+# files that are not a verbatim copy of a standard text).
+
+# ring ships a single LICENSE file combining several upstream notices, so its
+# expression is an AND — every part has to be accepted explicitly.
+[ring]
+accepted = ["ISC", "MIT", "OpenSSL", "OpenSSL-standalone", "SSLeay-standalone"]
+
+[display-info.clarify]
+license = "Apache-2.0"
+files = [{ path = "LICENSE", license = "Apache-2.0", checksum = "1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6" }]
+

@@ -1,0 +1,22 @@
+{
+  "updater.available_body_1": "Dostępna jest nowa wersja",
+  "updater.available_body_2": "Czy chcesz ją teraz pobrać i zainstalować?",
+  "updater.available_title": "Dostępna aktualizacja oprogramowania",
+  "updater.download_dialog_title": "Pobieranie aktualizacji",
+  "updater.downloading_label": "Pobieranie wersji",
+  "updater.error_body": "Nie udało się sprawdzić lub pobrać aktualizacji.",
+  "updater.error_title": "Błąd aktualizacji",
+  "updater.install_btn": "Pobierz i zainstaluj",
+  "updater.install_dialog_title": "Instalowanie aktualizacji",
+  "updater.installing_label": "Instalowanie pakietów systemowych...",
+  "updater.later_btn": "Później",
+  "updater.not_now_btn": "Nie teraz",
+  "updater.ok_btn": "OK",
+  "updater.restart_btn": "Uruchom ponownie aplikację",
+  "updater.success_body": "Aktualizacja została pomyślnie zainstalowana. Uruchom ponownie aplikację, aby zastosować zmiany.",
+  "updater.success_title": "Aktualizacja zainstalowana",
+  "updater.up_to_date_body_1": "jest aktualne.",
+  "updater.up_to_date_body_2": "Wersja",
+  "updater.up_to_date_body_3": "jest najnowsza.",
+  "updater.up_to_date_title": "Oprogramowanie aktualne"
+}
