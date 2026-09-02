@@ -56,6 +56,7 @@ pub struct Shared {
     pub selected_files: Rc<RefCell<Vec<(String, bool)>>>,
     pub select_mask_enabled: Rc<Cell<bool>>,
     pub source: Rc<RefCell<SourceInfo>>,
+    pub clip_count: Rc<Cell<usize>>,
 }
 
 #[derive(Clone)]
@@ -68,6 +69,10 @@ struct Views {
     selection_model: gtk::MultiSelection,
     breadcrumbs_box: gtk::Box,
     source_label: gtk::Label,
+    cut_badge: gtk::Label,
+    copy_badge: gtk::Label,
+    btn_paste: gtk::Button,
+    btn_clip_clear: gtk::Button,
     status_label: gtk::Label,
     item_progress_bars: Rc<RefCell<HashMap<String, gtk::ProgressBar>>>,
     filter_bar: gtk::Box,
@@ -107,6 +112,7 @@ impl FmPanelInit {
 
 #[derive(Debug)]
 pub enum FmPanelInput {
+    ClipboardState { count: usize, mine: bool, cut: bool },
     Listing {
         path: String,
         entries: Vec<RemoteFileEntry>,
@@ -169,6 +175,11 @@ pub enum FmPanelInput {
 
 #[derive(Debug)]
 pub enum FmPanelOutput {
+    Cut,
+    Copy,
+    Paste,
+    PasteInto(String),
+    ClipboardClear,
     NavigateEnter(String),
     NavigateUp,
     NavigateLevel(usize),
@@ -644,6 +655,7 @@ impl SimpleComponent for FmPanelModel {
         let panel_id = init.panel_id.clone();
 
         let shared = Shared {
+            clip_count: Rc::new(Cell::new(0)),
             panel_id: panel_id.clone(),
             config: config.clone(),
             current_path: Rc::new(RefCell::new(Vec::new())),
@@ -904,6 +916,81 @@ impl SimpleComponent for FmPanelModel {
             header.pack_start(&btn_delete);
         }
 
+        let clip_sep_l = gtk::Separator::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .margin_top(8)
+            .margin_bottom(8)
+            .build();
+        if with_default_toolbar {
+            header.pack_start(&clip_sep_l);
+        }
+
+        let btn_cut = mk_icon_btn(
+            "/com/fm-ui/gtk/cut.svg",
+            crate::i18n::tr("fm.clip_cut").to_string(),
+        );
+        let btn_copy = mk_icon_btn(
+            "/com/fm-ui/gtk/copy.svg",
+            crate::i18n::tr("fm.clip_copy").to_string(),
+        );
+        let btn_paste = mk_icon_btn(
+            "/com/fm-ui/gtk/paste.svg",
+            crate::i18n::tr("fm.clip_paste").to_string(),
+        );
+        let btn_clip_clear = mk_icon_btn(
+            "/com/fm-ui/gtk/cancel.svg",
+            crate::i18n::tr("fm.clip_clear").to_string(),
+        );
+        btn_cut.set_sensitive(false);
+        btn_copy.set_sensitive(false);
+
+        let mk_badge = || {
+            let l = gtk::Label::new(None);
+            l.add_css_class("clip-badge");
+            l.set_halign(gtk::Align::End);
+            l.set_valign(gtk::Align::Start);
+            l.set_visible(false);
+            l
+        };
+        let cut_badge = mk_badge();
+        let copy_badge = mk_badge();
+        let cut_overlay = gtk::Overlay::new();
+        cut_overlay.set_child(Some(&btn_cut));
+        cut_overlay.add_overlay(&cut_badge);
+        let copy_overlay = gtk::Overlay::new();
+        copy_overlay.set_child(Some(&btn_copy));
+        copy_overlay.add_overlay(&copy_badge);
+
+        for (b, out) in [
+            (&btn_cut, 0u8),
+            (&btn_copy, 1u8),
+            (&btn_paste, 2u8),
+            (&btn_clip_clear, 3u8),
+        ] {
+            let sender = sender.clone();
+            b.connect_clicked(move |_| {
+                let _ = sender.output(match out {
+                    0 => FmPanelOutput::Cut,
+                    1 => FmPanelOutput::Copy,
+                    2 => FmPanelOutput::Paste,
+                    _ => FmPanelOutput::ClipboardClear,
+                });
+            });
+        }
+
+        let clip_sep_r = gtk::Separator::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .margin_top(8)
+            .margin_bottom(8)
+            .build();
+        if with_default_toolbar {
+            header.pack_start(&cut_overlay);
+            header.pack_start(&copy_overlay);
+            header.pack_start(&btn_paste);
+            header.pack_start(&btn_clip_clear);
+            header.pack_start(&clip_sep_r);
+        }
+
         let btn_chmod = mk_icon_btn(
             "/com/fm-ui/gtk/edit-property.svg",
             "Change Permissions / Attributes (Chmod)".to_string(),
@@ -1077,6 +1164,44 @@ impl SimpleComponent for FmPanelModel {
         let selection_model = gtk::MultiSelection::new(Some(sort_model));
         list_view.set_model(Some(&selection_model));
 
+        let attach_paste_menu = {
+            let sender = sender.clone();
+            let shared_bg = shared.clone();
+            move |target: &gtk::Widget| {
+                let sender = sender.clone();
+                let shared_bg = shared_bg.clone();
+                let bg = gtk::GestureClick::builder().button(3).build();
+                bg.set_propagation_phase(gtk::PropagationPhase::Bubble);
+                bg.connect_pressed(move |g, _, x, y| {
+                    if shared_bg.clip_count.get() == 0 {
+                        return;
+                    }
+                    let menu = gtk::Popover::builder()
+                        .position(gtk::PositionType::Bottom)
+                        .has_arrow(true)
+                        .build();
+                    let item = gtk::Button::builder()
+                        .label(&*crate::i18n::tr("fm.clip_paste"))
+                        .has_frame(false)
+                        .build();
+                    let m = menu.clone();
+                    let s = sender.clone();
+                    item.connect_clicked(move |_| {
+                        m.popdown();
+                        let _ = s.output(FmPanelOutput::Paste);
+                    });
+                    menu.set_child(Some(&item));
+                    if let Some(w) = g.widget() {
+                        menu.set_parent(&w);
+                    }
+                    menu.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+                    menu.popup();
+                });
+                target.add_controller(bg);
+            }
+        };
+        attach_paste_menu(list_view.clone().upcast_ref::<gtk::Widget>());
+
         let item_progress_bars: Rc<RefCell<HashMap<String, gtk::ProgressBar>>> =
             Rc::new(RefCell::new(HashMap::new()));
 
@@ -1174,6 +1299,7 @@ impl SimpleComponent for FmPanelModel {
             .max_columns(20)
             .min_columns(1)
             .build();
+        attach_paste_menu(grid_view.clone().upcast_ref::<gtk::Widget>());
         let scrolled_grid = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
             .child(&grid_view)
@@ -1188,6 +1314,8 @@ impl SimpleComponent for FmPanelModel {
         {
             let shared_sel = shared.clone();
             let btn_delete_c = btn_delete.clone();
+            let btn_cut_c = btn_cut.clone();
+            let btn_copy_c = btn_copy.clone();
             let btn_rename_c = btn_rename.clone();
             let btn_chmod_c = btn_chmod.clone();
             let sender_sel = sender.clone();
@@ -1208,6 +1336,8 @@ impl SimpleComponent for FmPanelModel {
                 btn_delete_c.set_sensitive(count > 0);
                 btn_rename_c.set_sensitive(count == 1);
                 btn_chmod_c.set_sensitive(count == 1);
+                btn_cut_c.set_sensitive(count > 0);
+                btn_copy_c.set_sensitive(count > 0);
                 let cursor = if bitset.size() > 0 {
                     sm.item(bitset.nth(0))
                         .and_then(|o| o.downcast::<crate::file_entry::FileEntry>().ok())
@@ -1494,6 +1624,10 @@ impl SimpleComponent for FmPanelModel {
             selection_model,
             breadcrumbs_box,
             source_label,
+            cut_badge,
+            copy_badge,
+            btn_paste,
+            btn_clip_clear,
             status_label,
             item_progress_bars,
             filter_bar: filter_bar.clone(),
@@ -1549,6 +1683,20 @@ impl SimpleComponent for FmPanelModel {
 
     fn update(&mut self, message: Self::Input, sender: ComponentSender<Self>) {
         match message {
+            FmPanelInput::ClipboardState { count, mine, cut } => {
+                let state = fm_core::clipboard::badge_state(count, mine, cut);
+                let label = count.to_string();
+                for (badge, shown) in [
+                    (&self.views.cut_badge, state.cut_badge),
+                    (&self.views.copy_badge, state.copy_badge),
+                ] {
+                    badge.set_text(&label);
+                    badge.set_visible(shown);
+                }
+                self.views.btn_paste.set_sensitive(state.paste_enabled);
+                self.views.btn_clip_clear.set_visible(state.clear_visible);
+                self.shared.clip_count.set(count);
+            }
             FmPanelInput::AddAddressEndWidget(widget) => {
                 self.address_row.append(&widget);
             }

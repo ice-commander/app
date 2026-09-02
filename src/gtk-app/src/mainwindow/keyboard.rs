@@ -18,6 +18,7 @@ pub(super) fn setup_keyboard(
     on_expand: std::rc::Rc<dyn Fn(super::ActivePanelSide)>,
     on_collapse: std::rc::Rc<dyn Fn()>,
     expanded_side: std::rc::Rc<std::cell::Cell<Option<super::ActivePanelSide>>>,
+    clipboard: std::rc::Rc<fm_core::clipboard::Clipboard>,
 ) {
     let key_controller = gtk::EventControllerKey::new();
     key_controller.set_propagation_phase(gtk::PropagationPhase::Capture);
@@ -28,6 +29,7 @@ pub(super) fn setup_keyboard(
     let window_pressed = window.clone();
     let config_pressed = config.clone();
     let app_pressed = app.clone();
+    let clip_keys = clipboard.clone();
     let active_panel_pressed = active_panel.clone();
     let selector_updaters_pressed = selector_updaters.clone();
     let shift_held_pressed = shift_held.clone();
@@ -167,6 +169,34 @@ pub(super) fn setup_keyboard(
                     "go_root_unix" => {
                         active_fm.open_path("/".to_string());
                         return gtk::glib::Propagation::Stop;
+                    }
+                    "clip_cut" | "clip_copy" | "clip_paste" => {
+                        let editing = gtk::prelude::GtkWindowExt::focus(&window_pressed)
+                            .map_or(false, |w| w.is::<gtk::Editable>() || w.is::<gtk::TextView>());
+                        let dialog_up = adw::prelude::AdwApplicationWindowExt::visible_dialog(&window_pressed)
+                            .is_some();
+                        if editing || dialog_up {
+                            return gtk::glib::Propagation::Proceed;
+                        }
+                        if action_id == "clip_paste" {
+                            if clip_keys.count() == 0 {
+                                return gtk::glib::Propagation::Proceed;
+                            }
+                            let Some(win) = active_fm.window() else {
+                                return gtk::glib::Propagation::Proceed;
+                            };
+                            crate::clipboard_ops::paste_into(&win, &clip_keys, &active_fm, None);
+                            return gtk::glib::Propagation::Stop;
+                        }
+                        let kind = if action_id == "clip_cut" {
+                            fm_core::clipboard::ClipKind::Cut
+                        } else {
+                            fm_core::clipboard::ClipKind::Copy
+                        };
+                        if crate::clipboard_ops::take(&clip_keys, &active_fm, kind) {
+                            return gtk::glib::Propagation::Stop;
+                        }
+                        return gtk::glib::Propagation::Proceed;
                     }
                     _ => {}
                 }

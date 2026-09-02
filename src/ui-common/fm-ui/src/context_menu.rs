@@ -5,22 +5,13 @@ use relm4::ComponentSender;
 use crate::fm_view::{FmPanelModel, FmPanelOutput, Shared};
 
 fn unique_copy_name(name: &str, is_dir: bool, existing: &[String]) -> String {
-    let (stem, ext) = match (is_dir, name.rfind('.')) {
-        (false, Some(i)) if i > 0 => (&name[..i], &name[i..]),
-        _ => (name, ""),
-    };
-    let mut n = 1;
-    loop {
-        let candidate = if n == 1 {
+    fm_core::names::first_free(name, is_dir, existing, |stem, ext, n| {
+        if n == 1 {
             format!("{stem} copy{ext}")
         } else {
             format!("{stem} copy {n}{ext}")
-        };
-        if !existing.iter().any(|e| e == &candidate) {
-            return candidate;
         }
-        n += 1;
-    }
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -169,6 +160,37 @@ pub fn create_context_menu(
         });
     });
     vbox.append(&btn_dup);
+
+    if shared.clip_count.get() > 0 {
+        let btn_paste = create_btn_with_label(
+            &crate::i18n::tr("fm.clip_paste"),
+            "edit-paste-symbolic",
+            "",
+        );
+        let pop_p = popover.clone();
+        let sender_p = sender.clone();
+        btn_paste.connect_clicked(move |_| {
+            pop_p.popdown();
+            let _ = sender_p.output(FmPanelOutput::Paste);
+        });
+        vbox.append(&btn_paste);
+
+        if is_dir && name != ".." {
+            let btn_paste_into = create_btn_with_label(
+                &crate::i18n::trf("fm.clip_paste_into", &[("name", name)]),
+                "edit-paste-symbolic",
+                "",
+            );
+            let pop_pi = popover.clone();
+            let sender_pi = sender.clone();
+            let target = name.to_string();
+            btn_paste_into.connect_clicked(move |_| {
+                pop_pi.popdown();
+                let _ = sender_pi.output(FmPanelOutput::PasteInto(target.clone()));
+            });
+            vbox.append(&btn_paste_into);
+        }
+    }
 
     let btn_del = create_btn_with_label(
         &crate::i18n::tr("fm.context.delete"),

@@ -59,6 +59,12 @@ pub fn show_help_dialog(parent_window: &impl IsA<gtk::Window>, config: &client_c
     if !filter_keys.is_empty() {
         body_lines.push(format!("- **{}**: {}", filter_keys, crate::i18n::tr("help.action_filter_files")));
     }
+    for id in ["clip_cut", "clip_copy", "clip_paste"] {
+        let keys = get_keys(id);
+        if !keys.is_empty() {
+            body_lines.push(format!("- **{}**: {}", keys, crate::hotkey::description(id)));
+        }
+    }
     let conn_keys = get_keys("manage_connections");
     if !conn_keys.is_empty() {
         body_lines.push(format!("- **{}**: {}", conn_keys, crate::i18n::tr("help.action_manage_connections")));

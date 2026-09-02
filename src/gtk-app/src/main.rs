@@ -8,6 +8,7 @@ mod api;
 mod app;
 
 pub use common::AppError;
+mod clipboard_ops;
 mod connection_manager;
 mod device_name;
 mod drives;

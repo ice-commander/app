@@ -14,12 +14,35 @@ use std::sync::Arc;
 
 
 
+
+pub struct TransferSource {
+    pub items: Vec<(String, bool, u64, Option<u32>)>,
+    pub parent: String,
+    pub provider: std::rc::Rc<dyn fm_core::rpc::FileSystemRpc>,
+    pub refresh: Option<Rc<panel_router::PanelRouter>>,
+    pub on_done: Option<Rc<dyn Fn()>>,
+    pub dest_names: std::collections::HashMap<String, String>,
+}
+
+impl TransferSource {
+    pub fn from_panel(fm: &Rc<panel_router::PanelRouter>) -> Self {
+        Self {
+            items: get_selected_items_info(fm),
+            parent: fm.current_path_string(),
+            provider: fm.provider(),
+            refresh: Some(fm.clone()),
+            on_done: None,
+            dest_names: std::collections::HashMap::new(),
+        }
+    }
+}
+
 pub fn trigger_copy(
     window: &adw::ApplicationWindow,
     active_fm: &Rc<panel_router::PanelRouter>,
     inactive_fm: &Rc<panel_router::PanelRouter>,
 ) {
-    show_transfer_dialog(window, active_fm, inactive_fm, false);
+    show_transfer_dialog(window, TransferSource::from_panel(active_fm), inactive_fm, false, None);
 }
 
 pub fn trigger_move(
@@ -27,7 +50,7 @@ pub fn trigger_move(
     active_fm: &Rc<panel_router::PanelRouter>,
     inactive_fm: &Rc<panel_router::PanelRouter>,
 ) {
-    show_transfer_dialog(window, active_fm, inactive_fm, true);
+    show_transfer_dialog(window, TransferSource::from_panel(active_fm), inactive_fm, true, None);
 }
 
 fn show_error_dialog(window: &adw::ApplicationWindow, title: &str, message: &str) {
@@ -51,13 +74,14 @@ fn get_selected_items_info(fm: &Rc<panel_router::PanelRouter>) -> Vec<(String, b
         .collect()
 }
 
-fn show_transfer_dialog(
+pub fn show_transfer_dialog(
     window: &adw::ApplicationWindow,
-    active_fm: &Rc<panel_router::PanelRouter>,
+    source: TransferSource,
     inactive_fm: &Rc<panel_router::PanelRouter>,
     is_move: bool,
+    dest_override: Option<String>,
 ) {
-    let selected_items = get_selected_items_info(active_fm);
+    let selected_items = source.items.clone();
 
     let action_name = if is_move { "move" } else { "copy" };
 
@@ -71,8 +95,8 @@ fn show_transfer_dialog(
         return;
     }
 
-    let src_parent = active_fm.current_path_string();
-    let dest_parent = inactive_fm.current_path_string();
+    let src_parent = source.parent.clone();
+    let dest_parent = dest_override.unwrap_or_else(|| inactive_fm.current_path_string());
 
     let content_box = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
@@ -196,7 +220,7 @@ fn show_transfer_dialog(
     let dialog_c = dialog.clone();
     let action_name_str = action_name.to_string();
 
-    let src_provider = active_fm.provider();
+    let src_provider = source.provider.clone();
 
     let scan_future = scan_items(
         src_provider,
@@ -245,7 +269,7 @@ fn show_transfer_dialog(
         }
     });
 
-    let active_fm_c = active_fm.clone();
+    let source_c = std::rc::Rc::new(source);
     let inactive_fm_c = inactive_fm.clone();
     let window_c = window.clone();
     let cancellation_flag_response = cancellation_flag.clone();
@@ -261,7 +285,7 @@ fn show_transfer_dialog(
             if !dest_path_str.is_empty() && !items.is_empty() {
                 show_progress_dialog(
                     &window_c,
-                    active_fm_c.clone(),
+                    source_c.clone(),
                     inactive_fm_c.clone(),
                     items,
                     src_parent.clone(),
@@ -634,7 +658,7 @@ fn run_transfer_with_progress(
 
 fn show_progress_dialog(
     window: &adw::ApplicationWindow,
-    active_fm: Rc<panel_router::PanelRouter>,
+    source: Rc<TransferSource>,
     inactive_fm: Rc<panel_router::PanelRouter>,
     items: Vec<TransferItem>,
     src_parent: String,
@@ -642,8 +666,11 @@ fn show_progress_dialog(
     selected_items_info: Vec<(String, bool, u64, Option<u32>)>,
     is_move: bool,
 ) {
-    let src_provider = active_fm.provider();
+    let src_provider = source.provider.clone();
     let dest_provider = inactive_fm.provider();
+
+    let mut items = items;
+    transfer_core::retarget_top_level(&mut items, &source.dest_names);
 
     let src_is_local = src_provider.is_local() && !items.is_empty();
     let dest_is_local = dest_provider.is_local();
@@ -671,7 +698,8 @@ fn show_progress_dialog(
         }
 
         if failed_top_levels.is_empty() {
-            active_fm.refresh_spawned();
+            if let Some(r) = &source.refresh { r.refresh_spawned(); }
+            if let Some(f) = &source.on_done { f(); }
             inactive_fm.refresh_spawned();
             return;
         } else {
@@ -685,12 +713,13 @@ fn show_progress_dialog(
     }
 
     if remaining_items.is_empty() {
-        active_fm.refresh_spawned();
+        if let Some(r) = &source.refresh { r.refresh_spawned(); }
+        if let Some(f) = &source.on_done { f(); }
         inactive_fm.refresh_spawned();
         return;
     }
 
-    let active_fm_c = active_fm.clone();
+    let source_r = source.clone();
     let inactive_fm_c = inactive_fm.clone();
     run_transfer_with_progress(
         window,
@@ -700,7 +729,8 @@ fn show_progress_dialog(
         dest_parent,
         is_move,
         move || {
-            active_fm_c.refresh_spawned();
+            if let Some(r) = &source_r.refresh { r.refresh_spawned(); }
+            if let Some(f) = &source_r.on_done { f(); }
             inactive_fm_c.refresh_spawned();
         },
     );

@@ -85,7 +85,49 @@ pub fn get_default_hotkeys() -> Vec<HotKey> {
             description: "Save file in editor".to_string(),
             keys: "Ctrl+S".to_string(),
         },
+        HotKey {
+            id: "clip_cut".to_string(),
+            description: "Cut selected files".to_string(),
+            keys: "Ctrl+X".to_string(),
+        },
+        HotKey {
+            id: "clip_copy".to_string(),
+            description: "Copy selected files".to_string(),
+            keys: "Ctrl+C".to_string(),
+        },
+        HotKey {
+            id: "clip_paste".to_string(),
+            description: "Paste files into active panel".to_string(),
+            keys: "Ctrl+V".to_string(),
+        },
     ]
+}
+
+fn shares_combo_by_design(a: &str, b: &str) -> bool {
+    const PAIRS: [[&str; 2]; 2] = [
+        ["toggle_video_fullscreen", "expand_terminal"],
+        ["find_files", "editor_save"],
+    ];
+    PAIRS.iter().any(|p| p.contains(&a) && p.contains(&b))
+}
+
+fn conflict_in(hotkeys: &[HotKey], id: &str, keys: &str) -> Option<String> {
+    hotkeys
+        .iter()
+        .find(|h| {
+            h.id != id
+                && !shares_combo_by_design(&h.id, id)
+                && h.keys.eq_ignore_ascii_case(keys)
+        })
+        .map(|h| h.id.clone())
+}
+
+pub fn conflicting_action(
+    config: &client_config::AppConfig,
+    id: &str,
+    keys: &str,
+) -> Option<String> {
+    conflict_in(&get_hotkeys(config), id, keys)
 }
 
 pub fn get_hotkeys(config: &client_config::AppConfig) -> Vec<HotKey> {
@@ -240,6 +282,137 @@ mod tests {
         let mut ids = std::collections::HashSet::new();
         for h in &hotkeys {
             assert!(ids.insert(h.id.clone()), "duplicate hotkey id: {}", h.id);
+        }
+    }
+
+    #[test]
+    fn default_hotkeys_contains_the_clipboard_actions() {
+        let ids: Vec<_> = get_default_hotkeys().into_iter().map(|h| (h.id, h.keys)).collect();
+        for (id, keys) in [("clip_cut", "Ctrl+X"), ("clip_copy", "Ctrl+C"), ("clip_paste", "Ctrl+V")] {
+            assert!(
+                ids.iter().any(|(i, k)| i == id && k == keys),
+                "missing default '{id}' bound to {keys}"
+            );
+        }
+    }
+
+    #[test]
+    fn clipboard_defaults_do_not_collide_with_other_defaults() {
+        let hotkeys = get_default_hotkeys();
+        let clip: Vec<_> = hotkeys.iter().filter(|h| h.id.starts_with("clip_")).collect();
+        assert_eq!(clip.len(), 3);
+        for c in &clip {
+            for other in hotkeys.iter().filter(|h| !h.id.starts_with("clip_")) {
+                assert!(
+                    !other.keys.eq_ignore_ascii_case(&c.keys),
+                    "'{}' shadows '{}' — both bound to {}",
+                    other.id,
+                    c.id,
+                    c.keys
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_default_hotkey_is_described_in_all_fifteen_locales() {
+        let locales: [(&str, &str); 15] = [
+            ("en", include_str!("../locales/en.json")),
+            ("ru", include_str!("../locales/ru.json")),
+            ("pl", include_str!("../locales/pl.json")),
+            ("cs", include_str!("../locales/cs.json")),
+            ("sk", include_str!("../locales/sk.json")),
+            ("de", include_str!("../locales/de.json")),
+            ("es", include_str!("../locales/es.json")),
+            ("uk", include_str!("../locales/uk.json")),
+            ("it", include_str!("../locales/it.json")),
+            ("fr", include_str!("../locales/fr.json")),
+            ("ro", include_str!("../locales/ro.json")),
+            ("hu", include_str!("../locales/hu.json")),
+            ("be", include_str!("../locales/be.json")),
+            ("bg", include_str!("../locales/bg.json")),
+            ("sr", include_str!("../locales/sr.json")),
+        ];
+        let ids: Vec<String> = get_default_hotkeys().into_iter().map(|h| h.id).collect();
+        for (lang, raw) in locales {
+            let map: std::collections::HashMap<String, String> =
+                serde_json::from_str(raw).unwrap_or_else(|e| panic!("{lang}.json is not valid: {e}"));
+            let keys: Vec<String> = ids
+                .iter()
+                .map(|id| format!("hotkey.{id}"))
+                .chain(["settings.hotkey_conflict".to_string()])
+                .collect();
+            for key in keys {
+                let text = map.get(&key).unwrap_or_else(|| panic!("{lang}.json is missing {key}"));
+                assert!(!text.trim().is_empty(), "{lang}.json has an empty {key}");
+                if key == "settings.hotkey_conflict" {
+                    for ph in ["%{key}", "%{action}"] {
+                        assert!(text.contains(ph), "{lang}.json {key} lost the {ph} placeholder");
+                    }
+                }
+            }
+        }
+    }
+
+    fn hk(id: &str, keys: &str) -> HotKey {
+        HotKey { id: id.to_string(), description: String::new(), keys: keys.to_string() }
+    }
+
+    #[test]
+    fn a_free_combination_conflicts_with_nothing() {
+        let list = [hk("refresh", "Ctrl+R"), hk("clip_copy", "Ctrl+C")];
+        assert_eq!(conflict_in(&list, "clip_copy", "Ctrl+Alt+K"), None);
+    }
+
+    #[test]
+    fn a_taken_combination_names_the_action_holding_it() {
+        let list = [hk("filter_files", "Ctrl+F"), hk("clip_copy", "Ctrl+C")];
+        assert_eq!(
+            conflict_in(&list, "clip_copy", "Ctrl+F"),
+            Some("filter_files".to_string())
+        );
+    }
+
+    #[test]
+    fn rebinding_an_action_to_its_own_key_is_not_a_conflict() {
+        let list = [hk("clip_copy", "Ctrl+C")];
+        assert_eq!(conflict_in(&list, "clip_copy", "Ctrl+C"), None);
+    }
+
+    #[test]
+    fn the_match_ignores_case() {
+        let list = [hk("filter_files", "ctrl+f")];
+        assert_eq!(
+            conflict_in(&list, "clip_copy", "Ctrl+F"),
+            Some("filter_files".to_string())
+        );
+    }
+
+    #[test]
+    fn the_two_pairs_that_share_a_combo_by_design_are_allowed() {
+        let list = [
+            hk("toggle_video_fullscreen", "Alt+Return"),
+            hk("find_files", "Ctrl+S"),
+        ];
+        assert_eq!(conflict_in(&list, "expand_terminal", "Alt+Return"), None);
+        assert_eq!(conflict_in(&list, "editor_save", "Ctrl+S"), None);
+    }
+
+    #[test]
+    fn a_design_pair_still_conflicts_with_an_unrelated_action() {
+        let list = [hk("find_files", "Ctrl+S")];
+        assert_eq!(
+            conflict_in(&list, "clip_cut", "Ctrl+S"),
+            Some("find_files".to_string())
+        );
+    }
+
+    #[test]
+    fn every_clipboard_default_is_free_against_the_shipped_set() {
+        let defaults = get_default_hotkeys();
+        for id in ["clip_cut", "clip_copy", "clip_paste"] {
+            let keys = defaults.iter().find(|h| h.id == id).unwrap().keys.clone();
+            assert_eq!(conflict_in(&defaults, id, &keys), None, "{id} ships shadowed");
         }
     }
 

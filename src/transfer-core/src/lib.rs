@@ -58,6 +58,28 @@ pub struct TransferItem {
     pub permissions: Option<u32>,
 }
 
+pub fn retarget_top_level(
+    items: &mut [TransferItem],
+    renames: &std::collections::HashMap<String, String>,
+) {
+    for item in items.iter_mut() {
+        let (top, rest) = match item.relative_path.split_once('/') {
+            Some((t, r)) => (t.to_string(), Some(r.to_string())),
+            None => (item.relative_path.clone(), None),
+        };
+        let Some(new_top) = renames.get(&top) else {
+            continue;
+        };
+        item.relative_path = match &rest {
+            Some(r) => format!("{new_top}/{r}"),
+            None => new_top.clone(),
+        };
+        if rest.is_none() {
+            item.name = new_top.clone();
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum CopyMessage {
     FileStart { name: String, size: u64 },
@@ -696,4 +718,79 @@ pub async fn execute_transfer_offthread(
     handle
         .await
         .map_err(|e| AppError::Other(format!("transfer task: {e}")))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn item(src: &str, rel: &str, name: &str, is_dir: bool) -> TransferItem {
+        TransferItem {
+            src_path: src.to_string(),
+            relative_path: rel.to_string(),
+            name: name.to_string(),
+            is_dir,
+            size: 0,
+            permissions: None,
+        }
+    }
+
+    fn renames(pairs: &[(&str, &str)]) -> std::collections::HashMap<String, String> {
+        pairs.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect()
+    }
+
+    #[test]
+    fn retargeting_a_file_never_touches_what_it_reads() {
+        let mut items = [item("/docs/notes.txt", "notes.txt", "notes.txt", false)];
+        retarget_top_level(&mut items, &renames(&[("notes.txt", "notes (1).txt")]));
+        assert_eq!(items[0].src_path, "/docs/notes.txt");
+        assert_eq!(items[0].relative_path, "notes (1).txt");
+        assert_eq!(items[0].name, "notes (1).txt");
+    }
+
+    #[test]
+    fn a_folder_is_renamed_and_its_children_follow_without_being_renamed() {
+        let mut items = [
+            item("/docs/proj", "proj", "proj", true),
+            item("/docs/proj/a.txt", "proj/a.txt", "a.txt", false),
+            item("/docs/proj/sub", "proj/sub", "sub", true),
+            item("/docs/proj/sub/b.txt", "proj/sub/b.txt", "b.txt", false),
+        ];
+        retarget_top_level(&mut items, &renames(&[("proj", "proj (1)")]));
+        assert_eq!(items[0].relative_path, "proj (1)");
+        assert_eq!(items[0].name, "proj (1)");
+        assert_eq!(items[1].relative_path, "proj (1)/a.txt");
+        assert_eq!(items[1].name, "a.txt");
+        assert_eq!(items[2].relative_path, "proj (1)/sub");
+        assert_eq!(items[2].name, "sub");
+        assert_eq!(items[3].relative_path, "proj (1)/sub/b.txt");
+        assert_eq!(items[3].name, "b.txt");
+        for it in &items {
+            assert!(it.src_path == "/docs/proj" || it.src_path.starts_with("/docs/proj/"));
+        }
+    }
+
+    #[test]
+    fn an_item_outside_the_map_is_left_alone() {
+        let mut items = [item("/docs/other.txt", "other.txt", "other.txt", false)];
+        retarget_top_level(&mut items, &renames(&[("notes.txt", "notes (1).txt")]));
+        assert_eq!(items[0].relative_path, "other.txt");
+        assert_eq!(items[0].name, "other.txt");
+    }
+
+    #[test]
+    fn only_the_first_segment_is_matched() {
+        let mut items = [item("/docs/a/notes.txt", "a/notes.txt", "notes.txt", false)];
+        retarget_top_level(&mut items, &renames(&[("notes.txt", "notes (1).txt")]));
+        assert_eq!(items[0].relative_path, "a/notes.txt", "a nested namesake must not be hit");
+        assert_eq!(items[0].name, "notes.txt");
+    }
+
+    #[test]
+    fn an_empty_map_changes_nothing() {
+        let mut items = [item("/docs/notes.txt", "notes.txt", "notes.txt", false)];
+        retarget_top_level(&mut items, &std::collections::HashMap::new());
+        assert_eq!(items[0].relative_path, "notes.txt");
+        assert_eq!(items[0].name, "notes.txt");
+    }
 }

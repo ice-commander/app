@@ -54,6 +54,7 @@ fn show_key_capture_dialog(
 
     let key_controller = gtk::EventControllerKey::new();
     let dialog_clone = capture_dialog.clone();
+    let warn_label = instruction_label.clone();
     let hotkey_id = hotkey_id.to_string();
     let on_rebound = Rc::new(on_rebound);
     let config_capture = config.clone();
@@ -77,6 +78,19 @@ fn show_key_capture_dialog(
 
         let bound_str = crate::hotkey::keyval_to_string(keyval, state);
         if !bound_str.is_empty() {
+            if let Some(other) =
+                crate::hotkey::conflicting_action(&config_capture, &hotkey_id, &bound_str)
+            {
+                warn_label.set_label(&crate::i18n::trf(
+                    "settings.hotkey_conflict",
+                    &[
+                        ("key", &bound_str),
+                        ("action", &crate::hotkey::description(&other)),
+                    ],
+                ));
+                warn_label.add_css_class("error");
+                return gtk::glib::Propagation::Stop;
+            }
             let mut current = crate::hotkey::get_hotkeys(&config_capture);
             if let Some(hk) = current.iter_mut().find(|h| h.id == hotkey_id) {
                 hk.keys = bound_str;

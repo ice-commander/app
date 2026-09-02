@@ -585,6 +585,28 @@ impl PanelRouter {
             .or_else(|| self.state.get_last_selected(&abs))
     }
 
+    pub fn set_clipboard_state(&self, count: usize, mine: bool, cut: bool) {
+        let _ = self
+            .fm
+            .sender()
+            .send(gtk_fm_ui::FmPanelInput::ClipboardState { count, mine, cut });
+    }
+
+    pub fn panel_id(&self) -> &str {
+        &self.panel_id
+    }
+
+    pub fn current_entry_names(&self) -> Vec<String> {
+        self.state
+            .path
+            .borrow()
+            .active()
+            .entries
+            .iter()
+            .map(|e| e.name.clone())
+            .collect()
+    }
+
     pub fn selected_entries(&self) -> Vec<FileEntry> {
         use chrono::TimeZone;
         let sel = self.selection.borrow();
