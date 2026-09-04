@@ -14,6 +14,11 @@ cargo build --release \
     --manifest-path /home/builder/workdir/src/gtk-app/Cargo.toml \
     --target x86_64-pc-windows-gnu
 
+# fakelzo replaces the GPL liblzo2-2.dll that the GTK stack drags in; setup.nsi excludes the
+# real one from the artifacts tree and packs this instead. See src/fakelzo/README.md.
+echo "--- Building fakelzo (LGPL-clean liblzo2 replacement) ---"
+./src/fakelzo/build-windows.sh
+
 echo "--- Compiling 64-bit Windows Installer with NSIS natively! ---"
 mkdir -p ./distr
 

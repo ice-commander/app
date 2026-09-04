@@ -330,9 +330,12 @@ This section is deliberately blunt. These are current limitations, not a roadmap
 - **The registry editor is Windows-only**; there is no entry point elsewhere.
 - **Video plays through GStreamer on Linux and libmpv on Windows and macOS.** On Linux,
   missing codecs are detected and the application offers to install them.
-- **libmpv is GPL-licensed.** The Windows and macOS bundles that ship it are distributed
-  under GPL-2.0-or-later as a whole. The Linux build links no GPL code. This source tree
-  stays MIT OR Apache-2.0 — see [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md).
+- **No GPL code ships on any platform.** mpv and FFmpeg are built LGPL and decode-only —
+  the viewer never encodes, so none of the GPL parts (x264, x265, libpostproc) are needed.
+  The one GPL library GTK used to drag in, `liblzo2`, is replaced by our own MIT stub
+  ([`src/fakelzo/`](src/fakelzo/)) in both desktop bundles. Linux links nothing of the sort;
+  it plays video through the system GStreamer. This source tree stays MIT OR Apache-2.0 —
+  see [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md).
 
 ### Incomplete
 

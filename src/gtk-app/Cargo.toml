@@ -1,6 +1,6 @@
 [package]
 name = "ice-commander-gtk"
-version = "0.7.112"
+version = "0.7.122"
 edition = "2021"
 description = "Ice Commander - Dual-Pane File Manager"
 authors = ["Igor Savchenko <igor.savchenko@icecommander.com>"]

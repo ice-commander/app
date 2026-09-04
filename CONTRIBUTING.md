@@ -36,10 +36,11 @@ Unless you state otherwise, any contribution you submit is licensed under the
 same terms as the project — **MIT OR Apache-2.0**, at the user's option. See
 [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE).
 
-Note on binaries: the Windows and macOS release bundles link `libmpv`, which is
-built under GPL-2.0-or-later, so those *bundles* are distributed under GPL-2+
-terms even though this source tree is permissive. The Linux build does not use
-libmpv at all. See [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md).
+Note on binaries: the release bundles carry no GPL code. `libmpv` and FFmpeg are
+built LGPL and decode-only, and `liblzo2` (GPL-2.0-or-later), which GTK drags in
+through the cairo script interpreter, is replaced in both desktop bundles by our own
+MIT stub (`src/fakelzo/`). The Linux build uses neither. See
+[THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md).
 
 The name "Ice Commander" and the project logo are not covered by the code
 license.

@@ -19,7 +19,10 @@ they are not covered by the generated section — this list is maintained by han
 | --- | --- | --- | --- |
 | GTK 4, libadwaita, GLib, Pango, Cairo, gdk-pixbuf, librsvg | LGPL-2.1-or-later | all platforms | dynamic |
 | GStreamer (video playback) | LGPL-2.1-or-later | Linux | dynamic |
-| libmpv, FFmpeg, x264 (video playback) | **GPL-2.0-or-later** | Windows, macOS | dynamic |
+| libmpv, FFmpeg (video playback, decode-only) | LGPL-2.1-or-later | Windows, macOS | dynamic |
+| dav1d (AV1 decoder) | BSD-2-Clause | macOS | dynamic |
+| fakelzo (our stand-in for lzo2) | MIT | Windows, macOS | dynamic |
+| FreeType | FTL (used under FTL, not the GPL-2.0 alternative) | Windows, macOS | dynamic |
 | PDFium | BSD-3-Clause | all platforms | dynamic |
 | libssh2 | BSD-3-Clause | all platforms | static |
 | OpenSSL 3.x | Apache-2.0 | where system TLS is used | dynamic |
@@ -28,12 +31,36 @@ they are not covered by the generated section — this list is maintained by han
 libraries, so they may be replaced by the user. Their license texts are
 included in the release packages.
 
-**libmpv is the one GPL component.** It is used only by the video viewer on
-Windows and macOS ([`src/gtk-app/src/viewer/video.rs`](src/gtk-app/src/viewer/video.rs));
-the Linux build plays video through GStreamer and links no GPL code at all.
-The Windows and macOS bundles that ship a GPL build of libmpv are therefore
-distributed under GPL-2.0-or-later as a whole, and the corresponding source is
-available from the upstream mpv and FFmpeg projects.
+**The media stack is LGPL.** The video viewer
+([`src/gtk-app/src/viewer/video.rs`](src/gtk-app/src/viewer/video.rs)) uses libmpv on
+Windows and macOS, and both bundles ship an LGPL build of it: mpv is configured with
+`-Dgpl=false` and its FFmpeg carries no `--enable-gpl`, so the GPL parts — the x264 and
+x265 encoders, libpostproc, the DVD/CD readers — are simply not built. The viewer only
+ever decodes; the macOS build contains zero encoders and zero muxers. On Linux video
+plays through GStreamer, which is not bundled.
+
+**No GPL code ships in any bundle.** The one GPL library that used to arrive was `liblzo2`
+(GPL-2.0-or-later), and it was never something the application asked for — GTK links it
+through the cairo script interpreter (`libgtk-4 → libcairo-script-interpreter → liblzo2`),
+a debugging facility nothing here drives.
+
+It is replaced on both desktop platforms by [`src/fakelzo/`](src/fakelzo/), our own
+MIT-licensed stand-in exporting the only two symbols the interpreter imports
+(`lzo2a_decompress`, `lzo2a_999_compress`), which report failure instead of compressing.
+No LZO code was used or consulted; only the two function signatures are shared.
+
+That the code path is unreachable was **measured, not assumed**: a build with an
+instrumented stand-in logged zero calls across a full session — both panels, image and PDF
+preview, video playback, the editor, settings and the terminal. On macOS the replacement
+happens in `builder/osx.sh` before signing; on Windows `src/gtk-app/setup.nsi` excludes the
+real DLL from the installer archive entirely rather than overwriting it after install.
+
+The cost is that cairo-script serialisation does not work in these builds. Nothing the
+application offers uses it.
+
+Per-component versions, build configuration and the location of the corresponding source
+for everything shipped in a bundle are listed in
+[`assets/licenses/BUNDLED-COMPONENTS.txt`](assets/licenses/BUNDLED-COMPONENTS.txt).
 
 This affects redistribution of those *binary bundles* only. This source tree
 stays MIT OR Apache-2.0, and using the application — including inside a

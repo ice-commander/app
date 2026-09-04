@@ -40,27 +40,102 @@ GTK stack — LGPL-2.1-or-later                                       Windows, m
     License:  LGPL-2.1.txt
 
 
-mpv / libmpv — GPL-2.0-or-later                                            Windows
-    Version:  mpv v0.41.0-769-g2d5dfb343, built 2026-06-10
-    Source:   https://github.com/mpv-player/mpv       (commit 2d5dfb343)
-    Build:    https://github.com/shinchiro/mpv-winbuild-cmake
-    License:  GPL-2.0.txt
+mpv / libmpv — LGPL-2.1-or-later                                    Windows, macOS
+    Video playback. Both bundles use an LGPL build of mpv (meson -Dgpl=false), so none of
+    mpv's GPL-only parts are present. Ice Commander only ever DECODES video; the GPL parts
+    of this stack are encoders (x264, x265), libpostproc and the DVD/CD readers, and none
+    of them is built.
 
-    libmpv links FFmpeg statically. The bundled FFmpeg reports libavcodec 62.36.101 and
-    libavformat 62.19.101, and is configured with GPL components enabled:
+    Windows
+        Version:  mpv v0.41.0-769-g2d5dfb343, built 2026-06-10
+        Source:   https://github.com/mpv-player/mpv       (commit 2d5dfb343)
+        Build:    https://github.com/zhongfly/mpv-winbuild — the prebuilt "mpv-dev-lgpl"
+                  artifact, downloaded from that project's releases and committed to this
+                  tree as artifacts/gtk4-win32-x64/libmpv-2.dll. The DLL records the meson
+                  line it was configured with, including -Dgpl=false.
+        FFmpeg:   linked statically into that DLL; the binary reports
+                  libavcodec 62.36.101 and libavformat 62.19.101. The exact FFmpeg commit
+                  is the one pinned by the mpv-winbuild recipe for that release.
 
-    FFmpeg      https://git.ffmpeg.org/ffmpeg.git     GPL-2.0-or-later as configured
+    macOS
+        Built from source by builder/build_libmpv_ffmpeg_lgpl.sh into artifacts/lgpl-media, and
+        shipped as separate shared libraries in IceCommander.app/Contents/Libs.
+        Version:  mpv v0.41.0
+        Source:   https://github.com/mpv-player/mpv       (tag v0.41.0)
 
-    This is the only GPL component. Because it is linked into the Windows bundle, THAT
-    BUNDLE AS A WHOLE IS DISTRIBUTED UNDER GPL-2.0-or-later. The Ice Commander source
-    tree remains MIT OR Apache-2.0, and the Linux build contains no GPL code at all —
-    it plays video through GStreamer, which is not bundled.
+    License:  LGPL-2.1.txt
+
+
+FFmpeg — LGPL-2.1-or-later                                          Windows, macOS
+    Linked by libmpv (statically on Windows, as shared libraries on macOS).
+    Source:   https://git.ffmpeg.org/ffmpeg.git
+
+    macOS: version 8.1.2, configured by builder/build_libmpv_ffmpeg_lgpl.sh WITHOUT --enable-gpl
+    and without --enable-version3, and with the whole write side removed:
+
+        --disable-encoders --disable-muxers --disable-devices --disable-avdevice
+        --enable-videotoolbox --enable-audiotoolbox --enable-libdav1d
+
+    configure reports "License: LGPL version 2.1 or later". The build contains 0 encoders
+    and 0 muxers; every decoder the viewer needs — H.264, HEVC, AV1, VP8/VP9, MPEG-2/4,
+    AAC, MP3, Opus, Vorbis, FLAC, AC3 — is LGPL.
+
+    License:  LGPL-2.1.txt
+
+
+dav1d — BSD-2-Clause                                                        macOS
+    The AV1 decoder. FFmpeg's built-in "av1" decoder is hardware-accelerated only, so
+    software AV1 playback needs this library.
+    Version:  1.5.3
+    Source:   https://code.videolan.org/videolan/dav1d
+
+
+fakelzo (in place of lzo2) — MIT                                    Windows, macOS
+    NO GPL CODE IS SHIPPED IN EITHER BUNDLE. The file named liblzo2.2.dylib (macOS) or
+    liblzo2-2.dll (Windows) is NOT Oberhumer's LZO, which is GPL-2.0-or-later. It is
+    src/fakelzo/fakelzo.c — 40 lines of our own MIT-licensed code exporting the only two
+    symbols libcairo-script-interpreter imports (lzo2a_decompress, lzo2a_999_compress),
+    which report failure instead of compressing. No LZO code was used or consulted; only
+    the two function signatures are shared, and signatures are not copyrightable.
+
+    Why it exists at all: the real library reaches the bundle through a chain of optional
+    dependencies nobody asked for —
+
+        libgtk-4 -> libcairo-script-interpreter -> liblzo2
+
+    and the loader requires it to be present because the interpreter links it. Nothing in
+    the application reaches that code. Measured, not assumed: a build with an instrumented
+    stand-in logged ZERO calls across a full session — both panels, image and PDF preview,
+    video playback, the editor, settings and the terminal.
+
+    macOS:   builder/osx.sh overwrites the copy dylibbundler pulled in, before signing.
+    Windows: src/gtk-app/setup.nsi excludes liblzo2-2.dll from the artifacts tree with
+             `File /r /x` and packs ours instead — so the GPL library is never placed in
+             the installer archive, which is what matters for distribution.
+
+    Consequence: cairo-script serialisation, a GTK debugging facility, does not work in
+    these builds. Nothing the application offers depends on it.
+
+    Source:   src/fakelzo/ in this repository, with build scripts for both platforms
+              and a README covering the reasoning and the measurement.
+
+    The Ice Commander source tree itself remains MIT OR Apache-2.0, and the Linux build
+    contains no GPL code either — it plays video through GStreamer, which is not bundled.
+
+
+FreeType — FTL                                                      Windows, macOS
+    Font rasteriser, pulled in by Pango and the GTK stack. FreeType is dual-licensed
+    "FTL or GPL-2.0"; this project uses it under the FTL, which asks that its use be
+    credited in the documentation — this entry and FreeType-FTL.txt are that credit.
+
+    Version:  2.14.3 (macOS, Homebrew) / 2.14.1 (Windows, MSYS2)
+    Source:   https://gitlab.freedesktop.org/freetype/freetype
+    License:  FreeType-FTL.txt
 
 
 Other libraries in the Windows bundle
     OpenSSL          3.6.0     Apache-2.0        https://github.com/openssl/openssl
     libssh2          1.11.1    BSD-3-Clause      https://github.com/libssh2/libssh2
-    FreeType         2.14.1    FTL or GPL-2.0    https://gitlab.freedesktop.org/freetype
     curl             8.17.0    curl license      https://github.com/curl/curl
     libiconv         1.18      LGPL-2.1          https://www.gnu.org/software/libiconv/
     gettext/libintl  0.26      LGPL-2.1          https://www.gnu.org/software/gettext/

@@ -33,6 +33,14 @@ fn main() {
         res.compile().expect("Failed to compile Windows resources");
     }
 
+    if std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default() == "macos" {
+        let lgpl_media = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../artifacts/lgpl-media/lib");
+        if lgpl_media.join("libmpv.2.dylib").exists() {
+            println!("cargo:rustc-link-search=native={}", lgpl_media.display());
+        }
+    }
+
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let src_lib_path = if target_os == "windows" {
         std::path::PathBuf::from("../../artifacts/gtk4-win32-x64/pdfium.dll")

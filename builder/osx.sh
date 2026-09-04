@@ -19,9 +19,23 @@ echo "=== Building web UI (web-app) ==="
 npm run build-web-app
 
 # 2. Run Cargo bundle to compile and create the .app structure
+#
+# artifacts/lgpl-media holds our own mpv + FFmpeg, built LGPL and decode-only (no --enable-gpl,
+# no encoders/muxers) — see builder/build_libmpv_ffmpeg_lgpl.sh. Homebrew's ffmpeg is configured with
+# --enable-gpl --enable-version3 --enable-libx264 --enable-libx265, which would make the whole
+# bundle GPL-3.0, so the link search path must point at ours FIRST. The libmpv2 crate only emits
+# `cargo:rustc-link-lib=mpv` and relies on whatever -L the other pkg-config crates contribute,
+# hence RUSTFLAGS rather than PKG_CONFIG_PATH.
+LGPL_MEDIA="$(pwd)/artifacts/lgpl-media"
+if [ ! -f "$LGPL_MEDIA/lib/libmpv.2.dylib" ]; then
+    echo "artifacts/lgpl-media is missing — run ./builder/build_libmpv_ffmpeg_lgpl.sh first."
+    exit 1
+fi
+
 echo "=== Building application bundle ==="
 cd ./src/gtk-app
-CARGO_TARGET_DIR=../../bin/distr/gtkapp-darwin cargo bundle --release
+RUSTFLAGS="-L native=$LGPL_MEDIA/lib" \
+    CARGO_TARGET_DIR=../../bin/distr/gtkapp-darwin cargo bundle --release
 cd ../..
 
 APP_BUNDLE="./bin/distr/gtkapp-darwin/release/bundle/osx/IceCommander.app"
@@ -47,6 +61,18 @@ dylibbundler -s /Library/Developer/CommandLineTools/usr/lib/swift-5.0/macosx \
 # Copy libpdfium.dylib into bundle's Libs directory
 echo "=== Bundling libpdfium.dylib ==="
 cp ./artifacts/libpdfium.dylib "$APP_BUNDLE/Contents/Libs/libpdfium.dylib"
+
+# Replace liblzo2 (GPL-2.0-or-later) with fakelzo, our own two-symbol stand-in — see
+# src/fakelzo/README.md for the reasoning and the measurement behind it. dylibbundler has just
+# copied the real one in, because libcairo-script-interpreter links it; this overwrites it
+# before signing, so the shipped bundle carries no GPL code.
+echo "=== Replacing liblzo2 with fakelzo ==="
+LZO_IN_BUNDLE="$APP_BUNDLE/Contents/Libs/liblzo2.2.dylib"
+if [ -f "$LZO_IN_BUNDLE" ]; then
+    ./src/fakelzo/build-macos.sh "$LZO_IN_BUNDLE"
+else
+    echo "liblzo2 not present in the bundle — nothing to replace"
+fi
 
 # 5. License texts for the bundled LGPL/GPL libraries — must land before signing,
 #    or codesign will not cover them.
