@@ -5,9 +5,19 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-const UPDATES_URL: &str = "https://www.icecommander.com/downloads/updates.json";
+const DEFAULT_UPDATE_SERVER: &str = "https://www.icecommander.com";
 const APP_NAME: &str = "Ice Commander";
 const FILE_PREFIX: &str = "icecommander";
+
+fn update_server() -> String {
+    let raw = std::env::var("IC_UPDATE_SERVER").unwrap_or_default();
+    let raw = raw.trim().trim_end_matches('/');
+    if raw.is_empty() {
+        DEFAULT_UPDATE_SERVER.to_string()
+    } else {
+        raw.to_string()
+    }
+}
 
 pub fn auto_check(parent: gtk::Window) {
     run_check(parent, None);
@@ -35,7 +45,7 @@ fn run_check(parent: gtk::Window, on_complete: Option<Box<dyn Fn()>>) {
         let ctrl = ctrl.clone();
         let found_pkg = found_pkg.clone();
         glib::spawn_future_local(async move {
-            let rx = spawn_on_tokio(perform_update_check(UPDATES_URL));
+            let rx = spawn_on_tokio(perform_update_check());
             let manual = on_complete.is_some();
             let finish = |on_complete: &Option<Box<dyn Fn()>>| {
                 if let Some(cb) = on_complete {
@@ -43,13 +53,14 @@ fn run_check(parent: gtk::Window, on_complete: Option<Box<dyn Fn()>>) {
                 }
             };
             match rx.await {
-                Ok(Ok(Some(pkg))) => {
+                Ok(Ok(Some(found))) => {
                     finish(&on_complete);
-                    let version = pkg.version.clone();
-                    *found_pkg.borrow_mut() = Some(pkg);
+                    let version = found.pkg.version.clone();
+                    let notes = found.notes;
+                    *found_pkg.borrow_mut() = Some(found.pkg);
                     let _ = ctrl
                         .sender()
-                        .send(UpdaterInput::UpdateAvailable { version });
+                        .send(UpdaterInput::UpdateAvailable { version, notes });
                 }
                 Ok(Ok(None)) => {
                     finish(&on_complete);
@@ -90,7 +101,7 @@ fn run_check(parent: gtk::Window, on_complete: Option<Box<dyn Fn()>>) {
                         version: pkg.version.clone(),
                     });
                     let rx = spawn_on_tokio(async move {
-                        download_update_package(UPDATES_URL, &pkg, FILE_PREFIX).await
+                        download_update_package(&pkg, FILE_PREFIX).await
                     });
                     match rx.await {
                         Ok(Ok((path, _version, _md5))) => install_downloaded(&ctrl, path).await,
@@ -167,23 +178,44 @@ where
     rx
 }
 
-async fn perform_update_check(updates_url: &str) -> Result<Option<common::UpdatePackage>, String> {
-    let resp = reqwest::get(updates_url).await.map_err(|e| e.to_string())?;
+struct AvailableUpdate {
+    pkg: common::UpdatePackage,
+    notes: String,
+}
+
+async fn perform_update_check() -> Result<Option<AvailableUpdate>, String> {
+    let url = format!(
+        "{}/api/checkUpdate?app_type={}&build_type={}&version={}",
+        update_server(),
+        common::version::APP_TYPE,
+        common::version::BUILD_TYPE,
+        common::version::APP_VERSION,
+    );
+    let resp = reqwest::get(&url).await.map_err(|e| e.to_string())?;
     if !resp.status().is_success() {
         return Err(format!("HTTP status {}", resp.status()));
     }
-    let updates = resp
-        .json::<common::UpdatesFile>()
+    let check = resp
+        .json::<common::UpdateCheck>()
         .await
         .map_err(|e| e.to_string())?;
-    if let Some(pkg) = updates.packages.iter().find(|p| {
-        p.app_type == common::version::APP_TYPE && p.build_type == common::version::BUILD_TYPE
-    }) {
-        if is_newer_version(common::version::APP_VERSION, &pkg.version) {
-            return Ok(Some(pkg.clone()));
-        }
+
+    if !check.update || check.url.is_empty() {
+        return Ok(None);
     }
-    Ok(None)
+    // The server compares versions too; this refuses a downgrade should the two ever disagree.
+    if !is_newer_version(common::version::APP_VERSION, &check.version) {
+        return Ok(None);
+    }
+
+    let pkg = common::UpdatePackage {
+        app_type: common::version::APP_TYPE.to_string(),
+        build_type: common::version::BUILD_TYPE.to_string(),
+        version: check.version,
+        url: check.url,
+        md5: check.md5,
+    };
+    Ok(Some(AvailableUpdate { pkg, notes: check.notes }))
 }
 
 fn is_newer_version(current: &str, latest: &str) -> bool {
@@ -220,17 +252,12 @@ fn verify_checksum(expected: &str, bytes: &[u8]) -> Result<String, String> {
 }
 
 async fn download_update_package(
-    updates_url: &str,
     pkg: &common::UpdatePackage,
     file_prefix: &str,
 ) -> Result<(PathBuf, String, String), String> {
     let download_url = &pkg.url;
-    let base_url = match updates_url.find("/downloads/updates.json") {
-        Some(idx) => &updates_url[..idx],
-        None => updates_url,
-    };
     let full_url = if download_url.starts_with('/') {
-        format!("{}{}", base_url, download_url)
+        format!("{}{}", update_server(), download_url)
     } else {
         download_url.clone()
     };
