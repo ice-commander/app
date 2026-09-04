@@ -1,7 +1,7 @@
 {
 	"name": "ice-commander",
 	"description": "Ice Commander - Dual-Pane File Manager",
-	"version": "0.7.122",
+	"version": "0.7.123",
 	"private": true,
 	"license": "MIT",
 	"author": "Igor Savchenko",

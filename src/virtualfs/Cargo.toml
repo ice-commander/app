@@ -16,6 +16,7 @@ common = { workspace = true }
 client-config = { workspace = true }
 client-archives = { workspace = true }
 ic-platform = { workspace = true }
+ic-logging = { workspace = true }
 fm-core = { workspace = true }
 gtk-fm-ui = { workspace = true, optional = true }
 tokio = { version = "1.36", features = ["full", "rt-multi-thread"] }
