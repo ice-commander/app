@@ -78,11 +78,45 @@ fn folder_leaf(path: &str) -> &str {
 enum ConnNode {
     Folder(String),
     Connection { index: usize, conn: FtpConnection },
+    NewFolder,
+}
+
+enum CommitError {
+    Empty,
+    Taken,
+}
+
+#[derive(Clone)]
+enum TreeEdit {
+    NewFolder { parent: Option<String> },
+    RenameFolder { path: String },
+    RenameConnection { index: usize },
+}
+
+#[derive(Clone)]
+struct PendingEdit {
+    edit: TreeEdit,
+    generation: u64,
+}
+
+impl PendingEdit {
+    fn renaming_folder(&self, path: &str) -> bool {
+        matches!(&self.edit, TreeEdit::RenameFolder { path: p } if p == path)
+    }
+
+    fn renaming_connection(&self, index: usize) -> bool {
+        matches!(&self.edit, TreeEdit::RenameConnection { index: i } if *i == index)
+    }
+
+    fn is_rename(&self) -> bool {
+        !matches!(&self.edit, TreeEdit::NewFolder { .. })
+    }
 }
 
 fn build_children_map(
     conns: &[FtpConnection],
     explicit: &[String],
+    pending: Option<&PendingEdit>,
 ) -> std::collections::HashMap<Option<String>, Vec<ConnNode>> {
     let mut map: std::collections::HashMap<Option<String>, Vec<ConnNode>> =
         std::collections::HashMap::new();
@@ -95,33 +129,27 @@ fn build_children_map(
             .or_default()
             .push(ConnNode::Connection { index, conn: conn.clone() });
     }
+    if let Some(PendingEdit { edit: TreeEdit::NewFolder { parent }, .. }) = pending {
+        map.entry(parent.clone()).or_default().push(ConnNode::NewFolder);
+    }
     map
 }
 
-fn prompt_folder_name(
-    parent: &gtk::Window,
-    title: &str,
-    initial: &str,
-    on_ok: impl Fn(String) + 'static,
-) {
-    let dialog = adw::AlertDialog::builder().heading(title).build();
-    let entry = gtk::Entry::builder().text(initial).build();
-    dialog.set_extra_child(Some(&entry));
-    dialog.add_response("cancel", &*crate::i18n::tr("account.cancel"));
-    dialog.add_response("ok", &*crate::i18n::tr("conn_manager.ok"));
-    dialog.set_default_response(Some("ok"));
-    dialog.set_response_appearance("ok", adw::ResponseAppearance::Suggested);
-    let entry_r = entry.clone();
-    dialog.connect_response(None, move |d, resp| {
-        if resp == "ok" {
-            let name = entry_r.text().trim().to_string();
-            if !name.is_empty() {
-                on_ok(name);
-            }
-        }
-        d.close();
-    });
-    dialog.present(Some(parent));
+const PRIMARY_BUTTON_GAP: i32 = 12;
+
+fn folder_contains(conn: &FtpConnection, path: &str) -> bool {
+    let prefix = format!("{}/", path);
+    conn.folder.as_deref() == Some(path)
+        || conn.folder.as_deref().map(|f| f.starts_with(&prefix)).unwrap_or(false)
+}
+
+fn connections_in_folder(config: &client_config::AppConfig, path: &str) -> Vec<String> {
+    let conns: Vec<FtpConnection> = config.get("ui.ftp_connections").unwrap_or_default();
+    conns
+        .into_iter()
+        .filter(|c| folder_contains(c, path))
+        .map(|c| c.name)
+        .collect()
 }
 
 fn rename_folder(config: &client_config::AppConfig, old_path: &str, new_leaf: &str) {
@@ -166,13 +194,7 @@ fn rename_folder(config: &client_config::AppConfig, old_path: &str, new_leaf: &s
 fn delete_folder(config: &client_config::AppConfig, path: &str) {
     let prefix = format!("{}/", path);
     let mut conns: Vec<FtpConnection> = config.get("ui.ftp_connections").unwrap_or_default();
-    for c in conns.iter_mut() {
-        let inside = c.folder.as_deref() == Some(path)
-            || c.folder.as_deref().map(|f| f.starts_with(&prefix)).unwrap_or(false);
-        if inside {
-            c.folder = None;
-        }
-    }
+    conns.retain(|c| !folder_contains(c, path));
     config.set("ui.ftp_connections", conns);
     let mut folders: Vec<String> = config.get("ui.ftp_connection_folders").unwrap_or_default();
     folders.retain(|f| f != path && !f.starts_with(&prefix));
@@ -257,11 +279,64 @@ pub fn create_manage_ftp_widget(
         .build();
     left_vbox.append(&list_label);
 
+    let tb_btn = |resource: &str, tooltip: String| {
+        let b = Button::builder()
+            .child(&Image::from_resource(resource))
+            .tooltip_text(&tooltip)
+            .css_classes(vec!["flat"])
+            .build();
+        b.set_cursor_from_name(Some("pointer"));
+        b
+    };
+    let tb_sep = || {
+        gtk::Separator::builder()
+            .orientation(Orientation::Vertical)
+            .margin_top(4)
+            .margin_bottom(4)
+            .build()
+    };
+    let btn_tb_new_conn = tb_btn(
+        "/com/icecommander/gtk/add.svg",
+        crate::i18n::tr("conn_manager.toolbar_new_conn").to_string(),
+    );
+    let btn_tb_new_folder = tb_btn(
+        "/com/icecommander/gtk/add-folder.svg",
+        crate::i18n::tr("conn_manager.toolbar_new_folder").to_string(),
+    );
+    let btn_tb_rename = tb_btn(
+        "/com/icecommander/gtk/edit-pencil.svg",
+        crate::i18n::tr("conn_manager.toolbar_rename").to_string(),
+    );
+    btn_tb_rename.set_sensitive(false);
+    let btn_tb_delete = tb_btn(
+        "/com/icecommander/gtk/delete-file.svg",
+        crate::i18n::tr("conn_manager.toolbar_delete").to_string(),
+    );
+    btn_tb_delete.set_sensitive(false);
+    let list_toolbar = Box::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(2)
+        .build();
+    list_toolbar.append(&btn_tb_new_conn);
+    list_toolbar.append(&tb_sep());
+    list_toolbar.append(&btn_tb_rename);
+    list_toolbar.append(&btn_tb_new_folder);
+    list_toolbar.append(&tb_sep());
+    list_toolbar.append(&btn_tb_delete);
+    left_vbox.append(&list_toolbar);
+
     let selection = SingleSelection::new(None::<gio::ListStore>);
     selection.set_can_unselect(true);
     selection.set_autoselect(false);
     let tree_scroller = ScrolledWindow::builder().vexpand(true).build();
     left_vbox.append(&tree_scroller);
+
+    let pending_edit: Rc<std::cell::RefCell<Option<PendingEdit>>> =
+        Rc::new(std::cell::RefCell::new(None));
+    let folder_generation = Rc::new(std::cell::Cell::new(0u64));
+
+    let new_conn_folder: Rc<std::cell::RefCell<Option<String>>> =
+        Rc::new(std::cell::RefCell::new(None));
 
     let btn_new_conn = Button::builder()
         .label(&*crate::i18n::tr("conn_manager.add_new_connection"))
@@ -482,7 +557,6 @@ pub fn create_manage_ftp_widget(
         .label(&*crate::i18n::tr("conn_manager.connect_btn"))
         .css_classes(vec!["suggested-action"])
         .width_request(140)
-        .margin_start(12)
         .build();
     btn_connect.set_visible(false);
 
@@ -582,8 +656,10 @@ pub fn create_manage_ftp_widget(
         let entry_tunnel_pass = entry_tunnel_pass.clone();
         let entry_tunnel_key_path = entry_tunnel_key_path.clone();
         let entry_tunnel_passphrase = entry_tunnel_passphrase.clone();
+        let auth_dropdown = auth_dropdown.clone();
         
         move || {
+            auth_dropdown.set_selected(0);
             entry_name.set_text("");
             entry_host.set_text("");
             entry_port.set_text("");
@@ -801,6 +877,11 @@ pub fn create_manage_ftp_widget(
                     }
                 }
             }
+
+            let primary_is_connect = btn_connect.has_css_class("suggested-action");
+            btn_connect.set_margin_start(if primary_is_connect { PRIMARY_BUTTON_GAP } else { 0 });
+            btn_add.set_margin_start(if primary_is_connect { 0 } else { PRIMARY_BUTTON_GAP });
+
             update_visibility();
         }
     });
@@ -823,16 +904,29 @@ pub fn create_manage_ftp_widget(
         let clear_fields = clear_fields.clone();
         let update_ui_state = update_ui_state.clone();
         let selection = selection.clone();
+        let right_stack = right_stack.clone();
+        let new_conn_folder = new_conn_folder.clone();
 
         move || {
             editing_index.set(None);
             clear_fields();
             is_view_mode.set(false);
+            *new_conn_folder.borrow_mut() = None;
             selection.set_selected(gtk::INVALID_LIST_POSITION);
             update_ui_state();
+            right_stack.set_visible_child_name("form");
         }
     };
     let clear_form = Rc::new(clear_form);
+
+    let add_conn_in_folder: Rc<dyn Fn(Option<String>)> = {
+        let clear_form = clear_form.clone();
+        let new_conn_folder = new_conn_folder.clone();
+        Rc::new(move |path: Option<String>| {
+            clear_form();
+            *new_conn_folder.borrow_mut() = path;
+        })
+    };
 
     let parent_clone = parent.clone();
     let entry_key_path_clone = entry_key_path.clone();
@@ -953,6 +1047,33 @@ pub fn create_manage_ftp_widget(
         .child(&folder_list)
         .build();
     folder_page.append(&folder_scroll);
+
+    let folder_empty = Box::builder()
+        .orientation(Orientation::Vertical)
+        .spacing(12)
+        .halign(Align::Center)
+        .valign(Align::Center)
+        .vexpand(true)
+        .visible(false)
+        .build();
+    let folder_empty_icon = Image::from_resource("/com/icecommander/gtk/folder.svg");
+    folder_empty_icon.set_pixel_size(48);
+    folder_empty_icon.add_css_class("dim-label");
+    let folder_empty_label = Label::builder()
+        .wrap(true)
+        .justify(gtk::Justification::Center)
+        .css_classes(vec!["dim-label"])
+        .build();
+    let btn_folder_add_conn = Button::builder()
+        .label(&*crate::i18n::tr("conn_manager.add_new_connection"))
+        .css_classes(vec!["suggested-action", "pill"])
+        .halign(Align::Center)
+        .build();
+    folder_empty.append(&folder_empty_icon);
+    folder_empty.append(&folder_empty_label);
+    folder_empty.append(&btn_folder_add_conn);
+    folder_page.append(&folder_empty);
+
     right_stack.add_named(&folder_page, Some("folder"));
 
     let folder_state: Rc<std::cell::RefCell<Option<String>>> =
@@ -971,6 +1092,9 @@ pub fn create_manage_ftp_widget(
         let folder_search = folder_search.clone();
         let folder_title = folder_title.clone();
         let folder_state = folder_state.clone();
+        let folder_scroll = folder_scroll.clone();
+        let folder_empty = folder_empty.clone();
+        let folder_empty_label = folder_empty_label.clone();
         Rc::new(move || {
             let Some(path) = folder_state.borrow().clone() else {
                 return;
@@ -982,12 +1106,14 @@ pub fn create_manage_ftp_widget(
             let query = folder_search.text().to_lowercase();
             let prefix = format!("{}/", path);
             let conns: Vec<FtpConnection> = config.get("ui.ftp_connections").unwrap_or_default();
+            let mut total_in_folder = 0usize;
             for (idx, conn) in conns.into_iter().enumerate() {
                 let in_folder = conn.folder.as_deref() == Some(path.as_str())
                     || conn.folder.as_deref().map(|f| f.starts_with(&prefix)).unwrap_or(false);
                 if !in_folder {
                     continue;
                 }
+                total_in_folder += 1;
                 if !query.is_empty() && !conn.name.to_lowercase().contains(&query) {
                     continue;
                 }
@@ -1040,11 +1166,28 @@ pub fn create_manage_ftp_widget(
                 });
                 folder_list.append(&row);
             }
+            let empty = total_in_folder == 0;
+            folder_empty_label.set_label(&crate::i18n::trf(
+                "conn_manager.folder_empty",
+                &[("name", folder_leaf(&path))],
+            ));
+            folder_search.set_visible(!empty);
+            folder_scroll.set_visible(!empty);
+            folder_empty.set_visible(empty);
         })
     };
     {
         let populate_folder = populate_folder.clone();
         folder_search.connect_search_changed(move |_| populate_folder());
+    }
+
+    {
+        let add_conn_in_folder = add_conn_in_folder.clone();
+        let folder_state = folder_state.clone();
+        btn_folder_add_conn.connect_clicked(move |_| {
+            let path = folder_state.borrow().clone();
+            add_conn_in_folder(path);
+        });
     }
 
     let show_folder: Rc<dyn Fn(String)> = {
@@ -1070,6 +1213,7 @@ pub fn create_manage_ftp_widget(
         let on_connect = on_connect.clone();
         let editing_index = editing_index.clone();
         let previously_selected_index = previously_selected_index.clone();
+        let pending_edit = pending_edit.clone();
         factory.connect_setup(move |_, item| {
             let item = item.downcast_ref::<gtk::ListItem>().unwrap();
             let icon = Image::new();
@@ -1078,15 +1222,183 @@ pub fn create_manage_ftp_widget(
                 .xalign(0.0)
                 .ellipsize(pango::EllipsizeMode::End)
                 .build();
+            let entry = gtk::Entry::builder().hexpand(true).visible(false).build();
             let content = Box::builder()
                 .orientation(Orientation::Horizontal)
                 .spacing(6)
+                .hexpand(true)
                 .build();
+            label.set_hexpand(true);
             content.append(&icon);
             content.append(&label);
+            content.append(&entry);
             let expander = TreeExpander::new();
             expander.set_child(Some(&content));
             item.set_child(Some(&expander));
+
+            let cancel_pending = {
+                let pending_edit = pending_edit.clone();
+                let refresh_weak = refresh_weak.clone();
+                Rc::new(move || {
+                    if pending_edit.borrow().is_none() {
+                        return;
+                    }
+                    *pending_edit.borrow_mut() = None;
+                    if let Some(rc) = refresh_weak.upgrade() {
+                        if let Some(f) = rc.borrow().as_ref() {
+                            f();
+                        }
+                    }
+                })
+            };
+
+            let commit_pending: Rc<dyn Fn(&str) -> Result<(), CommitError>> = {
+                let config = config.clone();
+                let on_change = on_change.clone();
+                let pending_edit = pending_edit.clone();
+                let refresh_weak = refresh_weak.clone();
+                Rc::new(move |text: &str| {
+                    let pending = pending_edit.borrow().clone().ok_or(CommitError::Empty)?;
+                    let typed = text.trim();
+                    if typed.is_empty() {
+                        return Err(CommitError::Empty);
+                    }
+
+                    match &pending.edit {
+                        TreeEdit::RenameConnection { index } => {
+                            let mut conns: Vec<FtpConnection> =
+                                config.get("ui.ftp_connections").unwrap_or_default();
+                            let conn = conns.get_mut(*index).ok_or(CommitError::Empty)?;
+                            if conn.name != typed {
+                                conn.name = typed.to_string();
+                                config.set("ui.ftp_connections", conns);
+                                config.save();
+                                on_change();
+                            }
+                        }
+                        _ => {
+                            let leaf = typed.replace('/', "-");
+                            if leaf.is_empty() {
+                                return Err(CommitError::Empty);
+                            }
+                            let base = match &pending.edit {
+                                TreeEdit::NewFolder { parent } => parent.clone(),
+                                TreeEdit::RenameFolder { path } => parent_folder(path),
+                                TreeEdit::RenameConnection { .. } => unreachable!(),
+                            };
+                            let path = match &base {
+                                Some(p) => format!("{}/{}", p, leaf),
+                                None => leaf.clone(),
+                            };
+                            let unchanged = matches!(
+                                &pending.edit,
+                                TreeEdit::RenameFolder { path: old } if *old == path
+                            );
+                            if !unchanged {
+                                let conns: Vec<FtpConnection> =
+                                    config.get("ui.ftp_connections").unwrap_or_default();
+                                let folders: Vec<String> =
+                                    config.get("ui.ftp_connection_folders").unwrap_or_default();
+                                if connection_folder_paths(&conns, &folders)
+                                    .iter()
+                                    .any(|f| f == &path)
+                                {
+                                    return Err(CommitError::Taken);
+                                }
+                                match &pending.edit {
+                                    TreeEdit::NewFolder { .. } => {
+                                        let mut folders = folders;
+                                        folders.push(path);
+                                        config.set("ui.ftp_connection_folders", folders);
+                                        config.save();
+                                    }
+                                    TreeEdit::RenameFolder { path: old } => {
+                                        rename_folder(&config, old, &leaf);
+                                        on_change();
+                                    }
+                                    TreeEdit::RenameConnection { .. } => unreachable!(),
+                                }
+                            }
+                        }
+                    }
+
+                    *pending_edit.borrow_mut() = None;
+                    if let Some(rc) = refresh_weak.upgrade() {
+                        if let Some(f) = rc.borrow().as_ref() {
+                            f();
+                        }
+                    }
+                    Ok(())
+                })
+            };
+
+            {
+                let commit_pending = commit_pending.clone();
+                entry.connect_activate(move |e| {
+                    if let Err(CommitError::Taken) = commit_pending(&e.text()) {
+                        e.add_css_class("error");
+                        e.set_tooltip_text(Some(&crate::i18n::tr("conn_manager.folder_exists")));
+                    }
+                });
+            }
+
+            entry.connect_changed(|e| {
+                e.remove_css_class("error");
+                e.set_tooltip_text(None);
+            });
+
+            {
+                let cancel_pending = cancel_pending.clone();
+                let keys = gtk::EventControllerKey::new();
+                keys.connect_key_pressed(move |_, key, _, _| {
+                    if key == gdk::Key::Escape {
+                        cancel_pending();
+                        glib::Propagation::Stop
+                    } else {
+                        glib::Propagation::Proceed
+                    }
+                });
+                entry.add_controller(keys);
+            }
+
+            {
+                let pending_edit = pending_edit.clone();
+                let cancel_pending = cancel_pending.clone();
+                let commit_pending = commit_pending.clone();
+                let focus = gtk::EventControllerFocus::new();
+                focus.connect_leave(move |ctrl| {
+                    let Some(pending) = pending_edit.borrow().clone() else {
+                        return;
+                    };
+                    let generation = pending.generation;
+                    let typed = ctrl
+                        .widget()
+                        .and_downcast::<gtk::Entry>()
+                        .map(|e| e.text().to_string())
+                        .unwrap_or_default();
+                    let pending_edit = pending_edit.clone();
+                    let cancel_pending = cancel_pending.clone();
+                    let commit_pending = commit_pending.clone();
+                    glib::idle_add_local_once(move || {
+                        let still_current = pending_edit
+                            .borrow()
+                            .as_ref()
+                            .map(|p| p.generation == generation)
+                            .unwrap_or(false);
+                        if !still_current {
+                            return;
+                        }
+                        if pending.is_rename() {
+                            if commit_pending(&typed).is_err() {
+                                cancel_pending();
+                            }
+                        } else {
+                            cancel_pending();
+                        }
+                    });
+                });
+                entry.add_controller(focus);
+            }
 
             let drag = gtk::DragSource::builder()
                 .actions(gdk::DragAction::MOVE)
@@ -1128,6 +1440,7 @@ pub fn create_manage_ftp_widget(
                     let target = match &*node.borrow::<ConnNode>() {
                         ConnNode::Folder(p) => Some(p.clone()),
                         ConnNode::Connection { conn, .. } => conn.folder.clone(),
+                        ConnNode::NewFolder => return false,
                     };
                     let mut conns: Vec<FtpConnection> =
                         config.get("ui.ftp_connections").unwrap_or_default();
@@ -1179,6 +1492,7 @@ pub fn create_manage_ftp_widget(
         });
     }
 
+    let pending_edit_bind = pending_edit.clone();
     factory.connect_bind(move |_, item| {
         let item = item.downcast_ref::<gtk::ListItem>().unwrap();
         let Some(row) = item.item().and_downcast::<gtk::TreeListRow>() else {
@@ -1197,14 +1511,44 @@ pub fn create_manage_ftp_widget(
         let Some(label) = icon.next_sibling().and_downcast::<Label>() else {
             return;
         };
+        let Some(entry) = label.next_sibling().and_downcast::<gtk::Entry>() else {
+            return;
+        };
         let Some(obj) = row.item().and_downcast::<glib::BoxedAnyObject>() else {
             return;
         };
         let node = obj.borrow::<ConnNode>();
+        let renaming = {
+            let pending = pending_edit_bind.borrow();
+            match (&*node, pending.as_ref()) {
+                (ConnNode::Folder(path), Some(p)) => p.renaming_folder(path),
+                (ConnNode::Connection { index, .. }, Some(p)) => p.renaming_connection(*index),
+                _ => false,
+            }
+        };
+        let begin_edit = |text: &str| {
+            label.set_visible(false);
+            entry.set_text(text);
+            entry.remove_css_class("error");
+            entry.set_tooltip_text(None);
+            entry.set_visible(true);
+            let entry = entry.clone();
+            glib::idle_add_local_once(move || {
+                entry.grab_focus();
+                entry.select_region(0, -1);
+            });
+        };
+        if !matches!(&*node, ConnNode::NewFolder) && !renaming {
+            entry.set_visible(false);
+            label.set_visible(true);
+        }
         match &*node {
             ConnNode::Folder(path) => {
                 icon.set_resource(Some("/com/icecommander/gtk/folder.svg"));
                 label.set_text(folder_leaf(path));
+                if renaming {
+                    begin_edit(folder_leaf(path));
+                }
             }
             ConnNode::Connection { conn, .. } => {
                 let res = if conn.protocol.eq_ignore_ascii_case("webdav") {
@@ -1214,6 +1558,21 @@ pub fn create_manage_ftp_widget(
                 };
                 icon.set_resource(Some(res));
                 label.set_text(&conn.name);
+                if renaming {
+                    begin_edit(&conn.name);
+                }
+            }
+            ConnNode::NewFolder => {
+                icon.set_resource(Some("/com/icecommander/gtk/add-folder.svg"));
+                label.set_visible(false);
+                entry.set_text("");
+                entry.remove_css_class("error");
+                entry.set_tooltip_text(None);
+                entry.set_visible(true);
+                let entry = entry.clone();
+                glib::idle_add_local_once(move || {
+                    entry.grab_focus();
+                });
             }
         }
     });
@@ -1224,6 +1583,39 @@ pub fn create_manage_ftp_widget(
         .build();
     tree_view.add_css_class("navigation-sidebar");
     tree_scroller.set_child(Some(&tree_view));
+
+    {
+        let make_root_drop = || {
+            let target = gtk::DropTarget::new(glib::Type::U32, gdk::DragAction::MOVE);
+            let config = config.clone();
+            let on_change = on_change.clone();
+            let refresh_list_rc = refresh_list_rc.clone();
+            target.connect_drop(move |_, value, _, _| {
+                let Ok(from) = value.get::<u32>() else {
+                    return false;
+                };
+                let mut conns: Vec<FtpConnection> =
+                    config.get("ui.ftp_connections").unwrap_or_default();
+                let Some(conn) = conns.get_mut(from as usize) else {
+                    return false;
+                };
+                if conn.folder.is_none() {
+                    return true;
+                }
+                conn.folder = None;
+                config.set("ui.ftp_connections", conns);
+                config.save();
+                on_change();
+                if let Some(f) = refresh_list_rc.borrow().as_ref() {
+                    f();
+                }
+                true
+            });
+            target
+        };
+        tree_view.add_controller(make_root_drop());
+        tree_scroller.add_controller(make_root_drop());
+    }
 
     {
         let editing_index = editing_index.clone();
@@ -1259,19 +1651,66 @@ pub fn create_manage_ftp_widget(
                 ConnNode::Folder(path) => {
                     show_folder(path.clone());
                 }
+                ConnNode::NewFolder => {}
             }
         });
+    }
+
+    let selected_node = {
+        let selection = selection.clone();
+        Rc::new(move || -> Option<ConnNode> {
+            let row = selection.selected_item()?.downcast::<gtk::TreeListRow>().ok()?;
+            let node = row.item()?.downcast::<glib::BoxedAnyObject>().ok()?;
+            let node = node.borrow::<ConnNode>().clone();
+            Some(node)
+        })
+    };
+
+    let update_toolbar_state = {
+        let selected_node = selected_node.clone();
+        let btn_tb_delete = btn_tb_delete.clone();
+        let btn_tb_rename = btn_tb_rename.clone();
+        Rc::new(move || {
+            let node = selected_node();
+            btn_tb_rename.set_sensitive(matches!(
+                node,
+                Some(ConnNode::Folder(_)) | Some(ConnNode::Connection { .. })
+            ));
+            match node {
+                Some(ConnNode::Connection { .. }) => {
+                    btn_tb_delete.set_sensitive(true);
+                    if let Some(img) = btn_tb_delete.child().and_downcast::<Image>() {
+                        img.set_resource(Some("/com/icecommander/gtk/delete-file.svg"));
+                    }
+                }
+                Some(ConnNode::Folder(_)) => {
+                    btn_tb_delete.set_sensitive(true);
+                    if let Some(img) = btn_tb_delete.child().and_downcast::<Image>() {
+                        img.set_resource(Some("/com/icecommander/gtk/delete-folder.svg"));
+                    }
+                }
+                _ => btn_tb_delete.set_sensitive(false),
+            }
+        })
+    };
+
+    {
+        let update_toolbar_state = update_toolbar_state.clone();
+        selection.connect_selection_changed(move |_, _, _| update_toolbar_state());
     }
 
     let refresh_list = {
         let config = config.clone();
         let selection = selection.clone();
+        let pending_edit = pending_edit.clone();
+        let update_toolbar_state = update_toolbar_state.clone();
         move || {
             let conns: Vec<FtpConnection> =
                 config.get("ui.ftp_connections").unwrap_or_default();
             let folders: Vec<String> =
                 config.get("ui.ftp_connection_folders").unwrap_or_default();
-            let map = Rc::new(build_children_map(&conns, &folders));
+            let pending = pending_edit.borrow().clone();
+            let map = Rc::new(build_children_map(&conns, &folders, pending.as_ref()));
             let root = gio::ListStore::new::<glib::BoxedAnyObject>();
             if let Some(children) = map.get(&None) {
                 for node in children {
@@ -1296,20 +1735,206 @@ pub fn create_manage_ftp_widget(
                 Some(store.upcast::<gio::ListModel>())
             });
             selection.set_model(Some(&tree));
+            update_toolbar_state();
         }
     };
     *refresh_list_rc.borrow_mut() =
         Some(std::boxed::Box::new(refresh_list.clone()) as std::boxed::Box<dyn Fn()>);
     refresh_list();
 
+    let start_tree_edit: Rc<dyn Fn(TreeEdit)> = {
+        let pending_edit = pending_edit.clone();
+        let folder_generation = folder_generation.clone();
+        let refresh_list = refresh_list.clone();
+        Rc::new(move |edit: TreeEdit| {
+            folder_generation.set(folder_generation.get() + 1);
+            *pending_edit.borrow_mut() = Some(PendingEdit {
+                edit,
+                generation: folder_generation.get(),
+            });
+            refresh_list();
+        })
+    };
+    let start_new_folder: Rc<dyn Fn(Option<String>)> = {
+        let start_tree_edit = start_tree_edit.clone();
+        Rc::new(move |parent| start_tree_edit(TreeEdit::NewFolder { parent }))
+    };
+    let start_rename_folder: Rc<dyn Fn(String)> = {
+        let start_tree_edit = start_tree_edit.clone();
+        Rc::new(move |path| start_tree_edit(TreeEdit::RenameFolder { path }))
+    };
+    let start_rename_selected: Rc<dyn Fn()> = {
+        let start_tree_edit = start_tree_edit.clone();
+        let selected_node = selected_node.clone();
+        Rc::new(move || match selected_node() {
+            Some(ConnNode::Folder(path)) => start_tree_edit(TreeEdit::RenameFolder { path }),
+            Some(ConnNode::Connection { index, .. }) => {
+                start_tree_edit(TreeEdit::RenameConnection { index })
+            }
+            _ => {}
+        })
+    };
+
+    let confirm_delete_folder: Rc<dyn Fn(&gtk::Widget, String)> = {
+        let config = config.clone();
+        let on_change = on_change.clone();
+        let refresh_list = refresh_list.clone();
+        Rc::new(move |anchor: &gtk::Widget, path: String| {
+            let doomed = connections_in_folder(&config, &path);
+            let apply = {
+                let config = config.clone();
+                let on_change = on_change.clone();
+                let refresh_list = refresh_list.clone();
+                let path = path.clone();
+                move || {
+                    delete_folder(&config, &path);
+                    on_change();
+                    refresh_list();
+                }
+            };
+            if doomed.is_empty() {
+                apply();
+                return;
+            }
+
+            let dialog = adw::AlertDialog::builder()
+                .heading(&*crate::i18n::tr("conn_manager.delete"))
+                .body(&crate::i18n::trf(
+                    "conn_manager.delete_folder_body",
+                    &[("name", folder_leaf(&path))],
+                ))
+                .build();
+
+            let list = Box::builder()
+                .orientation(Orientation::Vertical)
+                .spacing(4)
+                .build();
+            for name in &doomed {
+                let row = Box::builder()
+                    .orientation(Orientation::Horizontal)
+                    .spacing(6)
+                    .build();
+                let icon = Image::from_resource("/com/icecommander/gtk/ftp.svg");
+                icon.set_pixel_size(16);
+                row.append(&icon);
+                row.append(
+                    &Label::builder()
+                        .label(name)
+                        .xalign(0.0)
+                        .ellipsize(pango::EllipsizeMode::End)
+                        .build(),
+                );
+                list.append(&row);
+            }
+            let scroller = ScrolledWindow::builder()
+                .child(&list)
+                .propagate_natural_height(true)
+                .max_content_height(180)
+                .hscrollbar_policy(gtk::PolicyType::Never)
+                .build();
+            dialog.set_extra_child(Some(&scroller));
+
+            dialog.add_response("cancel", &crate::i18n::tr("common.cancel"));
+            dialog.add_response("delete", &crate::i18n::tr("conn_manager.delete"));
+            dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+            dialog.set_default_response(Some("cancel"));
+            dialog.set_close_response("cancel");
+            dialog.connect_response(None, move |d, resp| {
+                if resp == "delete" {
+                    apply();
+                }
+                d.close();
+            });
+            dialog.present(Some(anchor));
+        })
+    };
+
+    {
+        let clear_form = clear_form.clone();
+        btn_tb_new_conn.connect_clicked(move |_| clear_form());
+    }
+
+    {
+        let start_new_folder = start_new_folder.clone();
+        let selected_node = selected_node.clone();
+        btn_tb_new_folder.connect_clicked(move |_| {
+            let parent = match selected_node() {
+                Some(ConnNode::Folder(p)) => Some(p),
+                Some(ConnNode::Connection { conn, .. }) => conn.folder.clone(),
+                _ => None,
+            };
+            start_new_folder(parent);
+        });
+    }
+
+    {
+        let start_rename_selected = start_rename_selected.clone();
+        btn_tb_rename.connect_clicked(move |_| start_rename_selected());
+    }
+
+    {
+        let config = config.clone();
+        let on_change = on_change.clone();
+        let clear_form = clear_form.clone();
+        let refresh_list = refresh_list.clone();
+        let selected_node = selected_node.clone();
+        let confirm_delete_folder = confirm_delete_folder.clone();
+        btn_tb_delete.connect_clicked(move |btn| {
+            let (index, name) = match selected_node() {
+                Some(ConnNode::Folder(path)) => {
+                    confirm_delete_folder(btn.upcast_ref(), path);
+                    return;
+                }
+                Some(ConnNode::Connection { index, conn }) => (index, conn.name),
+                _ => return,
+            };
+            let dialog = adw::AlertDialog::builder()
+                .heading(&*crate::i18n::tr("conn_manager.delete"))
+                .body(&crate::i18n::trf(
+                    "conn_manager.delete_conn_body",
+                    &[("name", name.as_str())],
+                ))
+                .build();
+            dialog.add_response("cancel", &crate::i18n::tr("common.cancel"));
+            dialog.add_response("delete", &crate::i18n::tr("conn_manager.delete"));
+            dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+            dialog.set_default_response(Some("cancel"));
+            dialog.set_close_response("cancel");
+            let config = config.clone();
+            let on_change = on_change.clone();
+            let clear_form = clear_form.clone();
+            let refresh_list = refresh_list.clone();
+            dialog.connect_response(None, move |d, resp| {
+                if resp == "delete" {
+                    let mut conns: Vec<FtpConnection> =
+                        config.get("ui.ftp_connections").unwrap_or_default();
+                    if index < conns.len() {
+                        conns.remove(index);
+                        config.set("ui.ftp_connections", conns);
+                        config.save();
+                        on_change();
+                        clear_form();
+                        refresh_list();
+                    }
+                }
+                d.close();
+            });
+            dialog.present(Some(btn));
+        });
+    }
+
     {
         let config = config.clone();
         let refresh: Rc<dyn Fn()> = Rc::new(refresh_list.clone());
         let on_change = on_change.clone();
         let clear_form = clear_form.clone();
-        let parent = parent.clone();
         let on_connect = on_connect.clone();
         let selection_ctx = selection.clone();
+        let start_new_folder = start_new_folder.clone();
+        let start_rename_folder = start_rename_folder.clone();
+        let start_tree_edit_ctx = start_tree_edit.clone();
+        let confirm_delete_folder = confirm_delete_folder.clone();
+        let add_conn_in_folder = add_conn_in_folder.clone();
         let tree_view_w = tree_view.downgrade();
         let gesture = gtk::GestureClick::new();
         gesture.set_button(gdk::BUTTON_SECONDARY);
@@ -1325,84 +1950,43 @@ pub fn create_manage_ftp_widget(
             match found.map(|(n, _)| n) {
                 Some(ConnNode::Folder(path)) => {
                     {
-                        let config = config.clone();
-                        let refresh = refresh.clone();
-                        let parent = parent.clone();
+                        let start_new_folder = start_new_folder.clone();
                         let path = path.clone();
                         items.push((
                             crate::i18n::tr("conn_manager.new_subfolder")
                                 .to_string(),
                             std::boxed::Box::new(move || {
-                                let config = config.clone();
-                                let refresh = refresh.clone();
-                                let path = path.clone();
-                                prompt_folder_name(
-                                    &parent,
-                                    &crate::i18n::tr("conn_manager.new_subfolder"),
-                                    "",
-                                    move |leaf| {
-                                        let leaf = leaf.replace('/', "-");
-                                        if leaf.is_empty() {
-                                            return;
-                                        }
-                                        let child = format!("{}/{}", path, leaf);
-                                        let mut folders: Vec<String> = config
-                                            .get("ui.ftp_connection_folders")
-                                            .unwrap_or_default();
-                                        if !folders.iter().any(|f| f == &child) {
-                                            folders.push(child);
-                                            config.set("ui.ftp_connection_folders", folders);
-                                            config.save();
-                                            refresh();
-                                        }
-                                    },
-                                );
+                                start_new_folder(Some(path.clone()))
                             }),
                         ));
                     }
                     {
-                        let config = config.clone();
-                        let refresh = refresh.clone();
-                        let parent = parent.clone();
+                        let start_rename_folder = start_rename_folder.clone();
                         let path = path.clone();
                         items.push((
                             crate::i18n::tr("conn_manager.rename").to_string(),
-                            std::boxed::Box::new(move || {
-                                let config = config.clone();
-                                let refresh = refresh.clone();
-                                let path = path.clone();
-                                let initial = folder_leaf(&path).to_string();
-                                prompt_folder_name(
-                                    &parent,
-                                    &crate::i18n::tr("conn_manager.rename_folder"),
-                                    &initial,
-                                    move |leaf| {
-                                        rename_folder(&config, &path, &leaf);
-                                        refresh();
-                                    },
-                                );
-                            }),
+                            std::boxed::Box::new(move || start_rename_folder(path.clone())),
                         ));
                     }
                     {
-                        let config = config.clone();
-                        let refresh = refresh.clone();
-                        let on_change = on_change.clone();
+                        let confirm_delete_folder = confirm_delete_folder.clone();
+                        let tv = tv.clone();
                         let path = path.clone();
                         items.push((
                             crate::i18n::tr("conn_manager.delete").to_string(),
                             std::boxed::Box::new(move || {
-                                delete_folder(&config, &path);
-                                on_change();
-                                refresh();
+                                confirm_delete_folder(tv.upcast_ref(), path.clone())
                             }),
                         ));
                     }
                     {
-                        let clear_form = clear_form.clone();
+                        let add_conn_in_folder = add_conn_in_folder.clone();
+                        let path = path.clone();
                         items.push((
                             crate::i18n::tr("conn_manager.add_new_connection").to_string(),
-                            std::boxed::Box::new(move || clear_form()),
+                            std::boxed::Box::new(move || {
+                                add_conn_in_folder(Some(path.clone()))
+                            }),
                         ));
                     }
                 }
@@ -1413,6 +1997,15 @@ pub fn create_manage_ftp_widget(
                             crate::i18n::tr("conn_manager.connect_btn")
                                 .to_string(),
                             std::boxed::Box::new(move || cb(crate::secret_store::opened(&conn))),
+                        ));
+                    }
+                    {
+                        let start_tree_edit = start_tree_edit_ctx.clone();
+                        items.push((
+                            crate::i18n::tr("conn_manager.rename").to_string(),
+                            std::boxed::Box::new(move || {
+                                start_tree_edit(TreeEdit::RenameConnection { index })
+                            }),
                         ));
                     }
                     {
@@ -1437,43 +2030,14 @@ pub fn create_manage_ftp_widget(
                         ));
                     }
                 }
+                Some(ConnNode::NewFolder) => {}
                 None => {
                     {
-                        let config = config.clone();
-                        let refresh = refresh.clone();
-                        let parent = parent.clone();
+                        let start_new_folder = start_new_folder.clone();
                         items.push((
                             crate::i18n::tr("conn_manager.new_folder_title")
                                 .to_string(),
-                            std::boxed::Box::new(move || {
-                                let config = config.clone();
-                                let refresh = refresh.clone();
-                                prompt_folder_name(
-                                    &parent,
-                                    &crate::i18n::tr("conn_manager.new_folder_title"),
-                                    "",
-                                    move |input| {
-                                        let path = input
-                                            .split('/')
-                                            .map(|s| s.trim())
-                                            .filter(|s| !s.is_empty())
-                                            .collect::<Vec<_>>()
-                                            .join("/");
-                                        if path.is_empty() {
-                                            return;
-                                        }
-                                        let mut folders: Vec<String> = config
-                                            .get("ui.ftp_connection_folders")
-                                            .unwrap_or_default();
-                                        if !folders.iter().any(|f| f == &path) {
-                                            folders.push(path);
-                                            config.set("ui.ftp_connection_folders", folders);
-                                            config.save();
-                                            refresh();
-                                        }
-                                    },
-                                );
-                            }),
+                            std::boxed::Box::new(move || start_new_folder(None)),
                         ));
                     }
                     {
@@ -1671,6 +2235,7 @@ pub fn create_manage_ftp_widget(
     let load_conn_add = load_conn.clone();
 
     let config_seal = config.clone();
+    let new_conn_folder_add = new_conn_folder.clone();
     btn_add.connect_clicked(move |_| {
         let is_view = is_view_mode_add.get();
         if is_view && editing_index_add.get().is_some() {
@@ -1813,10 +2378,10 @@ pub fn create_manage_ftp_widget(
 
         let mut conns: Vec<FtpConnection> =
             config_add.get("ui.ftp_connections").unwrap_or_default();
-        let folder = editing_index_add
-            .get()
-            .and_then(|idx| conns.get(idx))
-            .and_then(|c| c.folder.clone());
+        let folder = match editing_index_add.get() {
+            Some(idx) => conns.get(idx).and_then(|c| c.folder.clone()),
+            None => new_conn_folder_add.borrow().clone(),
+        };
         let mut new_conn = FtpConnection {
             name,
             folder,
@@ -1853,6 +2418,7 @@ pub fn create_manage_ftp_widget(
         };
         config_add.set("ui.ftp_connections", conns.clone());
         config_add.save();
+        *new_conn_folder_add.borrow_mut() = None;
 
         editing_index_add.set(Some(saved_idx));
         previously_selected_index_add.set(Some(saved_idx));
@@ -1924,7 +2490,6 @@ pub fn show_manage_ftp_dialog(
     });
     window.add_controller(key_controller);
 
-    let parent_win = parent.upcast_ref::<gtk::Window>();
     let win_connect = window.clone();
     let on_connect_wrapped = on_connect.map(|cb| {
         let win = win_connect.clone();
@@ -1933,7 +2498,7 @@ pub fn show_manage_ftp_dialog(
             win.close();
         }) as Rc<dyn Fn(FtpConnection)>
     });
-    let widget = create_manage_ftp_widget(&parent_win, on_change, config, on_connect_wrapped);
+    let widget = create_manage_ftp_widget(&window, on_change, config, on_connect_wrapped);
     window.set_child(Some(&widget));
     OPEN_DIALOG.with(|slot| *slot.borrow_mut() = Some(window.clone()));
     crate::api::notify_connections_dialog(true);

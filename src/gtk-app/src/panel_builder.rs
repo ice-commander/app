@@ -959,7 +959,7 @@ fn build_tab(
     content.append(&paned);
 
     TabInfo {
-        id: 0, // real id assigned by the caller (build_panel) via `alloc_tab_id`
+        id: 0,
         content,
         tab_header,
         tab_switch,
@@ -1102,7 +1102,10 @@ fn build_bottom_pane(
                 }
                 path
             };
-            if let Some(cmd_args) = router.state.active_provider().get_ssh_connection_command(&cwd) {
+            let provider = router.state.active_provider();
+            if let Some(target) = provider.get_ssh_shell_target(&cwd) {
+                term_view.start_ssh_session(target);
+            } else if let Some(cmd_args) = provider.get_ssh_connection_command(&cwd) {
                 term_view.start_command_session(cmd_args, None);
             } else {
                 term_view.start_local_session(Some(cwd));

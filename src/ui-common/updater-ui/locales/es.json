@@ -18,5 +18,6 @@
   "updater.up_to_date_body_1": "está actualizado.",
   "updater.up_to_date_body_2": "La versión",
   "updater.up_to_date_body_3": "es la más reciente.",
-  "updater.up_to_date_title": "Actualizado"
+  "updater.up_to_date_title": "Actualizado",
+  "updater.whats_new": "Novedades:"
 }

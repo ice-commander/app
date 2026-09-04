@@ -264,7 +264,7 @@ pub fn create_drives_toolbar(
             }
 
             let dropdown_refs: Vec<&str> = dropdown_strings.iter().map(|s| s.as_str()).collect();
-            println!("[DrivesToolbar] Re-populating drives. Shift active: {}, fav_only: {}, count: {}", shift_active, fav_only, dropdown_refs.len());
+
             is_syncing_vol.set(true);
             *drive_items.borrow_mut() = items;
             string_list.splice(0, string_list.n_items(), &dropdown_refs);

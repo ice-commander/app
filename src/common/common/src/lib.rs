@@ -24,6 +24,20 @@ pub struct UpdatesFile {
     pub update_ts: i64,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct UpdateCheck {
+    #[serde(default)]
+    pub update: bool,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub notes: String,
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub md5: String,
+}
+
 pub static CONNECT_TIMEOUT_SECS: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(20);
 

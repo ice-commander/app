@@ -10,7 +10,7 @@ pub struct UpdaterInit {
 
 #[derive(Debug)]
 pub enum UpdaterInput {
-    UpdateAvailable { version: String },
+    UpdateAvailable { version: String, notes: String },
     UpToDate,
     Downloading { version: String },
     Installing,
@@ -28,7 +28,7 @@ pub enum UpdaterOutput {
 
 enum UpdaterPhase {
     Idle,
-    Prompt { version: String },
+    Prompt { version: String, notes: String },
     Downloading { version: String },
     Installing,
     Installed,
@@ -123,8 +123,8 @@ impl SimpleComponent for UpdaterModel {
 
     fn update(&mut self, message: Self::Input, _sender: ComponentSender<Self>) {
         match message {
-            UpdaterInput::UpdateAvailable { version } => {
-                self.set_phase(UpdaterPhase::Prompt { version });
+            UpdaterInput::UpdateAvailable { version, notes } => {
+                self.set_phase(UpdaterPhase::Prompt { version, notes });
             }
             UpdaterInput::UpToDate => self.set_phase(UpdaterPhase::UpToDate),
             UpdaterInput::Downloading { version } => {
@@ -159,9 +159,9 @@ impl SimpleComponent for UpdaterModel {
                 widgets.progress_window.present();
             }
             UpdaterPhase::Idle => widgets.progress_window.set_visible(false),
-            UpdaterPhase::Prompt { version } => {
+            UpdaterPhase::Prompt { version, notes } => {
                 widgets.progress_window.set_visible(false);
-                present_prompt_dialog(&self.parent, &self.app_name, version, &sender);
+                present_prompt_dialog(&self.parent, &self.app_name, version, notes, &sender);
             }
             UpdaterPhase::UpToDate => {
                 widgets.progress_window.set_visible(false);
@@ -188,17 +188,28 @@ fn present_prompt_dialog(
     parent: &gtk::Window,
     app_name: &str,
     version: &str,
+    notes: &str,
     sender: &ComponentSender<UpdaterModel>,
 ) {
+    let mut body = format!(
+        "{} {} v{}. {}",
+        crate::i18n::tr("updater.available_body_1"),
+        app_name,
+        version,
+        crate::i18n::tr("updater.available_body_2")
+    );
+    let notes = notes.trim();
+    if !notes.is_empty() {
+        body.push_str(&format!(
+            "\n\n{}\n{}",
+            crate::i18n::tr("updater.whats_new"),
+            notes
+        ));
+    }
+
     let dialog = adw::MessageDialog::builder()
         .heading(&*crate::i18n::tr("updater.available_title"))
-        .body(format!(
-            "{} {} v{}. {}",
-            crate::i18n::tr("updater.available_body_1"),
-            app_name,
-            version,
-            crate::i18n::tr("updater.available_body_2")
-        ))
+        .body(body)
         .transient_for(parent)
         .build();
 

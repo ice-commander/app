@@ -198,6 +198,13 @@ pub fn upload_sftp_file(
     }
 }
 
+fn liveness_timeout_ms() -> u32 {
+    let full = common::request_timeout()
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(20_000);
+    (full / 5).clamp(1_000, 3_000) as u32
+}
+
 #[cfg(not(target_os = "android"))]
 pub struct SftpSession {
     pub session: Session,
@@ -219,7 +226,11 @@ impl SftpSession {
     }
 
     pub fn is_alive(&self) -> bool {
-        self.sftp.stat(std::path::Path::new(".")).is_ok()
+        let previous = self.session.timeout();
+        self.session.set_timeout(liveness_timeout_ms());
+        let alive = self.sftp.stat(std::path::Path::new(".")).is_ok();
+        self.session.set_timeout(previous);
+        alive
     }
 
     pub fn list_dir(&self, path: &str) -> Result<(Vec<(String, String, Option<u32>)>, Vec<(String, u64, String, Option<u32>)>), String> {
@@ -631,5 +642,29 @@ mod tests {
     fn empty_string_returns_empty_path() {
         let p = expand_tilde("");
         assert_eq!(p, std::path::PathBuf::from(""));
+    }
+}
+
+#[cfg(test)]
+mod liveness_tests {
+    use super::liveness_timeout_ms;
+
+    #[test]
+    fn the_probe_is_always_a_fraction_of_the_request_budget() {
+        common::set_request_timeout_secs(20);
+        let probe = liveness_timeout_ms() as u64;
+        assert!(probe <= 3_000, "{probe}");
+        assert!(
+            probe * 4 < 20_000,
+            "probe must leave room to reconnect and list: {probe}"
+        );
+
+        common::set_request_timeout_secs(5);
+        assert_eq!(liveness_timeout_ms(), 1_000);
+
+        common::set_request_timeout_secs(0);
+        assert_eq!(liveness_timeout_ms(), 3_000);
+
+        common::set_request_timeout_secs(20);
     }
 }

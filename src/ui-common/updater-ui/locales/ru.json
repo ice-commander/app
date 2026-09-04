@@ -18,5 +18,6 @@
   "updater.up_to_date_body_1": "использует актуальную версию.",
   "updater.up_to_date_body_2": "Версия",
   "updater.up_to_date_body_3": "является самой последней.",
-  "updater.up_to_date_title": "Обновлений не требуется"
+  "updater.up_to_date_title": "Обновлений не требуется",
+  "updater.whats_new": "Что нового:"
 }

@@ -139,7 +139,10 @@ fn ensure_tunnel_helper(
                             match ch_res {
                                 Ok(ch) => ch,
                                 Err(_) => {
-                                    *tunnel_c.lock().unwrap_or_else(|e| e.into_inner()) = None;
+                                    if !sess_lock.authenticated() {
+                                        drop(sess_lock);
+                                        *tunnel_c.lock().unwrap_or_else(|e| e.into_inner()) = None;
+                                    }
                                     return;
                                 }
                             }
@@ -225,8 +228,6 @@ fn ensure_tunnel_helper(
                                 }
                             }
                         }
-
-                        *tunnel_c.lock().unwrap_or_else(|e| e.into_inner()) = None;
                     }).await;
                 });
             }
@@ -365,7 +366,13 @@ impl fm_core::rpc::FileSystemRpc for LocalSftpRpc {
             }
         }
 
-        let mut cmd = vec![ssh_bin.clone(), "-p".to_string(), self.port.to_string()];
+        let mut cmd = vec![
+            ssh_bin.clone(),
+            "-p".to_string(),
+            self.port.to_string(),
+            "-o".to_string(),
+            "StrictHostKeyChecking=accept-new".to_string(),
+        ];
         if let Some(ref kp) = self.key_path {
             cmd.push("-i".to_string());
             cmd.push(kp.clone());
@@ -388,6 +395,38 @@ impl fm_core::rpc::FileSystemRpc for LocalSftpRpc {
         cmd.push("-t".to_string());
         cmd.push(launch);
         Some(cmd)
+    }
+
+    fn get_ssh_shell_target(&self, remote_path: &str) -> Option<fm_core::rpc::SshShellTarget> {
+        let (host, port) = if self.use_tunnel.unwrap_or(false) {
+            let lock = self.tunnel.lock().unwrap_or_else(|e| e.into_inner());
+            let local_port = lock
+                .as_ref()
+                .filter(|ts| ts.session.lock().unwrap_or_else(|e| e.into_inner()).authenticated())
+                .map(|ts| ts.local_port)?;
+            ("127.0.0.1".to_string(), local_port)
+        } else {
+            (self.host.clone(), self.port)
+        };
+
+        let by_key = self.auth_type == "key";
+        let key_path = if by_key { self.key_path.clone() } else { None };
+        let pass = if by_key { None } else { self.pass.clone() };
+        if key_path.as_deref().unwrap_or_default().is_empty()
+            && pass.as_deref().unwrap_or_default().is_empty()
+        {
+            return None;
+        }
+
+        Some(fm_core::rpc::SshShellTarget {
+            host,
+            port,
+            user: self.user.clone(),
+            pass,
+            key_path,
+            passphrase: self.passphrase.clone(),
+            remote_dir: if remote_path.is_empty() { "/".to_string() } else { remote_path.to_string() },
+        })
     }
 
     async fn list_dir(&self, path: String) -> Result<Vec<RemoteFileEntry>, AppError> {
@@ -958,6 +997,52 @@ mod tests {
     }
 
     #[test]
+    fn a_password_connection_hands_the_shell_its_stored_password() {
+        let t = rpc().get_ssh_shell_target("/srv/www").unwrap();
+        assert_eq!((t.host.as_str(), t.port), ("example.test", 2222));
+        assert_eq!(t.user, "alice");
+        assert_eq!(t.pass.as_deref(), Some("secret"));
+        assert!(t.key_path.is_none());
+        assert_eq!(t.remote_dir, "/srv/www");
+    }
+
+    #[test]
+    fn a_key_connection_hands_the_shell_the_key_and_no_password() {
+        let mut r = rpc();
+        r.auth_type = "key".to_string();
+        r.key_path = Some("/home/alice/.ssh/id_ed25519".to_string());
+        let t = r.get_ssh_shell_target("").unwrap();
+        assert_eq!(t.key_path.as_deref(), Some("/home/alice/.ssh/id_ed25519"));
+        assert!(t.pass.is_none());
+        assert_eq!(t.remote_dir, "/");
+    }
+
+    #[test]
+    fn without_credentials_there_is_nothing_to_open_a_shell_with() {
+        let mut r = rpc();
+        r.pass = None;
+        assert!(r.get_ssh_shell_target("/").is_none());
+    }
+
+    #[test]
+    fn a_tunnelled_connection_without_a_live_tunnel_falls_back() {
+        let mut r = rpc();
+        r.use_tunnel = Some(true);
+        r.tunnel_host = Some("jump.test".to_string());
+        r.tunnel_user = Some("bob".to_string());
+        assert!(r.get_ssh_shell_target("/").is_none());
+    }
+
+    #[test]
+    fn the_direct_ssh_command_accepts_a_new_host_key_like_the_tunnelled_one_does() {
+        let cmd = rpc().get_ssh_connection_command("/srv").unwrap();
+        assert!(
+            cmd.windows(2).any(|w| w[0] == "-o" && w[1] == "StrictHostKeyChecking=accept-new"),
+            "{cmd:?}"
+        );
+    }
+
+    #[test]
     fn iso_date_with_seconds_parses_to_that_instant() {
         let ts = parse_date_str("2024-01-15 10:30:00");
         assert!(ts > 1_705_000_000 && ts < 1_705_500_000, "ts={}", ts);
@@ -1066,6 +1151,8 @@ mod tests {
                 "ssh",
                 "-p",
                 "2222",
+                "-o",
+                "StrictHostKeyChecking=accept-new",
                 "alice@example.test",
                 "-t",
                 "cd \"/srv/data\" && exec $SHELL -l",
@@ -1106,9 +1193,12 @@ mod tests {
         r.tunnel_host = Some("jump.test".to_string());
         r.tunnel_user = Some("bob".to_string());
         let cmd = r.get_ssh_connection_command("/").unwrap();
-        let i = cmd.iter().position(|a| a == "-o").expect("-o missing");
+        let proxy = cmd
+            .iter()
+            .find(|a| a.starts_with("ProxyCommand="))
+            .expect("ProxyCommand missing");
         assert_eq!(
-            cmd[i + 1],
+            proxy,
             "ProxyCommand=ssh -p 22 -o StrictHostKeyChecking=accept-new -W %h:%p bob@jump.test"
         );
     }
