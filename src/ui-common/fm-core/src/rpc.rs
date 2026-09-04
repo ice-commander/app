@@ -22,6 +22,17 @@ pub struct RemoteFileEntry {
     pub permissions: Option<u32>,
 }
 
+#[derive(Clone, Debug)]
+pub struct SshShellTarget {
+    pub host: String,
+    pub port: u16,
+    pub user: String,
+    pub pass: Option<String>,
+    pub key_path: Option<String>,
+    pub passphrase: Option<String>,
+    pub remote_dir: String,
+}
+
 #[async_trait::async_trait(?Send)]
 pub trait FileSystemRpc {
     fn as_any(&self) -> Option<&dyn std::any::Any> {
@@ -174,6 +185,10 @@ pub trait FileSystemRpc {
     }
 
     fn get_ssh_connection_command(&self, _remote_path: &str) -> Option<Vec<String>> {
+        None
+    }
+
+    fn get_ssh_shell_target(&self, _remote_path: &str) -> Option<SshShellTarget> {
         None
     }
 

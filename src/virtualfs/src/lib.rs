@@ -10,6 +10,7 @@ pub mod drives_root_rpc;
 pub mod ftp_rpc;
 pub mod local_rpc;
 pub mod sftp_rpc;
+pub mod ssh_shell;
 pub mod utils;
 pub mod webdav_rpc;
 

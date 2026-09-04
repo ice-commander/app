@@ -656,8 +656,10 @@ pub fn create_manage_ftp_widget(
         let entry_tunnel_pass = entry_tunnel_pass.clone();
         let entry_tunnel_key_path = entry_tunnel_key_path.clone();
         let entry_tunnel_passphrase = entry_tunnel_passphrase.clone();
+        let auth_dropdown = auth_dropdown.clone();
         
         move || {
+            auth_dropdown.set_selected(0);
             entry_name.set_text("");
             entry_host.set_text("");
             entry_port.set_text("");

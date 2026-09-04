@@ -2,7 +2,7 @@
 use gtk::glib;
 use gtk::prelude::*;
 use gtk_terminal_ui::{TerminalInit, TerminalInput, TerminalModel, TerminalOutput};
-use ic_platform::terminal::spawn_pty_command;
+use ic_platform::terminal::{spawn_pty_command, PtySession};
 use relm4::prelude::*;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -17,7 +17,7 @@ pub struct TerminalView {
     _controller: Rc<Controller<TerminalModel>>,
     pub pty_input_tx: Rc<RefCell<Option<tokio_mpsc::Sender<Vec<u8>>>>>,
     pub pty_resize_tx: Rc<RefCell<Option<tokio_mpsc::Sender<(u16, u16)>>>>,
-    #[allow(dead_code)] // output leg of the PTY handle triple; tee shared with the web API
+    #[allow(dead_code)]
     pub output_tx: broadcast::Sender<Vec<u8>>,
     pub on_visibility_changed: Rc<RefCell<Option<Rc<dyn Fn(bool)>>>>,
     pub on_session_ended: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
@@ -25,7 +25,11 @@ pub struct TerminalView {
     start: Rc<dyn Fn()>,
     args: Rc<RefCell<Vec<String>>>,
     cwd: Rc<RefCell<Option<String>>>,
+    session_factory: SessionFactorySlot,
 }
+
+type SessionFactory = Rc<dyn Fn() -> Result<PtySession, String>>;
+type SessionFactorySlot = Rc<RefCell<Option<SessionFactory>>>;
 
 impl TerminalView {
     pub fn new(config: client_config::AppConfig, output_tx: broadcast::Sender<Vec<u8>>) -> Self {
@@ -48,6 +52,7 @@ impl TerminalView {
         let session_gen = Rc::new(Cell::new(0u64));
         let args = Rc::new(RefCell::new(Vec::new()));
         let cwd = Rc::new(RefCell::new(None));
+        let session_factory: SessionFactorySlot = Rc::new(RefCell::new(None));
 
         let start: Rc<dyn Fn()> = {
             let sender = sender.clone();
@@ -58,6 +63,7 @@ impl TerminalView {
             let session_gen = session_gen.clone();
             let args = args.clone();
             let cwd = cwd.clone();
+            let session_factory = session_factory.clone();
             Rc::new(move || {
                 *pty_input_tx.borrow_mut() = None;
                 let _ = sender.send(TerminalInput::Clear);
@@ -66,7 +72,12 @@ impl TerminalView {
                     let _ = output_tx.send(b"\x1b[2J\x1b[H".to_vec());
                 }
 
-                match spawn_pty_command(args.borrow().clone(), cwd.borrow().clone()) {
+                let factory = session_factory.borrow().clone();
+                let started = match factory {
+                    Some(make) => make(),
+                    None => spawn_pty_command(args.borrow().clone(), cwd.borrow().clone()),
+                };
+                match started {
                     Ok(session) => {
                         *pty_input_tx.borrow_mut() = Some(session.input_tx.clone());
                         *pty_resize_tx.borrow_mut() = Some(session.resize_tx.clone());
@@ -155,6 +166,7 @@ impl TerminalView {
             start,
             args,
             cwd,
+            session_factory,
         }
     }
 
@@ -175,6 +187,7 @@ impl TerminalView {
     }
 
     pub fn start_command_session(&self, args: Vec<String>, cwd: Option<String>) {
+        *self.session_factory.borrow_mut() = None;
         *self.args.borrow_mut() = args;
         *self.cwd.borrow_mut() = cwd;
         (self.start)();
@@ -196,6 +209,14 @@ impl TerminalView {
             }
             self.start_command_session(argv, cwd);
         }
+    }
+
+    pub fn start_ssh_session(&self, target: fm_core::rpc::SshShellTarget) {
+        *self.session_factory.borrow_mut() = Some(Rc::new(move || {
+            Ok(virtualfs::ssh_shell::open_ssh_shell(target.clone(), 24, 80))
+        }));
+        (self.start)();
+        let _ = self.sender.send(TerminalInput::GrabFocus);
     }
 
     pub fn stop_session(&self) {
