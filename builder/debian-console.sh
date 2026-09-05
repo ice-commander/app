@@ -26,6 +26,6 @@ cp $CARGO_TARGET_DIR/debian/ice-commander-console*.deb ./distr
 
 
 FILE=$(ls -t distr/ice-commander-console*.deb | head -n 1)
-echo "Installer Debian console md5: $(md5sum "$FILE" | awk '{print $1}')" >> distr/md5sums.txt
+echo "$(md5sum "$FILE" | awk '{print $1}') Debian console" >> distr/md5sums.txt
 
 exit 0

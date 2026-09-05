@@ -27,6 +27,6 @@ cp $CARGO_TARGET_DIR/generate-rpm/*.rpm ./distr
 
 
 FILE=$(ls -t distr/ice-commander-console*.rpm | head -n 1)
-echo "Installer Fedora console md5: $(md5sum "$FILE" | awk '{print $1}')" >> distr/md5sums.txt
+echo "$(md5sum "$FILE" | awk '{print $1}') Fedora console" >> distr/md5sums.txt
 
 exit 0

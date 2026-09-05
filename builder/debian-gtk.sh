@@ -25,6 +25,6 @@ cp $CARGO_TARGET_DIR/debian/*.deb ./distr
 
 
 FILE=$(ls -t distr/*.deb | head -n 1)
-echo "Installer Debian md5: $(md5sum "$FILE" | awk '{print $1}')" >> distr/md5sums.txt
+echo "$(md5sum "$FILE" | awk '{print $1}') Debian gtk4" >> distr/md5sums.txt
 
 exit 0

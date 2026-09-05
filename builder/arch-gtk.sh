@@ -46,4 +46,4 @@ cd /home/builder/workdir
 
 
 FILE=$(ls -t distr/*.pkg.tar.zst | head -n 1)
-echo "Installer Arch Linux md5: $(md5sum "$FILE" | awk '{print $1}')" >> distr/md5sums.txt
+echo "$(md5sum "$FILE" | awk '{print $1}') Arch Linux gtk4" >> distr/md5sums.txt

@@ -27,6 +27,6 @@ cp $CARGO_TARGET_DIR/generate-rpm/*.rpm ./distr
 
 
 FILE=$(ls -t distr/ice-commander-webserver*.rpm | head -n 1)
-echo "Installer Fedora webserver md5: $(md5sum "$FILE" | awk '{print $1}')" >> distr/md5sums.txt
+echo "$(md5sum "$FILE" | awk '{print $1}') Fedora webserver" >> distr/md5sums.txt
 
 exit 0

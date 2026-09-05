@@ -26,6 +26,6 @@ cp $CARGO_TARGET_DIR/debian/ice-commander-webserver*.deb ./distr
 
 
 FILE=$(ls -t distr/ice-commander-webserver*.deb | head -n 1)
-echo "Installer Debian webserver md5: $(md5sum "$FILE" | awk '{print $1}')" >> distr/md5sums.txt
+echo "$(md5sum "$FILE" | awk '{print $1}') Debian webserver" >> distr/md5sums.txt
 
 exit 0

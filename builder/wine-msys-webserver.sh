@@ -19,7 +19,7 @@ makensis src/webserver-app/setup.nsi
 
 VERSION=$(node -p "require('./package.json').version")
 
-echo "Installer Windows webserver md5: $(md5sum distr/ice-commander-webserver-${VERSION}-1-win64.exe | awk '{print $1}')" >> distr/md5sums.txt
+echo "$(md5sum distr/ice-commander-webserver-${VERSION}-1-win64.exe | awk '{print $1}') Windows webserver" >> distr/md5sums.txt
 
 echo "--- Done! ---"
 exit 0
