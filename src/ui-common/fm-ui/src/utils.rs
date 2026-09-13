@@ -26,18 +26,18 @@ pub fn update_status_bar_text(
     status_label: &gtk::Label,
     selection_model: &gtk::MultiSelection,
     _list_store: &gtk::gio::ListStore,
-    cached_entries: &Rc<RefCell<Vec<(String, bool, u64, String, Option<u32>)>>>,
+    cached_entries: &Rc<RefCell<Vec<(String, bool, u64, String, Option<u32>, Vec<String>)>>>,
 ) {
     let bitset = selection_model.selection();
     let status_text = if bitset.is_empty() {
         let entries = cached_entries.borrow();
         let folders = entries
             .iter()
-            .filter(|(_, is_dir, _, _, _)| *is_dir)
+            .filter(|(_, is_dir, _, _, _, _)| *is_dir)
             .count();
         let files = entries
             .iter()
-            .filter(|(_, is_dir, _, _, _)| !*is_dir)
+            .filter(|(_, is_dir, _, _, _, _)| !*is_dir)
             .count();
         if folders == 0 && files == 0 {
             crate::i18n::tr("fm.status.empty_folder").to_string()

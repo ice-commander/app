@@ -480,6 +480,7 @@ impl fm_core::rpc::FileSystemRpc for ArchiveFileSystemRpc {
                             size: 0,
                             modified,
                             permissions,
+                            extra: Vec::new(),
                         });
                     }
                     for (f, size) in files {
@@ -504,6 +505,7 @@ impl fm_core::rpc::FileSystemRpc for ArchiveFileSystemRpc {
                             size,
                             modified,
                             permissions,
+                            extra: Vec::new(),
                         });
                     }
 

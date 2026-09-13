@@ -74,10 +74,10 @@ impl fm_core::rpc::FileSystemRpc for LocalWebDavRpc {
 
         let mut entries = Vec::new();
         for d in dirs {
-            entries.push(RemoteFileEntry { name: d.0, is_dir: true, size: 0, modified: parse_date_str(&d.1), permissions: None });
+            entries.push(RemoteFileEntry { name: d.0, is_dir: true, size: 0, modified: parse_date_str(&d.1), permissions: None, extra: Vec::new() });
         }
         for f in files {
-            entries.push(RemoteFileEntry { name: f.0, is_dir: false, size: f.1, modified: parse_date_str(&f.2), permissions: None });
+            entries.push(RemoteFileEntry { name: f.0, is_dir: false, size: f.1, modified: parse_date_str(&f.2), permissions: None, extra: Vec::new() });
         }
         Ok(entries)
     }

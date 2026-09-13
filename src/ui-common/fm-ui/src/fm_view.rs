@@ -20,6 +20,7 @@ pub struct SourceInfo {
     pub root_icon_svg: Option<String>,
     pub root_icon: String,
     pub connection_id: Option<String>,
+    pub extra_columns: Vec<fm_core::rpc::ColumnSpec>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -50,7 +51,7 @@ pub struct Shared {
     pub config: client_config::AppConfig,
     pub current_path: Rc<RefCell<Vec<String>>>,
     pub root_path: Rc<RefCell<String>>,
-    pub cached_entries: Rc<RefCell<Vec<(String, bool, u64, String, Option<u32>)>>>,
+    pub cached_entries: Rc<RefCell<Vec<(String, bool, u64, String, Option<u32>, Vec<String>)>>>,
     pub editing_name: Rc<RefCell<Option<String>>>,
     pub active_widgets: Rc<RefCell<HashMap<(bool, String), (gtk::Label, gtk::Entry)>>>,
     pub selected_files: Rc<RefCell<Vec<(String, bool)>>>,
@@ -368,6 +369,7 @@ impl FmPanelModel {
             0,
             date_str.clone(),
             None,
+            Vec::new(),
         ));
 
         let store = &self.views.list_store;
@@ -401,7 +403,7 @@ impl FmPanelModel {
         self.shared
             .cached_entries
             .borrow_mut()
-            .retain(|(name, _, _, _, _)| !names.contains(name));
+            .retain(|(name, _, _, _, _, _)| !names.contains(name));
 
         let store = &self.views.list_store;
         let mut positions = Vec::new();
@@ -1728,7 +1730,7 @@ impl SimpleComponent for FmPanelModel {
                 }
                 self.select_name = select_name.or(exited);
 
-                let display: Vec<(String, bool, u64, String, Option<u32>)> = entries
+                let display: Vec<(String, bool, u64, String, Option<u32>, Vec<String>)> = entries
                     .iter()
                     .map(|e| {
                         let date = match chrono::Local.timestamp_opt(e.modified as i64, 0) {
@@ -1737,14 +1739,16 @@ impl SimpleComponent for FmPanelModel {
                             }
                             _ => "N/A".to_string(),
                         };
-                        (e.name.clone(), e.is_dir, e.size, date, e.permissions)
+                        (e.name.clone(), e.is_dir, e.size, date, e.permissions, e.extra.clone())
                     })
                     .collect();
 
                 *self.shared.current_path.borrow_mut() = parts.clone();
                 *self.shared.cached_entries.borrow_mut() = display;
                 let fs_label = source.fs_label.clone();
+                let column_specs = source.extra_columns.clone();
                 *self.shared.source.borrow_mut() = source;
+                crate::view_factories::sync_extra_columns(&self.views.list_view, &column_specs);
                 self.breadcrumb = breadcrumb;
                 self.views
                     .source_label
@@ -2174,7 +2178,7 @@ fn filter_entries(model: &FmPanelModel, query: &str) {
     let cached = model.shared.cached_entries.borrow();
     let current = model.shared.current_path.borrow();
     let mut new_items = Vec::new();
-    for (name, is_dir, size, date, perms) in cached.iter() {
+    for (name, is_dir, size, date, perms, extra) in cached.iter() {
         if model.should_skip_entry(name) {
             continue;
         }
@@ -2189,6 +2193,7 @@ fn filter_entries(model: &FmPanelModel, query: &str) {
                 date,
                 *perms,
             );
+            entry.set_extra(extra.clone());
             new_items.push(entry.upcast::<gtk::glib::Object>());
         }
     }
@@ -2218,16 +2223,16 @@ fn render_listing(model: &FmPanelModel, sender: &ComponentSender<FmPanelModel>) 
     store.remove_all();
     model.views.item_progress_bars.borrow_mut().clear();
 
-    let mut entries: Vec<(String, bool, u64, String, Option<u32>)> = model
+    let mut entries: Vec<(String, bool, u64, String, Option<u32>, Vec<String>)> = model
         .shared
         .cached_entries
         .borrow()
         .iter()
-        .filter(|(name, _, _, _, _)| !model.should_skip_entry(name))
+        .filter(|(name, _, _, _, _, _)| !model.should_skip_entry(name))
         .cloned()
         .collect();
     if !is_root && icon_size == 30 {
-        entries.insert(0, ("..".to_string(), true, 0, String::new(), None));
+        entries.insert(0, ("..".to_string(), true, 0, String::new(), None, Vec::new()));
     }
 
     let sm = &model.views.selection_model;
@@ -2235,7 +2240,7 @@ fn render_listing(model: &FmPanelModel, sender: &ComponentSender<FmPanelModel>) 
     let grid_view = &model.views.grid_view;
     let target_select = model.select_name.clone();
 
-    let build_item = |name: &str, is_dir: bool, size: u64, date: &str, perms: Option<u32>| {
+    let build_item = |name: &str, is_dir: bool, size: u64, date: &str, perms: Option<u32>, extra: &[String]| {
         let mut full = parts.clone();
         if name == ".." {
             if !full.is_empty() {
@@ -2244,21 +2249,22 @@ fn render_listing(model: &FmPanelModel, sender: &ComponentSender<FmPanelModel>) 
         } else {
             full.push(name.to_string());
         }
-        crate::file_entry::FileEntry::new(
+        let row = crate::file_entry::FileEntry::new(
             name,
             &build_path_string(&full),
             is_dir,
             size,
             date,
             perms,
-        )
-        .upcast::<gtk::glib::Object>()
+        );
+        row.set_extra(extra.to_vec());
+        row.upcast::<gtk::glib::Object>()
     };
 
     if entries.len() <= 300 {
         let items: Vec<gtk::glib::Object> = entries
             .iter()
-            .map(|(n, d, s, dt, p)| build_item(n, *d, *s, dt, *p))
+            .map(|(n, d, s, dt, p, ex)| build_item(n, *d, *s, dt, *p, ex))
             .collect();
         store.splice(0, 0, &items);
 
@@ -2346,7 +2352,7 @@ fn render_listing(model: &FmPanelModel, sender: &ComponentSender<FmPanelModel>) 
             }
             let end = std::cmp::min(start + 100, entries.len());
             let mut items = Vec::with_capacity(end - start);
-            for (name, is_dir, size, date, perms) in &entries[start..end] {
+            for (name, is_dir, size, date, perms, extra) in &entries[start..end] {
                 let mut full = parts_c.clone();
                 if name == ".." {
                     if !full.is_empty() {
@@ -2355,17 +2361,16 @@ fn render_listing(model: &FmPanelModel, sender: &ComponentSender<FmPanelModel>) 
                 } else {
                     full.push(name.clone());
                 }
-                items.push(
-                    crate::file_entry::FileEntry::new(
-                        name,
-                        &build_path_string(&full),
-                        *is_dir,
-                        *size,
-                        date,
-                        *perms,
-                    )
-                    .upcast::<gtk::glib::Object>(),
+                let row = crate::file_entry::FileEntry::new(
+                    name,
+                    &build_path_string(&full),
+                    *is_dir,
+                    *size,
+                    date,
+                    *perms,
                 );
+                row.set_extra(extra.clone());
+                items.push(row.upcast::<gtk::glib::Object>());
             }
             store.splice(start as u32, 0, &items);
             if start == 0 && !selected_once.get() {

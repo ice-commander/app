@@ -142,6 +142,9 @@ impl FileSystemRpc for RoutingProvider {
     fn supports_offset_io(&self) -> bool {
         self.provider.supports_offset_io()
     }
+    fn extra_columns(&self) -> Vec<fm_core::rpc::ColumnSpec> {
+        self.provider.extra_columns()
+    }
     async fn extract_archive(&self, archive_path: String) -> Result<(), AppError> {
         self.provider.extract_archive(self.resolve(&archive_path)).await
     }
@@ -208,7 +211,7 @@ impl FileSystemRpc for RoutingProvider {
 }
 
 fn push_listing(state: &Rc<RouterState>, sender: &relm4::Sender<FmPanelInput>) {
-    let (path, entries, root_fs, root_rel) = {
+    let (path, entries, root_fs, root_rel, extra_columns) = {
         let nav = state.path.borrow();
         let root = &nav.levels()[0];
         (
@@ -216,6 +219,7 @@ fn push_listing(state: &Rc<RouterState>, sender: &relm4::Sender<FmPanelInput>) {
             (*nav.active().entries).clone(),
             root.fs.clone(),
             root.relative_path.clone(),
+            nav.active().fs.extra_columns(),
         )
     };
     let breadcrumb: Vec<BreadcrumbSegment> = {
@@ -242,6 +246,7 @@ fn push_listing(state: &Rc<RouterState>, sender: &relm4::Sender<FmPanelInput>) {
         root_icon: root_fs.get_icon(&root_rel),
         root_icon_svg: root_fs.get_icon_svg(&root_rel),
         connection_id: root_fs.connection_id(),
+        extra_columns,
     };
     let select_name = {
         let nav = state.path.borrow();
@@ -977,6 +982,13 @@ mod tests {
         fn supports_offset_io(&self) -> bool {
             true
         }
+        fn extra_columns(&self) -> Vec<fm_core::rpc::ColumnSpec> {
+            vec![fm_core::rpc::ColumnSpec {
+                key: "status".to_string(),
+                title: "Status".to_string(),
+                width: Some(120),
+            }]
+        }
         fn is_local(&self) -> bool {
             true
         }
@@ -1159,6 +1171,17 @@ mod tests {
         assert!(r.supports_offset_io());
         let dummy = RoutingProvider::from_parts(Rc::new(Dummy), String::new(), String::new());
         assert!(!dummy.supports_offset_io());
+    }
+
+    #[test]
+    fn extra_columns_are_forwarded_from_the_inner_provider() {
+        let (_rec, r) = recording("/a.zip", "/");
+        let cols = r.extra_columns();
+        assert_eq!(cols.len(), 1);
+        assert_eq!(cols[0].key, "status");
+        assert_eq!(cols[0].width, Some(120));
+        let dummy = RoutingProvider::from_parts(Rc::new(Dummy), String::new(), String::new());
+        assert!(dummy.extra_columns().is_empty());
     }
 
 }

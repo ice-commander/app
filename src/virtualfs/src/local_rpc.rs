@@ -168,6 +168,7 @@ impl fm_core::rpc::FileSystemRpc for LocalFileSystemRpc {
                 size: 0,
                 modified: parse_date_str(&d.1),
                 permissions,
+                extra: Vec::new(),
             });
         }
         for f in files {
@@ -186,6 +187,7 @@ impl fm_core::rpc::FileSystemRpc for LocalFileSystemRpc {
                 size: f.1,
                 modified: parse_date_str(&f.2),
                 permissions,
+                extra: Vec::new(),
             });
         }
         Ok(entries)

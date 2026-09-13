@@ -13,13 +13,21 @@ pub struct PathSegment {
     pub path: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RemoteFileEntry {
     pub name: String,
     pub is_dir: bool,
     pub size: u64,
     pub modified: u64,
     pub permissions: Option<u32>,
+    pub extra: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ColumnSpec {
+    pub key: String,
+    pub title: String,
+    pub width: Option<i32>,
 }
 
 #[derive(Clone, Debug)]
@@ -139,6 +147,10 @@ pub trait FileSystemRpc {
 
     async fn set_file_length(&self, _path: String, _len: u64) -> Result<(), AppError> {
         Err(AppError::Other("Not implemented".to_string()))
+    }
+
+    fn extra_columns(&self) -> Vec<ColumnSpec> {
+        Vec::new()
     }
 
     fn supports_offset_io(&self) -> bool {
@@ -365,6 +377,7 @@ mod tests {
             size: 42,
             modified: 0,
             permissions: None,
+            extra: Vec::new(),
         };
         assert_eq!(a.clone(), a);
     }
@@ -379,6 +392,25 @@ mod tests {
         assert!(futures::executor::block_on(r.read_at("/a".to_string(), 0, 4)).is_err());
         assert!(futures::executor::block_on(r.write_at("/a".to_string(), 0, vec![1, 2])).is_err());
         assert!(futures::executor::block_on(r.set_file_length("/a".to_string(), 8)).is_err());
+    }
+
+    #[test]
+    fn a_filesystem_declares_no_extra_columns_unless_it_says_so() {
+        assert!(rpc().extra_columns().is_empty());
+    }
+
+    #[test]
+    fn a_listing_row_carries_no_extra_values_by_default() {
+        let e = RemoteFileEntry {
+            name: "a.txt".to_string(),
+            is_dir: false,
+            size: 1,
+            modified: 0,
+            permissions: None,
+            extra: Vec::new(),
+        };
+        assert!(e.extra.is_empty());
+        assert_eq!(e, RemoteFileEntry { name: "a.txt".to_string(), size: 1, ..Default::default() });
     }
 
 }

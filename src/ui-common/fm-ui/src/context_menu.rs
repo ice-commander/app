@@ -149,7 +149,7 @@ pub fn create_context_menu(
         .cached_entries
         .borrow()
         .iter()
-        .map(|(n, _, _, _, _)| n.clone())
+        .map(|(n, _, _, _, _, _)| n.clone())
         .collect();
     btn_dup.connect_clicked(move |_| {
         pop_dup.popdown();

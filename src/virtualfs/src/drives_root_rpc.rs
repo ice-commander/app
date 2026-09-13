@@ -25,6 +25,7 @@ impl fm_core::rpc::FileSystemRpc for DrivesRootRpc {
                         size: 0,
                         modified: 0,
                         permissions: None,
+                        extra: Vec::new(),
                     });
                 }
             }
@@ -37,6 +38,7 @@ impl fm_core::rpc::FileSystemRpc for DrivesRootRpc {
                     size: 0,
                     modified: 0,
                     permissions: None,
+                    extra: Vec::new(),
                 });
                 for d in drives {
                     if d.path != "/" && d.is_mounted {
@@ -46,6 +48,7 @@ impl fm_core::rpc::FileSystemRpc for DrivesRootRpc {
                             size: 0,
                             modified: 0,
                             permissions: None,
+                            extra: Vec::new(),
                         });
                     }
                 }

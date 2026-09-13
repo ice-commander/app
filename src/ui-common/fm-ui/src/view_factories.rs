@@ -1023,3 +1023,55 @@ mod tests {
         assert_eq!(list_row_metrics(&cfg), (30, 4));
     }
 }
+
+pub fn sync_extra_columns(column_view: &gtk::ColumnView, specs: &[fm_core::rpc::ColumnSpec]) {
+    let columns = column_view.columns();
+    while columns.n_items() > 3 {
+        let last = columns.n_items() - 1;
+        match columns.item(last).and_downcast::<gtk::ColumnViewColumn>() {
+            Some(col) => column_view.remove_column(&col),
+            None => break,
+        }
+    }
+    for (index, spec) in specs.iter().enumerate() {
+        let factory = gtk::SignalListItemFactory::new();
+        factory.connect_setup(|_, obj| {
+            let Some(list_item) = obj.downcast_ref::<gtk::ListItem>() else {
+                return;
+            };
+            let label = gtk::Label::builder()
+                .halign(gtk::Align::Start)
+                .margin_top(8)
+                .margin_bottom(8)
+                .margin_start(8)
+                .margin_end(8)
+                .css_classes(vec!["dim-label"])
+                .build();
+            list_item.set_child(Some(&label));
+        });
+        factory.connect_bind(move |_, obj| {
+            let Some(list_item) = obj.downcast_ref::<gtk::ListItem>() else {
+                return;
+            };
+            let Some(item) = list_item
+                .item()
+                .and_downcast::<crate::file_entry::FileEntry>()
+            else {
+                return;
+            };
+            let Some(label) = list_item.child().and_downcast::<gtk::Label>() else {
+                return;
+            };
+            label.set_text(&item.extra_at(index));
+        });
+        let column = gtk::ColumnViewColumn::builder()
+            .title(spec.title.as_str())
+            .factory(&factory)
+            .resizable(true)
+            .build();
+        if let Some(w) = spec.width {
+            column.set_fixed_width(w);
+        }
+        column_view.append_column(&column);
+    }
+}

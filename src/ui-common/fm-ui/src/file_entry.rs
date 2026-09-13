@@ -1,5 +1,6 @@
 use gtk::glib;
 use gtk::prelude::*;
+use gtk::subclass::prelude::ObjectSubclassIsExt;
 use std::cell::RefCell;
 
 mod imp {
@@ -14,6 +15,7 @@ mod imp {
         pub size: RefCell<u64>,
         pub date: RefCell<String>,
         pub permissions: RefCell<Option<u32>>,
+        pub extra: RefCell<Vec<String>>,
     }
 
     #[glib::object_subclass]
@@ -139,6 +141,18 @@ impl FileEntry {
         } else {
             Some(val)
         }
+    }
+
+    pub fn extra(&self) -> Vec<String> {
+        self.imp().extra.borrow().clone()
+    }
+
+    pub fn extra_at(&self, index: usize) -> String {
+        self.imp().extra.borrow().get(index).cloned().unwrap_or_default()
+    }
+
+    pub fn set_extra(&self, values: Vec<String>) {
+        self.imp().extra.replace(values);
     }
 
     pub fn set_permissions(&self, perms: Option<u32>) {
