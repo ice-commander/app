@@ -129,6 +129,22 @@ pub trait FileSystemRpc {
         Err(AppError::Other("Not implemented".to_string()))
     }
 
+    async fn read_at(&self, _path: String, _offset: u64, _len: usize) -> Result<Vec<u8>, AppError> {
+        Err(AppError::Other("Not implemented".to_string()))
+    }
+
+    async fn write_at(&self, _path: String, _offset: u64, _data: Vec<u8>) -> Result<(), AppError> {
+        Err(AppError::Other("Not implemented".to_string()))
+    }
+
+    async fn set_file_length(&self, _path: String, _len: u64) -> Result<(), AppError> {
+        Err(AppError::Other("Not implemented".to_string()))
+    }
+
+    fn supports_offset_io(&self) -> bool {
+        false
+    }
+
     async fn extract_archive(&self, _archive_path: String) -> Result<(), AppError> {
         Err(AppError::Other("Not implemented".to_string()))
     }
@@ -352,4 +368,17 @@ mod tests {
         };
         assert_eq!(a.clone(), a);
     }
+    #[test]
+    fn a_filesystem_refuses_offset_io_unless_it_says_so() {
+        assert!(!rpc().supports_offset_io());
+    }
+
+    #[test]
+    fn offset_io_defaults_to_not_implemented() {
+        let r = rpc();
+        assert!(futures::executor::block_on(r.read_at("/a".to_string(), 0, 4)).is_err());
+        assert!(futures::executor::block_on(r.write_at("/a".to_string(), 0, vec![1, 2])).is_err());
+        assert!(futures::executor::block_on(r.set_file_length("/a".to_string(), 8)).is_err());
+    }
+
 }

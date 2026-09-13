@@ -362,6 +362,28 @@ impl fm_core::rpc::FileSystemRpc for LocalFileSystemRpc {
     }
 
 
+    async fn read_at(&self, path: String, offset: u64, len: usize) -> Result<Vec<u8>, AppError> {
+        fs_local::read_local_file_chunk(&PathBuf::from(path), offset, len)
+            .await
+            .map_err(AppError::Other)
+    }
+
+    async fn write_at(&self, path: String, offset: u64, data: Vec<u8>) -> Result<(), AppError> {
+        fs_local::write_local_file_chunk(&PathBuf::from(path), offset, &data)
+            .await
+            .map_err(AppError::Other)
+    }
+
+    async fn set_file_length(&self, path: String, len: u64) -> Result<(), AppError> {
+        fs_local::set_local_file_length(&PathBuf::from(path), len)
+            .await
+            .map_err(AppError::Other)
+    }
+
+    fn supports_offset_io(&self) -> bool {
+        true
+    }
+
     async fn extract_archive(&self, archive_path: String) -> Result<(), AppError> {
         extract_local_archive(std::path::Path::new(&archive_path)).await
     }

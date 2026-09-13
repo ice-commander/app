@@ -1,7 +1,7 @@
 {
 	"name": "ice-commander",
 	"description": "Ice Commander - Dual-Pane File Manager",
-	"version": "0.7.126",
+	"version": "0.7.127",
 	"private": true,
 	"license": "MIT",
 	"author": "Igor Savchenko",
@@ -28,7 +28,7 @@
 		"build-distr-osx": "cd ./src/gtk-app ; CARGO_TARGET_DIR=../../bin/distr/gtkapp-darwin cargo bundle --release ; cd ../../bin/distr/gtkapp-darwin ; mkdir -p ./release/bundle/osx/IceCommander.app/Contents/Resources/share/glib-2.0/schemas ; cp $(brew --prefix)/share/glib-2.0/schemas/org.gtk.gtk4.Settings*.xml ./release/bundle/osx/IceCommander.app/Contents/Resources/share/glib-2.0/schemas/ ; glib-compile-schemas ./release/bundle/osx/IceCommander.app/Contents/Resources/share/glib-2.0/schemas ; dylibbundler -s /Library/Developer/CommandLineTools/usr/lib/swift-5.0/macosx -s /Library/Developer/CommandLineTools/usr/lib/swift-5.5/macosx -s $(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/macosx -s $(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.5/macosx -od -b -x ./release/bundle/osx/IceCommander.app/Contents/MacOS/ice-commander -d ./release/bundle/osx/IceCommander.app/Contents/Libs/ -p @executable_path/../Libs/ ; cp ../../artifacts/libpdfium.dylib ./release/bundle/osx/IceCommander.app/Contents/Libs/libpdfium.dylib ; codesign --force --deep --sign - ./release/bundle/osx/IceCommander.app",
 		"build-gtk-dmg": "./builder/osx.sh",
 		"run-web-app": "cd src/web-app && npm run dev",
-		"unit-tests": "cargo test -p ice-commander-gtk && cargo test -p client-archives && cargo test -p common && cargo test -p client-config && cargo test -p panel-router && cargo test -p secret-store && cargo test -p ic-logging && cargo test -p gtk-viewer-ui && cargo test -p fm-core",
+		"unit-tests": "cargo test -p ice-commander-gtk && cargo test -p ic-platform && cargo test -p client-archives && cargo test -p common && cargo test -p client-config && cargo test -p panel-router && cargo test -p secret-store && cargo test -p ic-logging && cargo test -p gtk-viewer-ui && cargo test -p fm-core",
 		"licenses": "cargo about generate --config about.toml about.hbs -o THIRD-PARTY-LICENSES.md"
 	}
 }

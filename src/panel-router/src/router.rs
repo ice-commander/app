@@ -128,6 +128,20 @@ impl FileSystemRpc for RoutingProvider {
             .write_file(self.resolve(&path), content, permissions, progress_callback)
             .await
     }
+    async fn read_at(&self, path: String, offset: u64, len: usize) -> Result<Vec<u8>, AppError> {
+        self.provider.read_at(self.resolve(&path), offset, len).await
+    }
+    async fn write_at(&self, path: String, offset: u64, data: Vec<u8>) -> Result<(), AppError> {
+        self.provider
+            .write_at(self.resolve(&path), offset, data)
+            .await
+    }
+    async fn set_file_length(&self, path: String, len: u64) -> Result<(), AppError> {
+        self.provider.set_file_length(self.resolve(&path), len).await
+    }
+    fn supports_offset_io(&self) -> bool {
+        self.provider.supports_offset_io()
+    }
     async fn extract_archive(&self, archive_path: String) -> Result<(), AppError> {
         self.provider.extract_archive(self.resolve(&archive_path)).await
     }
@@ -946,6 +960,23 @@ mod tests {
         fn request_file_download(&self, file_path: String, _transfer_id: uuid::Uuid) {
             self.calls.borrow_mut().push(format!("download {}", file_path));
         }
+        async fn read_at(&self, path: String, offset: u64, len: usize) -> Result<Vec<u8>, AppError> {
+            self.calls.borrow_mut().push(format!("read_at {} @{} +{}", path, offset, len));
+            Ok(Vec::new())
+        }
+        async fn write_at(&self, path: String, offset: u64, data: Vec<u8>) -> Result<(), AppError> {
+            self.calls
+                .borrow_mut()
+                .push(format!("write_at {} @{} +{}", path, offset, data.len()));
+            Ok(())
+        }
+        async fn set_file_length(&self, path: String, len: u64) -> Result<(), AppError> {
+            self.calls.borrow_mut().push(format!("set_len {} = {}", path, len));
+            Ok(())
+        }
+        fn supports_offset_io(&self) -> bool {
+            true
+        }
         fn is_local(&self) -> bool {
             true
         }
@@ -1102,4 +1133,32 @@ mod tests {
         assert_eq!(join_display("/a//b", "c.txt"), "/a/b/c.txt");
         assert_eq!(join_display("/a/b", "файл 1.txt"), "/a/b/файл 1.txt");
     }
+    #[test]
+    fn offset_io_reaches_the_inner_provider_with_a_level_relative_path() {
+        let (rec, r) = recording("/docs/a.zip/sub", "/sub");
+        let _ = futures::executor::block_on(r.read_at("/docs/a.zip/sub/x.bin".to_string(), 16, 4));
+        let _ = futures::executor::block_on(r.write_at(
+            "/docs/a.zip/sub/x.bin".to_string(),
+            32,
+            vec![0u8; 8],
+        ));
+        let _ = futures::executor::block_on(r.set_file_length("/docs/a.zip/sub/x.bin".to_string(), 64));
+        assert_eq!(
+            rec.calls(),
+            vec![
+                "read_at /sub/x.bin @16 +4".to_string(),
+                "write_at /sub/x.bin @32 +8".to_string(),
+                "set_len /sub/x.bin = 64".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn offset_io_support_is_forwarded_from_the_inner_provider() {
+        let (_rec, r) = recording("/a.zip", "/");
+        assert!(r.supports_offset_io());
+        let dummy = RoutingProvider::from_parts(Rc::new(Dummy), String::new(), String::new());
+        assert!(!dummy.supports_offset_io());
+    }
+
 }

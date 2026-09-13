@@ -251,6 +251,49 @@ pub async fn write_local_file_chunk(
     file.flush().await.map_err(|e| e.to_string())
 }
 
+pub async fn read_local_file_chunk(
+    target_path: &Path,
+    offset: u64,
+    len: usize,
+) -> Result<Vec<u8>, String> {
+    use tokio::io::AsyncSeekExt;
+    let safe_target = sanitize_windows_path(target_path);
+    let mut file = tokio::fs::File::open(&safe_target)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    file.seek(std::io::SeekFrom::Start(offset))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut buf = vec![0u8; len];
+    let mut filled = 0usize;
+    while filled < len {
+        let n = file
+            .read(&mut buf[filled..])
+            .await
+            .map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        filled += n;
+    }
+    buf.truncate(filled);
+    Ok(buf)
+}
+
+pub async fn set_local_file_length(target_path: &Path, len: u64) -> Result<(), String> {
+    let safe_target = sanitize_windows_path(target_path);
+    let file = tokio::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&safe_target)
+        .await
+        .map_err(|e| e.to_string())?;
+    file.set_len(len).await.map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -510,4 +553,65 @@ mod tests {
         }
         assert_eq!(received, b"hello world");
     }
+    #[tokio::test]
+    async fn write_chunk_then_read_chunk_roundtrip() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("blob.bin");
+        write_local_file_chunk(&file, 0, b"hello world").await.unwrap();
+        let got = read_local_file_chunk(&file, 6, 5).await.unwrap();
+        assert_eq!(got, b"world".to_vec());
+    }
+
+    #[tokio::test]
+    async fn write_chunk_at_offset_leaves_a_hole_and_extends() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("sparse.bin");
+        write_local_file_chunk(&file, 8, b"tail").await.unwrap();
+        assert_eq!(fs::metadata(&file).unwrap().len(), 12);
+        let got = read_local_file_chunk(&file, 0, 12).await.unwrap();
+        assert_eq!(&got[..8], &[0u8; 8]);
+        assert_eq!(&got[8..], b"tail");
+    }
+
+    #[tokio::test]
+    async fn write_chunk_does_not_truncate_existing_tail() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("keep.bin");
+        write_local_file_chunk(&file, 0, b"aaaaaaaa").await.unwrap();
+        write_local_file_chunk(&file, 2, b"bb").await.unwrap();
+        let got = read_local_file_chunk(&file, 0, 8).await.unwrap();
+        assert_eq!(got, b"aabbaaaa".to_vec());
+    }
+
+    #[tokio::test]
+    async fn read_chunk_past_end_returns_short_buffer() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("short.bin");
+        write_local_file_chunk(&file, 0, b"abc").await.unwrap();
+        let got = read_local_file_chunk(&file, 1, 64).await.unwrap();
+        assert_eq!(got, b"bc".to_vec());
+        let empty = read_local_file_chunk(&file, 3, 8).await.unwrap();
+        assert!(empty.is_empty());
+    }
+
+    #[tokio::test]
+    async fn read_chunk_missing_file_is_an_error() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("nope.bin");
+        assert!(read_local_file_chunk(&file, 0, 4).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn set_length_creates_grows_and_shrinks() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("len.bin");
+        set_local_file_length(&file, 1024).await.unwrap();
+        assert_eq!(fs::metadata(&file).unwrap().len(), 1024);
+        write_local_file_chunk(&file, 0, b"xyz").await.unwrap();
+        set_local_file_length(&file, 2).await.unwrap();
+        assert_eq!(fs::metadata(&file).unwrap().len(), 2);
+        let got = read_local_file_chunk(&file, 0, 8).await.unwrap();
+        assert_eq!(got, b"xy".to_vec());
+    }
+
 }

@@ -9,3 +9,6 @@ publish = false
 common = { workspace = true }
 async-trait = "0.1"
 uuid = { version = "1.7", features = ["v4", "fast-rng"] }
+
+[dev-dependencies]
+futures = "0.3"

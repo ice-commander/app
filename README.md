@@ -24,6 +24,10 @@ mod](https://github.com/ice-commander/app-nn)** adds a node.in.net account, find
 devices and moves files straight between them — same two panels, same keys, nothing new to
 learn. It installs alongside this build instead of replacing it, so you can keep both.
 
+Want the lot in one binary? **[Ice Commander Full](https://github.com/ice-commander/app-full)**
+forks that mod and stays a superset of it — the monolithic build where the larger features
+land, with nothing split out into a separate edition.
+
 Want it to do something else entirely? Fork it. That is what the licence is for.
 
 ---
