@@ -8,49 +8,50 @@ pub struct TerminalBridge {
     pub open: std::rc::Rc<dyn Fn()>,
     pub input_tx: std::rc::Rc<std::cell::RefCell<Option<tokio::sync::mpsc::Sender<Vec<u8>>>>>,
 }
-impl From<ApiConnection> for crate::connection_manager::FtpConnection {
-    fn from(c: ApiConnection) -> Self {
-        Self {
-            name: c.name,
-            folder: None,
-            protocol: c.protocol,
-            host: c.host,
-            port: c.port,
-            user: c.user,
-            pass: c.pass,
-            auth_type: c.auth_type,
-            key_path: c.key_path,
-            passphrase: c.passphrase,
-            remote_path: c.remote_path,
-            use_tunnel: c.use_tunnel,
-            tunnel_host: c.tunnel_host,
-            tunnel_port: c.tunnel_port,
-            tunnel_user: c.tunnel_user,
-            tunnel_auth_type: c.tunnel_auth_type,
-            tunnel_pass: c.tunnel_pass,
-            tunnel_key_path: c.tunnel_key_path,
-            tunnel_passphrase: c.tunnel_passphrase,
-        }
+pub fn record_from(c: ApiConnection) -> crate::connection_manager::Connection {
+    crate::connection_manager::Connection {
+        name: c.name,
+        folder: c.folder,
+        kind: c.kind.to_lowercase(),
+        settings: c.settings,
     }
 }
+
+fn shown_as(
+    c: crate::connection_manager::Connection,
+    stored_secrets: Vec<String>,
+) -> ApiConnection {
+    ApiConnection {
+        name: c.name,
+        folder: c.folder,
+        kind: c.kind,
+        settings: c.settings,
+        stored_secrets,
+    }
+}
+
 fn read_panel_state(router: &panel_router::PanelRouter) -> ApiPanelState {
     let path_ref = router.state.path.borrow();
-    let api_levels: Vec<ApiLevel> = path_ref.levels().iter().enumerate().map(|(i, l)| {
-        let label = if i == 0 { l.fs.display_name() } else { None };
-        let icon = label.as_ref().map(|_| {
-            let ic = l.fs.get_icon("/");
-            ic.rsplit('/').next().unwrap_or(&ic).to_string()
-        });
-        ApiLevel {
-            name: l.name.clone(),
-            is_archive: i > 0 && panel_router::nav::is_archive(&l.name),
-            label,
-            icon,
-        }
-    }).collect();
-    let cur_path = path_ref.active().relative_path.clone();
+    let api_levels: Vec<ApiLevel> = path_ref
+        .levels()
+        .iter()
+        .enumerate()
+        .map(|(i, l)| {
+            let label = if i == 0 { l.fs.display_name() } else { None };
+            let icon = label.as_ref().map(|_| {
+                let ic = l.fs.get_icon("/");
+                ic.rsplit('/').next().unwrap_or(&ic).to_string()
+            });
+            ApiLevel {
+                name: l.name.clone(),
+                is_archive: i > 0 && panel_router::nav::is_archive(&l.name),
+                label,
+                icon,
+            }
+        })
+        .collect();
     let display = path_ref.absolute_path();
-    let entries_data = path_ref.active().entries.clone();
+    let entries_data = path_ref.active().entries();
     drop(path_ref);
     use chrono::TimeZone;
     let api_entries: Vec<ApiFileEntry> = entries_data
@@ -71,6 +72,7 @@ fn read_panel_state(router: &panel_router::PanelRouter) -> ApiPanelState {
             ApiFileEntry {
                 path,
                 is_dir: e.is_dir,
+                enterable: !e.is_dir && panel_router::nav::is_archive(&e.name),
                 size: if e.is_dir { None } else { Some(e.size) },
                 modified,
                 name: e.name.clone(),
@@ -79,7 +81,7 @@ fn read_panel_state(router: &panel_router::PanelRouter) -> ApiPanelState {
         .collect();
     ApiPanelState {
         levels: api_levels,
-        path: cur_path,
+        path: display,
         entries: api_entries,
         showing_selector: router.is_showing_selector(),
         view_mode: router.view_mode(),
@@ -107,6 +109,13 @@ pub struct GtkBackend {
     pub right: crate::panel_builder::PanelInfo,
     pub config: client_config::AppConfig,
     pub selector_updaters: std::rc::Rc<std::cell::RefCell<Vec<std::rc::Rc<dyn Fn()>>>>,
+    /// The plugin views a browser has open against this app. Separate from the
+    /// GTK windows in `plugin_view`: a remote frontend renders them itself.
+    pub remote_views: std::cell::RefCell<ic_view_session::Hub>,
+}
+
+fn remote_facts() -> ic_view_session::HostFacts {
+    ic_view_session::HostFacts::new("web", crate::i18n::current_lang(), &["copy"])
 }
 
 impl GtkBackend {
@@ -123,7 +132,10 @@ impl GtkBackend {
         }
     }
     fn notify(&self, side: PanelSide) {
-        let side_str = match side { PanelSide::Left => "left", PanelSide::Right => "right" };
+        let side_str = match side {
+            PanelSide::Left => "left",
+            PanelSide::Right => "right",
+        };
         notify_side(side_str, self.info(side));
     }
     fn refresh_selectors(&self) {
@@ -132,6 +144,8 @@ impl GtkBackend {
         }
     }
 }
+
+const VIEWER_IS_A_WINDOW: &str = "the desktop application opens a viewer in a window of its own";
 
 #[async_trait::async_trait(?Send)]
 impl PanelBackend for GtkBackend {
@@ -220,19 +234,34 @@ impl PanelBackend for GtkBackend {
     async fn copy(&self, src: PanelSide, dst: PanelSide, paths: Vec<String>) -> ApiResult<()> {
         self.transfer_paths(src, dst, paths, false).await
     }
-    async fn move_entries(&self, src: PanelSide, dst: PanelSide, paths: Vec<String>) -> ApiResult<()> {
+    async fn move_entries(
+        &self,
+        src: PanelSide,
+        dst: PanelSide,
+        paths: Vec<String>,
+    ) -> ApiResult<()> {
         self.transfer_paths(src, dst, paths, true).await
     }
     async fn read_file(&self, side: PanelSide, path: String) -> ApiResult<ApiFileContent> {
         let provider = self.router(side).provider();
         const MAX: usize = 2 * 1024 * 1024;
         match provider.read_file(path.clone(), None).await {
-            Ok(bytes) if bytes.len() > MAX => {
-                Ok(ApiFileContent { path, content: String::new(), is_binary: true })
-            }
+            Ok(bytes) if bytes.len() > MAX => Ok(ApiFileContent {
+                path,
+                content: String::new(),
+                is_binary: true,
+            }),
             Ok(bytes) => match String::from_utf8(bytes) {
-                Ok(text) => Ok(ApiFileContent { path, content: text, is_binary: false }),
-                Err(_) => Ok(ApiFileContent { path, content: String::new(), is_binary: true }),
+                Ok(text) => Ok(ApiFileContent {
+                    path,
+                    content: text,
+                    is_binary: false,
+                }),
+                Err(_) => Ok(ApiFileContent {
+                    path,
+                    content: String::new(),
+                    is_binary: true,
+                }),
             },
             Err(e) => Err(e.to_string()),
         }
@@ -241,9 +270,10 @@ impl PanelBackend for GtkBackend {
         const MAX: usize = 100 * 1024 * 1024;
         let provider = self.router(side).provider();
         match provider.read_file(path, None).await {
-            Ok(bytes) if bytes.len() > MAX => {
-                Err(format!("file too large to stream ({} MB max)", MAX / 1024 / 1024))
-            }
+            Ok(bytes) if bytes.len() > MAX => Err(format!(
+                "file too large to stream ({} MB max)",
+                MAX / 1024 / 1024
+            )),
             Ok(bytes) => Ok(bytes),
             Err(e) => Err(e.to_string()),
         }
@@ -281,13 +311,24 @@ impl PanelBackend for GtkBackend {
                     crate::drives::AppDriveItem::RootFs => ("root", "/".to_string()),
                     crate::drives::AppDriveItem::UserHome => (
                         "home",
-                        dirs::home_dir().unwrap_or_default().to_string_lossy().into_owned(),
+                        dirs::home_dir()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .into_owned(),
                     ),
                     crate::drives::AppDriveItem::LocalDrive(p) => ("drive", p.clone()),
                     crate::drives::AppDriveItem::Volume(_) => ("volume", String::new()),
                     crate::drives::AppDriveItem::NetConnection(_) => ("net", String::new()),
+                    crate::drives::AppDriveItem::Offered { .. } => ("net", String::new()),
                 };
-                let icon = d.icon.rsplit('/').next().unwrap_or(&d.icon).to_string();
+                // The browser is handed a name to fetch from `/api/plugin-assets`, not bytes.
+                let icon = match &d.item {
+                    crate::drives::AppDriveItem::NetConnection(conn) => {
+                        connection_form::kind_icon_ref(&conn.kind)
+                    }
+                    _ => None,
+                }
+                .unwrap_or_else(|| d.icon.rsplit('/').next().unwrap_or(&d.icon).to_string());
                 ApiDrive {
                     name: d.name.clone(),
                     key: d.key.clone(),
@@ -318,64 +359,55 @@ impl PanelBackend for GtkBackend {
         }
     }
     fn get_connections(&self) -> Vec<ApiConnection> {
-        let conns: Vec<crate::connection_manager::FtpConnection> =
-            self.config.get("ui.ftp_connections").unwrap_or_default();
-        conns.into_iter().map(|c| ApiConnection {
-            name: c.name,
-            protocol: c.protocol,
-            host: c.host,
-            port: c.port,
-            user: c.user,
-            pass: None,
-            auth_type: c.auth_type,
-            key_path: c.key_path,
-            passphrase: None,
-            remote_path: c.remote_path,
-            use_tunnel: c.use_tunnel,
-            tunnel_host: c.tunnel_host,
-            tunnel_port: c.tunnel_port,
-            tunnel_user: c.tunnel_user,
-            tunnel_auth_type: c.tunnel_auth_type,
-            tunnel_pass: None,
-            tunnel_key_path: c.tunnel_key_path,
-            tunnel_passphrase: None,
-        }).collect()
+        let conns: Vec<crate::connection_manager::Connection> =
+            connection_form::stored_connections(&self.config);
+        conns
+            .into_iter()
+            .map(|mut c| {
+                let kind = c.kind.clone();
+                let stored_secrets = connection_form::stored_secrets(&c, &kind);
+                // No secret leaves the host, not even sealed.
+                connection_form::map_secrets(&mut c, &kind, |_| Some(String::new()));
+                shown_as(c, stored_secrets)
+            })
+            .collect()
     }
+
     fn save_connection(&self, connection: ApiConnection) -> ApiResult<()> {
-        let mut conns: Vec<crate::connection_manager::FtpConnection> =
-            self.config.get("ui.ftp_connections").unwrap_or_default();
-        let mut new_conn: crate::connection_manager::FtpConnection = connection.into();
+        let mut conns: Vec<crate::connection_manager::Connection> =
+            connection_form::stored_connections(&self.config);
+        let mut new_conn = crate::api::record_from(connection);
         if let Some(existing) = conns.iter().find(|c| c.name == new_conn.name) {
-            for (incoming, stored) in [
-                (&mut new_conn.pass, &existing.pass),
-                (&mut new_conn.passphrase, &existing.passphrase),
-                (&mut new_conn.tunnel_pass, &existing.tunnel_pass),
-                (&mut new_conn.tunnel_passphrase, &existing.tunnel_passphrase),
-            ] {
-                if incoming.as_deref().map(|v| v.is_empty()).unwrap_or(true) {
-                    *incoming = stored.clone();
-                }
+            if new_conn.folder.is_none() {
+                new_conn.folder = existing.folder.clone();
             }
+            if new_conn.settings.is_empty() {
+                new_conn.settings = existing.settings.clone();
+            }
+            let mut opened = existing.clone();
+            connection_form::unseal(&mut opened);
+            let kind = new_conn.kind.clone();
+            connection_form::carry_secrets(&mut new_conn, &opened, &kind);
         }
         crate::secret_store::seal_connection(&self.config, &mut new_conn);
         match conns.iter_mut().find(|c| c.name == new_conn.name) {
             Some(existing) => *existing = new_conn,
             None => conns.push(new_conn),
         }
-        self.config.set("ui.ftp_connections", conns);
+        connection_form::save_connections(&self.config, conns);
         self.config.save();
         self.refresh_selectors();
         Ok(())
     }
     fn delete_connection(&self, name: String) -> ApiResult<()> {
-        let mut conns: Vec<crate::connection_manager::FtpConnection> =
-            self.config.get("ui.ftp_connections").unwrap_or_default();
+        let mut conns: Vec<crate::connection_manager::Connection> =
+            connection_form::stored_connections(&self.config);
         let before = conns.len();
         conns.retain(|c| c.name != name);
         if conns.len() == before {
             Err(format!("no saved connection named {name:?}"))
         } else {
-            self.config.set("ui.ftp_connections", conns);
+            connection_form::save_connections(&self.config, conns);
             self.config.save();
             self.refresh_selectors();
             Ok(())
@@ -439,28 +471,30 @@ impl PanelBackend for GtkBackend {
     }
 
     fn export_connections(&self, password: Option<String>) -> ApiResult<String> {
-        let conns: Vec<crate::connection_manager::FtpConnection> =
-            self.config.get("ui.ftp_connections").unwrap_or_default();
+        let conns: Vec<crate::connection_manager::Connection> =
+            connection_form::stored_connections(&self.config);
         if conns.is_empty() {
             return Err("no saved connections to export".to_string());
         }
         let pw = password.filter(|p| !p.is_empty());
-        Ok(crate::secret_store::export_connections(&conns, pw.as_deref()))
+        Ok(crate::secret_store::export_connections(
+            &conns,
+            pw.as_deref(),
+        ))
     }
 
     fn import_connections(&self, data: String, password: Option<String>) -> ApiResult<usize> {
         let pw = password.filter(|p| !p.is_empty());
-        let incoming = crate::secret_store::parse_import(&data, pw.as_deref()).map_err(|e| {
-            match e {
+        let incoming =
+            crate::secret_store::parse_import(&data, pw.as_deref()).map_err(|e| match e {
                 ::secret_store::ImportError::NeedsPassword => NEEDS_PASSWORD.to_string(),
                 ::secret_store::ImportError::WrongPassword => "wrong password".to_string(),
                 ::secret_store::ImportError::Malformed => {
                     "not an ice-commander connections file".to_string()
                 }
-            }
-        })?;
-        let mut conns: Vec<crate::connection_manager::FtpConnection> =
-            self.config.get("ui.ftp_connections").unwrap_or_default();
+            })?;
+        let mut conns: Vec<crate::connection_manager::Connection> =
+            connection_form::stored_connections(&self.config);
         for mut c in incoming.into_iter() {
             crate::secret_store::seal_connection(&self.config, &mut c);
             match conns.iter_mut().find(|e| e.name == c.name) {
@@ -469,90 +503,32 @@ impl PanelBackend for GtkBackend {
             }
         }
         let n = conns.len();
-        self.config.set("ui.ftp_connections", conns);
+        connection_form::save_connections(&self.config, conns);
         self.config.save();
         self.refresh_selectors();
         Ok(n)
     }
 
     async fn connect_to(&self, side: PanelSide, connection: ApiConnection) -> ApiResult<()> {
-        let connection = {
-            let mut c = connection;
-            let stored: Vec<crate::connection_manager::FtpConnection> =
-                self.config.get("ui.ftp_connections").unwrap_or_default();
-            let saved = stored
-                .iter()
-                .find(|s| s.name == c.name)
-                .map(crate::secret_store::opened);
-            let s = saved.as_ref();
-            for (field, from) in [
-                (&mut c.pass, s.and_then(|s| s.pass.clone())),
-                (&mut c.passphrase, s.and_then(|s| s.passphrase.clone())),
-                (&mut c.tunnel_pass, s.and_then(|s| s.tunnel_pass.clone())),
-                (&mut c.tunnel_passphrase, s.and_then(|s| s.tunnel_passphrase.clone())),
-            ] {
-                if field.as_deref().map(|v| v.is_empty()).unwrap_or(true) {
-                    *field = from;
-                } else if let Some(v) = field.as_deref() {
-                    *field = crate::secret_store::decrypt_secret(v).or_else(|| field.clone());
-                }
-            }
-            c
-        };
-        let router = self.router(side);
-        let remote_path = connection.remote_path.clone().unwrap_or_else(|| "/".to_string());
-        let proto = connection.protocol.to_uppercase();
-        let result: Result<(), String> = if proto == "FTP" {
-            let rpc = std::rc::Rc::new(virtualfs::ftp_rpc::LocalFtpRpc {
-                name: connection.name.clone(),
-                host: connection.host.clone(),
-                port: connection.port,
-                user: connection.user.clone(),
-                pass: connection.pass.clone().unwrap_or_default(),
-                ftp_session: std::sync::Arc::new(std::sync::Mutex::new(None)),
-            });
-            router.mount_provider(rpc, "ftp", remote_path.clone());
-            Ok(())
-        } else if proto == "WEBDAV" {
-            let rpc = std::rc::Rc::new(virtualfs::webdav_rpc::LocalWebDavRpc {
-                name: connection.name.clone(),
-                url: connection.host.clone(),
-                user: if connection.user.is_empty() { None } else { Some(connection.user.clone()) },
-                pass: connection.pass.clone(),
-                remote_path: connection.remote_path.clone(),
-            });
-            router.mount_provider(rpc, "webdav", remote_path.clone());
-            Ok(())
-        } else if proto == "SFTP" {
-            let rpc = std::rc::Rc::new(virtualfs::sftp_rpc::LocalSftpRpc {
-                name: connection.name.clone(),
-                host: connection.host.clone(),
-                port: connection.port,
-                user: connection.user.clone(),
-                pass: connection.pass.clone(),
-                auth_type: connection.auth_type.clone().unwrap_or_else(|| "password".to_string()),
-                key_path: connection.key_path.clone(),
-                passphrase: connection.passphrase.clone(),
-                use_tunnel: connection.use_tunnel,
-                tunnel_host: connection.tunnel_host.clone(),
-                tunnel_port: connection.tunnel_port,
-                tunnel_user: connection.tunnel_user.clone(),
-                tunnel_auth_type: connection.tunnel_auth_type.clone(),
-                tunnel_pass: connection.tunnel_pass.clone(),
-                tunnel_key_path: connection.tunnel_key_path.clone(),
-                tunnel_passphrase: connection.tunnel_passphrase.clone(),
-                sftp_session: std::sync::Arc::new(std::sync::Mutex::new(None)),
-                tunnel: std::sync::Arc::new(std::sync::Mutex::new(None)),
-            });
-            router.mount_provider(rpc, "sftp", remote_path.clone());
-            Ok(())
-        } else {
-            Err(format!("Unknown protocol: {}", connection.protocol))
-        };
-        if result.is_ok() {
-            router.switch_to_selector(false);
+        let mut as_record = crate::api::record_from(connection);
+        let kind = as_record.kind.clone();
+        // A browser never holds a secret, so a blank one is filled from the record.
+        let saved = connection_form::stored_connections(&self.config)
+            .iter()
+            .find(|held| held.name == as_record.name)
+            .map(crate::secret_store::opened);
+        if let Some(saved) = saved.as_ref() {
+            connection_form::carry_secrets(&mut as_record, saved, &kind);
         }
-        result
+        connection_form::map_secrets(&mut as_record, &kind, crate::secret_store::decrypt_secret);
+        let at = connection_form::opening_path(&as_record).unwrap_or_else(|| "/".to_string());
+        let router = self.router(side);
+        let Some(served) = crate::connection_manager::mount_through_plugin(&as_record) else {
+            return Err(format!("no plugin serves {kind} connections"));
+        };
+        router.mount_provider(served, &kind, at);
+        router.switch_to_selector(false);
+        Ok(())
     }
 
     fn toggle_favorite(&self, path: String) {
@@ -565,6 +541,151 @@ impl PanelBackend for GtkBackend {
     fn set_favorites_only(&self, value: bool) {
         crate::favorites::set_favorites_only(&self.config, value);
         self.refresh_selectors();
+    }
+
+    fn connection_kinds(&self) -> ApiResult<serde_json::Value> {
+        let offered: Vec<serde_json::Value> = connection_form::kind_table()
+            .into_iter()
+            .map(|entry| {
+                serde_json::json!({
+                    "id": entry.protocol.to_lowercase(),
+                    "label": entry.label,
+                    "document": entry.document,
+                    "events": ic_plugin_host::connection_takes_events(&entry.protocol),
+                })
+            })
+            .collect();
+        Ok(serde_json::json!({ "host": remote_facts().to_json(), "kinds": offered }))
+    }
+
+    async fn submit_connection_form(
+        &self,
+        form: panel_server::ApiConnectionForm,
+    ) -> ApiResult<serde_json::Value> {
+        let kind = form.kind.to_lowercase();
+        let Some(document) = ic_plugin_host::connection_document(&kind) else {
+            return Err(format!("no plugin serves {kind} connections"));
+        };
+        let values = form.values.into_iter().collect();
+        let already_held =
+            connection_form::stored_secrets_of(&self.config, form.editing.as_deref(), &kind);
+        let collected = match connection_form::check_plugin_form(
+            &document,
+            values,
+            form.touched,
+            &already_held,
+        ) {
+            connection_form::FormOutcome::Ready(collected) => collected,
+            connection_form::FormOutcome::Incomplete(missing) => {
+                return Ok(serde_json::json!({ "ok": false, "missing": missing }))
+            }
+        };
+        let editing = form.editing.as_deref().and_then(|name| {
+            connection_form::stored_connections(&self.config)
+                .iter()
+                .position(|held| held.name == name)
+        });
+        let at = connection_form::store_connection(&self.config, &collected, &kind, editing)?;
+        self.refresh_selectors();
+        let Some(saved) = connection_form::stored_connections(&self.config)
+            .get(at)
+            .cloned()
+        else {
+            return Err("the record vanished as it was written".to_string());
+        };
+        if let Some(side) = form.connect {
+            let wire: ApiConnection = serde_json::to_value(&saved)
+                .and_then(serde_json::from_value)
+                .map_err(|e| e.to_string())?;
+            self.connect_to(side, wire).await?;
+        }
+        Ok(serde_json::json!({ "ok": true, "name": saved.name }))
+    }
+
+    fn connection_form_event(
+        &self,
+        kind: String,
+        event: serde_json::Value,
+    ) -> ApiResult<serde_json::Value> {
+        let kind = kind.to_lowercase();
+        connection_form::form_event(&kind, &event, &remote_facts())
+            .ok_or_else(|| format!("no plugin serves {kind} connections"))
+    }
+
+    fn plugin_views(&self) -> ApiResult<serde_json::Value> {
+        let offered: Vec<serde_json::Value> = ic_plugin_host::view_ids()
+            .into_iter()
+            .map(|id| {
+                let named = ic_plugin_host::view_title(&id).unwrap_or_else(|| id.clone());
+                let shown = connection_form::translate_optional(&named).unwrap_or(named);
+                serde_json::json!({ "id": id, "title": shown })
+            })
+            .collect();
+        Ok(serde_json::json!(offered))
+    }
+
+    fn open_plugin_view(&self, id: String, argument: String) -> ApiResult<serde_json::Value> {
+        self.remote_views
+            .borrow_mut()
+            .open(&id, &argument, &ic_plugin_host::Views, &remote_facts())
+            .ok_or_else(|| format!("{id} cannot describe itself"))
+    }
+
+    fn plugin_view_event(
+        &self,
+        id: String,
+        event: serde_json::Value,
+    ) -> ApiResult<serde_json::Value> {
+        self.remote_views
+            .borrow_mut()
+            .event(&id, &event, &ic_plugin_host::Views, &remote_facts())
+            .ok_or_else(|| format!("{id} is not open"))
+    }
+
+    fn close_plugin_view(&self, id: String) -> ApiResult<()> {
+        if self.remote_views.borrow_mut().close(&id) {
+            ic_plugin_host::view_closed(&id, 1);
+        }
+        Ok(())
+    }
+
+    fn plugin_asset(&self, name: String) -> ApiResult<Vec<u8>> {
+        ic_plugin_host::asset(&name).ok_or_else(|| format!("no plugin offers {name}"))
+    }
+
+    async fn open_viewer(
+        &self,
+        _side: PanelSide,
+        _path: String,
+        _client: String,
+    ) -> ApiResult<Option<serde_json::Value>> {
+        Ok(None)
+    }
+
+    fn viewer_event(
+        &self,
+        _instance: u64,
+        _event: serde_json::Value,
+    ) -> ApiResult<serde_json::Value> {
+        Err(VIEWER_IS_A_WINDOW.to_string())
+    }
+
+    fn viewer_part(&self, _instance: u64, _name: String) -> ApiResult<Vec<u8>> {
+        Err(VIEWER_IS_A_WINDOW.to_string())
+    }
+
+    fn close_viewer(&self, _instance: u64, _force: bool) -> ApiResult<serde_json::Value> {
+        Err(VIEWER_IS_A_WINDOW.to_string())
+    }
+
+    fn drop_viewers_of(&self, _client: String) {}
+
+    fn translations(&self) -> ApiResult<serde_json::Value> {
+        let lang = crate::i18n::current_lang();
+        Ok(serde_json::json!({
+            "lang": lang,
+            "keys": ic_i18n::dictionary(lang),
+        }))
     }
 }
 
@@ -583,6 +704,7 @@ pub fn start_api_dispatcher(
         right: right_info,
         config,
         selector_updaters,
+        remote_views: std::cell::RefCell::new(ic_view_session::Hub::default()),
     });
 
     let (gui_tx, gui_rx) = std::sync::mpsc::channel::<ApiCmd>();
@@ -619,11 +741,17 @@ fn handle_gtk_only(
 ) {
     match cmd {
         ApiCmd::OpenTerminal { side } => {
-            let bridge = match side { PanelSide::Left => left_term, PanelSide::Right => right_term };
+            let bridge = match side {
+                PanelSide::Left => left_term,
+                PanelSide::Right => right_term,
+            };
             (bridge.open)();
         }
         ApiCmd::TerminalInput { side, data } => {
-            let bridge = match side { PanelSide::Left => left_term, PanelSide::Right => right_term };
+            let bridge = match side {
+                PanelSide::Left => left_term,
+                PanelSide::Right => right_term,
+            };
             if let Some(tx) = bridge.input_tx.borrow().as_ref() {
                 let _ = tx.try_send(data);
             }
@@ -635,7 +763,12 @@ fn handle_gtk_only(
             backend.router(side).set_view_mode(mode);
             let _ = reply.send(Ok(()));
         }
-        ApiCmd::SetSort { side, column, descending, reply } => {
+        ApiCmd::SetSort {
+            side,
+            column,
+            descending,
+            reply,
+        } => {
             backend.router(side).set_sort(column, descending);
             let _ = reply.send(Ok(()));
         }
@@ -679,7 +812,10 @@ fn extra_toplevel_windows(main_win: Option<gtk::Window>) -> Vec<gtk::Window> {
     let toplevels = gtk::Window::toplevels();
     let mut out = Vec::new();
     for i in 0..toplevels.n_items() {
-        if let Some(w) = toplevels.item(i).and_then(|o| o.downcast::<gtk::Window>().ok()) {
+        if let Some(w) = toplevels
+            .item(i)
+            .and_then(|o| o.downcast::<gtk::Window>().ok())
+        {
             if main_win.as_ref() != Some(&w) {
                 out.push(w);
             }
@@ -698,7 +834,12 @@ async fn transfer_one(
     match src_provider.read_file(src_path.clone(), None).await {
         Ok(data) => {
             let len = data.len() as u64;
-            if dst_provider.write_file(dst_file, data, None, None).await.is_ok() && is_move {
+            if dst_provider
+                .write_file(dst_file, data, None, None)
+                .await
+                .is_ok()
+                && is_move
+            {
                 let _ = src_provider.delete_entries(vec![src_path]).await;
             }
             len
@@ -721,7 +862,11 @@ async fn transfer_batch(
         if cancel.load(std::sync::atomic::Ordering::Relaxed) {
             break;
         }
-        let file_name = src_path.rsplitn(2, '/').next().unwrap_or(&src_path).to_string();
+        let file_name = src_path
+            .rsplitn(2, '/')
+            .next()
+            .unwrap_or(&src_path)
+            .to_string();
         op.update(&file_name, done_bytes, done_files);
         let dst_file = format!("{}/{}", dst_path.trim_end_matches('/'), file_name);
         done_bytes += transfer_one(&src_provider, &dst_provider, src_path, dst_file, is_move).await;
@@ -759,7 +904,9 @@ impl GtkBackend {
             Some((src_plan, dst_plan)) => {
                 let (src_factory, dst_factory) = (src_plan.into_factory(), dst_plan.into_factory());
                 let handle = tokio::task::spawn_blocking(move || {
-                    let rt = match tokio::runtime::Builder::new_current_thread().enable_all().build()
+                    let rt = match tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
                     {
                         Ok(rt) => rt,
                         Err(_) => return,
@@ -781,8 +928,16 @@ impl GtkBackend {
                 let _ = handle.await;
             }
             None => {
-                transfer_batch(src_provider, dst_provider, paths, dst_path, is_move, op, cancel)
-                    .await;
+                transfer_batch(
+                    src_provider,
+                    dst_provider,
+                    paths,
+                    dst_path,
+                    is_move,
+                    op,
+                    cancel,
+                )
+                .await;
             }
         }
 

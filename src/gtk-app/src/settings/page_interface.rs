@@ -46,7 +46,10 @@ pub(super) fn build(
         .halign(Align::Start)
         .visible(false)
         .build();
-    let restart_warning = Label::builder().use_markup(true).halign(Align::Start).build();
+    let restart_warning = Label::builder()
+        .use_markup(true)
+        .halign(Align::Start)
+        .build();
     restart_warning.set_markup(&format!(
         "<span foreground='orange'><b>{}</b></span>",
         crate::i18n::tr("restart_required")
@@ -75,7 +78,10 @@ pub(super) fn build(
         .get::<String>("ui.language")
         .unwrap_or_else(|| "en".to_string());
     lang_row.set_selected(
-        LANGUAGES.iter().position(|(_, c)| *c == current_lang).unwrap_or(0) as u32,
+        LANGUAGES
+            .iter()
+            .position(|(_, c)| *c == current_lang)
+            .unwrap_or(0) as u32,
     );
     {
         let config = config.clone();
@@ -133,13 +139,20 @@ pub(super) fn build(
     let current_rowsize = config
         .get::<String>("ui.fm_list_row_size")
         .unwrap_or_else(|| "normal".to_string());
-    rowsize_row
-        .set_selected(ROW_SIZES.iter().position(|s| *s == current_rowsize).unwrap_or(0) as u32);
+    rowsize_row.set_selected(
+        ROW_SIZES
+            .iter()
+            .position(|s| *s == current_rowsize)
+            .unwrap_or(0) as u32,
+    );
     {
         let config = config.clone();
         let on_changed = on_connections_changed.clone();
         rowsize_row.connect_selected_notify(move |row| {
-            let value = ROW_SIZES.get(row.selected() as usize).copied().unwrap_or("normal");
+            let value = ROW_SIZES
+                .get(row.selected() as usize)
+                .copied()
+                .unwrap_or("normal");
             config.set("ui.fm_list_row_size", value.to_string());
             config.save();
             on_changed();
@@ -190,12 +203,18 @@ pub(super) fn build(
         .get::<String>("ui.open_connection_target")
         .unwrap_or_else(|| "active".to_string());
     target_row.set_selected(
-        OPEN_TARGETS.iter().position(|t| *t == current_target).unwrap_or(0) as u32,
+        OPEN_TARGETS
+            .iter()
+            .position(|t| *t == current_target)
+            .unwrap_or(0) as u32,
     );
     {
         let config = config.clone();
         target_row.connect_selected_notify(move |row| {
-            let value = OPEN_TARGETS.get(row.selected() as usize).copied().unwrap_or("active");
+            let value = OPEN_TARGETS
+                .get(row.selected() as usize)
+                .copied()
+                .unwrap_or("active");
             config.set("ui.open_connection_target", value.to_string());
             config.save();
         });

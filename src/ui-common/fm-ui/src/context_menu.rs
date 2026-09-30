@@ -69,22 +69,10 @@ pub fn create_context_menu(
     btn_copy.connect_clicked(move |_| {
         pop_copy.popdown();
         let full_item_path = format!("{}{}", safe_parent_c, name_c);
-        #[cfg(feature = "support-archives")]
-        let copy_text = if let Some((_archive_path, internal_path)) =
-            client_archives::parse_archive_path(&full_item_path)
-        {
-            if internal_path.is_empty() {
-                relative_to_root(&full_item_path, &root_path_c)
-            } else if internal_path.starts_with('/') {
-                internal_path
-            } else {
-                format!("/{}", internal_path)
-            }
-        } else {
-            relative_to_root(&full_item_path, &root_path_c)
+        let copy_text = match fm_core::plugin_fs::split_at_plugin_fs(&full_item_path) {
+            Some((_, inside)) if !inside.is_empty() => format!("/{inside}"),
+            _ => relative_to_root(&full_item_path, &root_path_c),
         };
-        #[cfg(not(feature = "support-archives"))]
-        let copy_text = relative_to_root(&full_item_path, &root_path_c);
 
         if let Some(display) = gtk::gdk::Display::default() {
             display.clipboard().set_text(&copy_text);
@@ -162,11 +150,8 @@ pub fn create_context_menu(
     vbox.append(&btn_dup);
 
     if shared.clip_count.get() > 0 {
-        let btn_paste = create_btn_with_label(
-            &crate::i18n::tr("fm.clip_paste"),
-            "edit-paste-symbolic",
-            "",
-        );
+        let btn_paste =
+            create_btn_with_label(&crate::i18n::tr("fm.clip_paste"), "edit-paste-symbolic", "");
         let pop_p = popover.clone();
         let sender_p = sender.clone();
         btn_paste.connect_clicked(move |_| {
@@ -214,17 +199,8 @@ pub fn create_context_menu(
     });
     vbox.append(&btn_chm);
 
-    #[cfg(feature = "support-archives")]
     {
-        let lower = name_clone.to_lowercase();
-        let is_archive = !is_dir
-            && (lower.ends_with(".zip")
-                || lower.ends_with(".tar")
-                || lower.ends_with(".tar.gz")
-                || lower.ends_with(".tgz")
-                || lower.ends_with(".tar.bz2")
-                || lower.ends_with(".tbz2")
-                || lower.ends_with(".tbz"));
+        let is_archive = !is_dir && fm_core::plugin_fs::handles_extension(&name_clone);
         if is_archive {
             let btn_ext = create_btn_with_label(
                 &crate::i18n::tr("fm.context.extract"),
@@ -242,58 +218,6 @@ pub fn create_context_menu(
             });
             vbox.append(&btn_ext);
         }
-
-        let f_path = format!("{}{}", safe_parent, name_clone);
-        let btn_zip = create_btn_with_label(
-            &crate::i18n::tr("fm.context.compress_zip"),
-            "package-x-generic-symbolic",
-            "",
-        );
-        let pop_zip = popover.clone();
-        let sender_zip = sender.clone();
-        let src_zip = f_path.clone();
-        btn_zip.connect_clicked(move |_| {
-            pop_zip.popdown();
-            let _ = sender_zip.output(FmPanelOutput::Compress {
-                src: src_zip.clone(),
-                dest: format!("{}.zip", src_zip),
-            });
-        });
-        vbox.append(&btn_zip);
-
-        let btn_tar = create_btn_with_label(
-            &crate::i18n::tr("fm.context.compress_tar"),
-            "package-x-generic-symbolic",
-            "",
-        );
-        let pop_tar = popover.clone();
-        let sender_tar = sender.clone();
-        let src_tar = f_path.clone();
-        btn_tar.connect_clicked(move |_| {
-            pop_tar.popdown();
-            let _ = sender_tar.output(FmPanelOutput::Compress {
-                src: src_tar.clone(),
-                dest: format!("{}.tar.gz", src_tar),
-            });
-        });
-        vbox.append(&btn_tar);
-
-        let btn_tbz = create_btn_with_label(
-            &crate::i18n::tr("fm.context.compress_tar_bz2"),
-            "package-x-generic-symbolic",
-            "",
-        );
-        let pop_tbz = popover.clone();
-        let sender_tbz = sender.clone();
-        let src_tbz = f_path;
-        btn_tbz.connect_clicked(move |_| {
-            pop_tbz.popdown();
-            let _ = sender_tbz.output(FmPanelOutput::Compress {
-                src: src_tbz.clone(),
-                dest: format!("{}.tar.bz2", src_tbz),
-            });
-        });
-        vbox.append(&btn_tbz);
     }
 
     popover.set_child(Some(&vbox));

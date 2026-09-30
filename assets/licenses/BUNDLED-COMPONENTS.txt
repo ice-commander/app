@@ -40,54 +40,33 @@ GTK stack — LGPL-2.1-or-later                                       Windows, m
     License:  LGPL-2.1.txt
 
 
-mpv / libmpv — LGPL-2.1-or-later                                    Windows, macOS
-    Video playback. Both bundles use an LGPL build of mpv (meson -Dgpl=false), so none of
-    mpv's GPL-only parts are present. Ice Commander only ever DECODES video; the GPL parts
-    of this stack are encoders (x264, x265), libpostproc and the DVD/CD readers, and none
-    of them is built.
+Video — decoded by the plugin; on Windows the library still travels in this bundle
+    Ice Commander decodes no video. It is played by the video plugin, which is built from
+    its own repository (plugin-video) and lists its own licences.
 
-    Windows
-        Version:  mpv v0.41.0-769-g2d5dfb343, built 2026-06-10
-        Source:   https://github.com/mpv-player/mpv       (commit 2d5dfb343)
-        Build:    https://github.com/zhongfly/mpv-winbuild — the prebuilt "mpv-dev-lgpl"
-                  artifact, downloaded from that project's releases and committed to this
-                  tree as artifacts/gtk4-win32-x64/libmpv-2.dll. The DLL records the meson
-                  line it was configured with, including -Dgpl=false.
-        FFmpeg:   linked statically into that DLL; the binary reports
-                  libavcodec 62.36.101 and libavformat 62.19.101. The exact FFmpeg commit
-                  is the one pinned by the mpv-winbuild recipe for that release.
+    Where the library comes from differs by system, and on Windows it is still ours to
+    declare: the installer copies the whole GTK runtime folder beside the application
+    (src/gtk-app/setup.nsi), and libmpv-2.dll is in it. The plugin opens it from there
+    rather than carrying a second copy. On Linux and macOS nothing of the sort is in this
+    bundle — the plugin brings its own.
 
-    macOS
-        Built from source by builder/build_libmpv_ffmpeg_lgpl.sh into artifacts/lgpl-media, and
-        shipped as separate shared libraries in IceCommander.app/Contents/Libs.
-        Version:  mpv v0.41.0
-        Source:   https://github.com/mpv-player/mpv       (tag v0.41.0)
+    One and the same component on all three systems: LGPL libmpv, built decode-only — mpv
+    with meson -Dgpl=false, its FFmpeg without --enable-gpl — so none of the GPL parts (the
+    x264 and x265 encoders, libpostproc, the DVD/CD readers) are present.
 
-    License:  LGPL-2.1.txt
+        Linux    built by docker-libmpv-multibuild:
+                 mpv v0.41.0, FFmpeg 8.1.2, dav1d 1.5.1, libplacebo v7.349.0
+        macOS    built by builder/build_libmpv_ffmpeg_lgpl.sh in this repository:
+                 mpv v0.41.0, FFmpeg 8.1.2
+        Windows  a prebuilt LGPL libmpv-2.dll — mpv v0.41.0-769-g2d5dfb343, with FFmpeg
+                 linked statically into it, reporting libavcodec 62.36.101 and
+                 libavformat 62.19.101; built by https://github.com/zhongfly/mpv-winbuild
+                 (the "mpv-dev-lgpl" artifact)
 
-
-FFmpeg — LGPL-2.1-or-later                                          Windows, macOS
-    Linked by libmpv (statically on Windows, as shared libraries on macOS).
-    Source:   https://git.ffmpeg.org/ffmpeg.git
-
-    macOS: version 8.1.2, configured by builder/build_libmpv_ffmpeg_lgpl.sh WITHOUT --enable-gpl
-    and without --enable-version3, and with the whole write side removed:
-
-        --disable-encoders --disable-muxers --disable-devices --disable-avdevice
-        --enable-videotoolbox --enable-audiotoolbox --enable-libdav1d
-
-    configure reports "License: LGPL version 2.1 or later". The build contains 0 encoders
-    and 0 muxers; every decoder the viewer needs — H.264, HEVC, AV1, VP8/VP9, MPEG-2/4,
-    AAC, MP3, Opus, Vorbis, FLAC, AC3 — is LGPL.
-
-    License:  LGPL-2.1.txt
-
-
-dav1d — BSD-2-Clause                                                        macOS
-    The AV1 decoder. FFmpeg's built-in "av1" decoder is hardware-accelerated only, so
-    software AV1 playback needs this library.
-    Version:  1.5.3
-    Source:   https://code.videolan.org/videolan/dav1d
+    Source:   https://github.com/mpv-player/mpv        (tag v0.41.0 / commit 2d5dfb343)
+              https://git.ffmpeg.org/ffmpeg.git        (8.1.2)
+              https://code.videolan.org/videolan/dav1d (1.5.1)
+    License:  LGPL-2.1.txt for mpv and FFmpeg; dav1d is BSD-2-Clause
 
 
 fakelzo (in place of lzo2) — MIT                                    Windows, macOS
@@ -120,7 +99,7 @@ fakelzo (in place of lzo2) — MIT                                    Windows, m
               and a README covering the reasoning and the measurement.
 
     The Ice Commander source tree itself remains MIT OR Apache-2.0, and the Linux build
-    contains no GPL code either — it plays video through GStreamer, which is not bundled.
+    contains no GPL code either.
 
 
 FreeType — FTL                                                      Windows, macOS
@@ -158,6 +137,7 @@ gdk-pixbuf's macOS-icon loader — LGPL, despite the string saying "GPL"        
 Other libraries in the Windows bundle
     OpenSSL          3.6.0     Apache-2.0        https://github.com/openssl/openssl
     libssh2          1.11.1    BSD-3-Clause      https://github.com/libssh2/libssh2
+                     (brought in by curl; the application itself links neither)
     curl             8.17.0    curl license      https://github.com/curl/curl
     libiconv         1.18      LGPL-2.1          https://www.gnu.org/software/libiconv/
     gettext/libintl  0.26      LGPL-2.1          https://www.gnu.org/software/gettext/

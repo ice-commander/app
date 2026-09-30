@@ -1,8 +1,6 @@
 import ssdIcon from '../assets/ssd.svg'
 import homeIcon from '../assets/home.svg'
 import atHomeIcon from '../assets/at-home.svg'
-import ftpIcon from '../assets/ftp.svg'
-import netdriveIcon from '../assets/netdrive.svg'
 import connectIcon from '../assets/connect.svg'
 import folderIcon from '../assets/folder.svg'
 
@@ -11,14 +9,19 @@ const ICONS: Record<string, string> = {
   'ssd.svg': ssdIcon,
   'home.svg': homeIcon,
   'at-home.svg': atHomeIcon,
-  'ftp.svg': ftpIcon,
-  'netdrive.svg': netdriveIcon,
   'connect.svg': connectIcon,
   'folder.svg': folderIcon,
 }
 
-export function driveIcon(iconBasename: string): string {
-  return ICONS[iconBasename] ?? folderIcon
+// A plugin's own picture is not bundled with the interface: the backend answers
+// for it under the name the plugin registered it with.
+const PLUGIN_ASSET = 'asset:'
+
+export function driveIcon(icon: string): string {
+  if (icon.startsWith(PLUGIN_ASSET)) {
+    return `/api/plugin-assets/${icon.slice(PLUGIN_ASSET.length)}`
+  }
+  return ICONS[icon] ?? folderIcon
 }
 
 // Section grouping for the unified source list, mirroring the GTK selector.

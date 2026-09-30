@@ -39,7 +39,10 @@ pub(super) fn build(page_box: &Box, parent: &gtk::Window, config: client_config:
         .build();
     let current_target = crate::logging::target(&config);
     target_row.set_selected(
-        TARGET_KEYS.iter().position(|t| *t == current_target).unwrap_or(0) as u32,
+        TARGET_KEYS
+            .iter()
+            .position(|t| *t == current_target)
+            .unwrap_or(0) as u32,
     );
     group.add(&target_row);
 
@@ -56,7 +59,10 @@ pub(super) fn build(page_box: &Box, parent: &gtk::Window, config: client_config:
         .build();
     let current_level = ic_logging::level_as_str(crate::logging::level(&config));
     level_row.set_selected(
-        LEVEL_KEYS.iter().position(|l| *l == current_level).unwrap_or(2) as u32,
+        LEVEL_KEYS
+            .iter()
+            .position(|l| *l == current_level)
+            .unwrap_or(2) as u32,
     );
     group.add(&level_row);
 
@@ -123,10 +129,7 @@ pub(super) fn build(page_box: &Box, parent: &gtk::Window, config: client_config:
                 .get(target_row.selected() as usize)
                 .copied()
                 .unwrap_or(ic_logging::Target::Off);
-            let to_file = matches!(
-                target,
-                ic_logging::Target::File | ic_logging::Target::Both
-            );
+            let to_file = matches!(target, ic_logging::Target::File | ic_logging::Target::Both);
             row_path.set_sensitive(to_file);
             size_row.set_sensitive(to_file);
             row_open.set_sensitive(to_file);
@@ -154,7 +157,10 @@ pub(super) fn build(page_box: &Box, parent: &gtk::Window, config: client_config:
     {
         let config = config.clone();
         level_row.connect_selected_notify(move |row| {
-            let level = LEVEL_KEYS.get(row.selected() as usize).copied().unwrap_or("info");
+            let level = LEVEL_KEYS
+                .get(row.selected() as usize)
+                .copied()
+                .unwrap_or("info");
             config.set("ui.log_level", level.to_string());
             config.save();
             crate::logging::apply(&config);
@@ -222,7 +228,9 @@ pub(super) fn build(page_box: &Box, parent: &gtk::Window, config: client_config:
             let target = if path.exists() {
                 path.clone()
             } else {
-                path.parent().map(|p| p.to_path_buf()).unwrap_or(path.clone())
+                path.parent()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or(path.clone())
             };
             crate::utils::open_with_system(&target);
         });

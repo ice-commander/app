@@ -6,7 +6,7 @@ use ratatui::Frame;
 
 use crate::app::App;
 use crate::overlay::Overlay;
-use crate::util::{is_binary, join_rel, to_lines};
+use crate::util::{byte_at, is_binary, join_rel, to_lines};
 
 pub(crate) struct Editor {
     pub(crate) path: String,
@@ -22,9 +22,6 @@ impl Editor {
     fn cur_len(&self) -> usize {
         self.lines[self.cy].chars().count()
     }
-    fn byte_at(line: &str, cx: usize) -> usize {
-        line.char_indices().nth(cx).map(|(b, _)| b).unwrap_or(line.len())
-    }
     fn clamp_cx(&mut self) {
         let l = self.cur_len();
         if self.cx > l {
@@ -32,13 +29,13 @@ impl Editor {
         }
     }
     fn insert_char(&mut self, c: char) {
-        let b = Self::byte_at(&self.lines[self.cy], self.cx);
+        let b = byte_at(&self.lines[self.cy], self.cx);
         self.lines[self.cy].insert(b, c);
         self.cx += 1;
         self.dirty = true;
     }
     fn newline(&mut self) {
-        let b = Self::byte_at(&self.lines[self.cy], self.cx);
+        let b = byte_at(&self.lines[self.cy], self.cx);
         let rest = self.lines[self.cy].split_off(b);
         self.lines.insert(self.cy + 1, rest);
         self.cy += 1;
@@ -49,7 +46,7 @@ impl Editor {
         if self.cx > 0 {
             let (s, e) = {
                 let line = &self.lines[self.cy];
-                (Self::byte_at(line, self.cx - 1), Self::byte_at(line, self.cx))
+                (byte_at(line, self.cx - 1), byte_at(line, self.cx))
             };
             self.lines[self.cy].replace_range(s..e, "");
             self.cx -= 1;
@@ -66,7 +63,7 @@ impl Editor {
         if self.cx < len {
             let (s, e) = {
                 let line = &self.lines[self.cy];
-                (Self::byte_at(line, self.cx), Self::byte_at(line, self.cx + 1))
+                (byte_at(line, self.cx), byte_at(line, self.cx + 1))
             };
             self.lines[self.cy].replace_range(s..e, "");
         } else if self.cy + 1 < self.lines.len() {
@@ -110,7 +107,9 @@ impl Editor {
 
 impl App {
     pub(crate) async fn open_editor(&mut self) {
-        let Some(row) = self.panes[self.active].selected_row() else { return };
+        let Some(row) = self.panes[self.active].selected_row() else {
+            return;
+        };
         if row.is_dir {
             return;
         }
@@ -145,7 +144,11 @@ impl App {
             _ => return,
         };
         let core = self.panes[self.active].core.clone();
-        match core.active_provider().write_file(path, text.into_bytes(), None, None).await {
+        match core
+            .active_provider()
+            .write_file(path, text.into_bytes(), None, None)
+            .await
+        {
             Ok(_) => {
                 let _ = core.refresh().await;
                 self.overlay = Overlay::None;
@@ -190,9 +193,16 @@ pub(crate) fn draw_editor(f: &mut Frame, ed: &Editor) {
     let dirty = if ed.dirty { "*" } else { "" };
     let title = match &ed.status {
         Some(s) => format!(" Edit: {}{dirty}  —  {s} ", ed.title),
-        None => format!(" Edit: {}{dirty}  —  F2/Ctrl-S save · Esc cancel ", ed.title),
+        None => format!(
+            " Edit: {}{dirty}  —  F2/Ctrl-S save · Esc cancel ",
+            ed.title
+        ),
     };
-    let accent = if ed.status.is_some() { Color::Red } else { Color::Green };
+    let accent = if ed.status.is_some() {
+        Color::Red
+    } else {
+        Color::Green
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)

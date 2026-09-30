@@ -31,7 +31,11 @@ impl RegistryPanel {
                         RegistryOutput::RequestKeys { path } => {
                             Self::answer_keys(&sender, path);
                         }
-                        RegistryOutput::SetValue { path, value_name, data } => {
+                        RegistryOutput::SetValue {
+                            path,
+                            value_name,
+                            data,
+                        } => {
                             #[cfg(target_os = "windows")]
                             {
                                 match ic_platform::registry::set_registry_value(
@@ -49,7 +53,11 @@ impl RegistryPanel {
                             #[cfg(not(target_os = "windows"))]
                             let _ = (path, value_name, data);
                         }
-                        RegistryOutput::DeleteEntry { path, is_key, value_name } => {
+                        RegistryOutput::DeleteEntry {
+                            path,
+                            is_key,
+                            value_name,
+                        } => {
                             #[cfg(target_os = "windows")]
                             {
                                 match ic_platform::registry::delete_registry_entry(
@@ -88,12 +96,15 @@ impl RegistryPanel {
     fn answer_keys(sender: &relm4::Sender<RegistryInput>, path: String) {
         #[cfg(target_os = "windows")]
         {
-            let (subkeys, values, error) =
-                ic_platform::registry::read_registry_keys(&path);
+            let (subkeys, values, error) = ic_platform::registry::read_registry_keys(&path);
             if let Some(err) = error {
                 println!("[APP LOG] ❌ Registry access error: {}", err);
             } else {
-                let _ = sender.send(RegistryInput::Entries { path, subkeys, values });
+                let _ = sender.send(RegistryInput::Entries {
+                    path,
+                    subkeys,
+                    values,
+                });
             }
         }
         #[cfg(not(target_os = "windows"))]

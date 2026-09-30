@@ -149,7 +149,9 @@ impl AudioPlayerView {
                 .set_child(Some(&gtk::Image::from_resource(
                     "/com/icecommander/gtk/play.svg",
                 )));
-            view_close_clone.title_label.set_text(&*crate::i18n::tr("player.no_audio_playing"));
+            view_close_clone
+                .title_label
+                .set_text(&*crate::i18n::tr("player.no_audio_playing"));
             if let Some(ref cb) = *view_close_clone.on_hide.borrow() {
                 cb();
             }
@@ -180,11 +182,12 @@ impl AudioPlayerView {
             if view_timer_clone.container.root().is_some() {
                 was_attached.set(true);
             } else if was_attached.get() {
-                view_timer_clone.player.stop();
+                // This bar has gone; the player is not its to stop — another tab may be listening.
                 return gtk::glib::ControlFlow::Break;
             }
             let p = &view_timer_clone.player;
-            if !p.is_playing() && !p.current_title().is_empty() {
+            // Run out, not merely paused: pausing must not jump to the next track.
+            if p.is_finished() && !p.current_title().is_empty() {
                 if let Some(idx) = p.current_idx() {
                     let playlist = p.playlist();
                     if idx + 1 < playlist.len() {
@@ -196,7 +199,9 @@ impl AudioPlayerView {
                             .set_child(Some(&gtk::Image::from_resource(
                                 "/com/icecommander/gtk/play.svg",
                             )));
-                        view_timer_clone.title_label.set_text(&*crate::i18n::tr("player.playback_finished"));
+                        view_timer_clone
+                            .title_label
+                            .set_text(&*crate::i18n::tr("player.playback_finished"));
                         if let Some(ref cb) = *view_timer_clone.on_hide.borrow() {
                             cb();
                         }
@@ -208,7 +213,9 @@ impl AudioPlayerView {
                         .set_child(Some(&gtk::Image::from_resource(
                             "/com/icecommander/gtk/play.svg",
                         )));
-                    view_timer_clone.title_label.set_text(&*crate::i18n::tr("player.playback_finished"));
+                    view_timer_clone
+                        .title_label
+                        .set_text(&*crate::i18n::tr("player.playback_finished"));
                     if let Some(ref cb) = *view_timer_clone.on_hide.borrow() {
                         cb();
                     }
@@ -238,24 +245,34 @@ impl AudioPlayerView {
         let name_clone = name.clone();
         let provider = self.router.provider();
         let path_c = path.clone();
+        let path_for_stop = path.clone();
 
         gtk::glib::spawn_future_local(async move {
             let blocking = crate::utils::read_blocking(&path_c);
             match provider.read_file_opt(path_c, None, blocking).await {
                 Ok(bytes) => {
-                    if let Err(e) = player_clone.play_bytes(name_clone, bytes) {
-                        view_clone.title_label.set_text(&*crate::i18n::trf("player.error", &[("error", &*(e.to_string()).to_string())]));
+                    if let Err(e) = player_clone.play_bytes_of(name_clone, &path_for_stop, bytes) {
+                        view_clone.title_label.set_text(&*crate::i18n::trf(
+                            "player.error",
+                            &[("error", &*(e.to_string()).to_string())],
+                        ));
                     }
                 }
                 Err(e) => {
-                    view_clone.title_label.set_text(&*crate::i18n::trf("player.read_error", &[("error", &*(e.to_string()).to_string())]));
+                    view_clone.title_label.set_text(&*crate::i18n::trf(
+                        "player.read_error",
+                        &[("error", &*(e.to_string()).to_string())],
+                    ));
                 }
             }
         });
     }
 
     pub fn set_playing_track(&self, title: &str) {
-        self.title_label.set_text(&*crate::i18n::trf("player.playing_status", &[("title", &*(title).to_string())]));
+        self.title_label.set_text(&*crate::i18n::trf(
+            "player.playing_status",
+            &[("title", &*(title).to_string())],
+        ));
         self.play_btn.set_child(Some(&gtk::Image::from_resource(
             "/com/icecommander/gtk/pause.svg",
         )));

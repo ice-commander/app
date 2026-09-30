@@ -1,49 +1,17 @@
 use adw::prelude::*;
 use gtk::{gdk, gio, glib, pango};
 use gtk::{
-    Align, Box, Button, Image, Label, ListView, Orientation, ScrolledWindow,
-    SignalListItemFactory, SingleSelection, TreeExpander, TreeListModel,
+    Align, Box, Button, Image, Label, ListView, Orientation, ScrolledWindow, SignalListItemFactory,
+    SingleSelection, TreeExpander, TreeListModel,
 };
 use std::rc::Rc;
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Default)]
-pub struct FtpConnection {
-    pub name: String,
-    #[serde(default)]
-    pub folder: Option<String>,
-    pub protocol: String,
-    pub host: String,
-    pub port: u16,
-    pub user: String,
-    #[serde(default)]
-    pub pass: Option<String>,
-    #[serde(default)]
-    pub auth_type: Option<String>,
-    #[serde(default)]
-    pub key_path: Option<String>,
-    #[serde(default)]
-    pub passphrase: Option<String>,
-    #[serde(default)]
-    pub remote_path: Option<String>,
-    #[serde(default)]
-    pub use_tunnel: Option<bool>,
-    #[serde(default)]
-    pub tunnel_host: Option<String>,
-    #[serde(default)]
-    pub tunnel_port: Option<u16>,
-    #[serde(default)]
-    pub tunnel_user: Option<String>,
-    #[serde(default)]
-    pub tunnel_auth_type: Option<String>,
-    #[serde(default)]
-    pub tunnel_pass: Option<String>,
-    #[serde(default)]
-    pub tunnel_key_path: Option<String>,
-    #[serde(default)]
-    pub tunnel_passphrase: Option<String>,
-}
+pub use connection_form::{
+    collect_plugin_form, kind_index, kind_protocol, kind_table, plugin_mount_settings,
+    plugin_state_from_record, translate_optional, Connection,
+};
 
-fn connection_folder_paths(conns: &[FtpConnection], explicit: &[String]) -> Vec<String> {
+fn connection_folder_paths(conns: &[Connection], explicit: &[String]) -> Vec<String> {
     fn add_with_ancestors(set: &mut std::collections::BTreeSet<String>, path: &str) {
         let mut acc = String::new();
         for seg in path.split('/').filter(|s| !s.is_empty()) {
@@ -77,8 +45,9 @@ fn folder_leaf(path: &str) -> &str {
 #[derive(Clone)]
 enum ConnNode {
     Folder(String),
-    Connection { index: usize, conn: FtpConnection },
+    Connection { index: usize, conn: Connection },
     NewFolder,
+    Pinned(ic_plugin_host::PinnedConnection),
 }
 
 enum CommitError {
@@ -114,37 +83,54 @@ impl PendingEdit {
 }
 
 fn build_children_map(
-    conns: &[FtpConnection],
+    conns: &[Connection],
     explicit: &[String],
     pending: Option<&PendingEdit>,
 ) -> std::collections::HashMap<Option<String>, Vec<ConnNode>> {
     let mut map: std::collections::HashMap<Option<String>, Vec<ConnNode>> =
         std::collections::HashMap::new();
     for p in connection_folder_paths(conns, explicit) {
-        map.entry(parent_folder(&p)).or_default().push(ConnNode::Folder(p));
+        map.entry(parent_folder(&p))
+            .or_default()
+            .push(ConnNode::Folder(p));
     }
     for (index, conn) in conns.iter().enumerate() {
-        let key = conn.folder.as_deref().filter(|f| !f.is_empty()).map(str::to_string);
-        map.entry(key)
-            .or_default()
-            .push(ConnNode::Connection { index, conn: conn.clone() });
+        let key = conn
+            .folder
+            .as_deref()
+            .filter(|f| !f.is_empty())
+            .map(str::to_string);
+        map.entry(key).or_default().push(ConnNode::Connection {
+            index,
+            conn: conn.clone(),
+        });
     }
-    if let Some(PendingEdit { edit: TreeEdit::NewFolder { parent }, .. }) = pending {
-        map.entry(parent.clone()).or_default().push(ConnNode::NewFolder);
+    if let Some(PendingEdit {
+        edit: TreeEdit::NewFolder { parent },
+        ..
+    }) = pending
+    {
+        map.entry(parent.clone())
+            .or_default()
+            .push(ConnNode::NewFolder);
     }
     map
 }
 
 const PRIMARY_BUTTON_GAP: i32 = 12;
 
-fn folder_contains(conn: &FtpConnection, path: &str) -> bool {
+fn folder_contains(conn: &Connection, path: &str) -> bool {
     let prefix = format!("{}/", path);
     conn.folder.as_deref() == Some(path)
-        || conn.folder.as_deref().map(|f| f.starts_with(&prefix)).unwrap_or(false)
+        || conn
+            .folder
+            .as_deref()
+            .map(|f| f.starts_with(&prefix))
+            .unwrap_or(false)
 }
 
 fn connections_in_folder(config: &client_config::AppConfig, path: &str) -> Vec<String> {
-    let conns: Vec<FtpConnection> = config.get("ui.ftp_connections").unwrap_or_default();
+    let conns: Vec<Connection> = connection_form::stored_connections(&config);
     conns
         .into_iter()
         .filter(|c| folder_contains(c, path))
@@ -172,7 +158,7 @@ fn rename_folder(config: &client_config::AppConfig, old_path: &str, new_leaf: &s
             None
         }
     };
-    let mut conns: Vec<FtpConnection> = config.get("ui.ftp_connections").unwrap_or_default();
+    let mut conns: Vec<Connection> = connection_form::stored_connections(&config);
     for c in conns.iter_mut() {
         if let Some(f) = c.folder.clone() {
             if let Some(nf) = remap(&f) {
@@ -180,7 +166,7 @@ fn rename_folder(config: &client_config::AppConfig, old_path: &str, new_leaf: &s
             }
         }
     }
-    config.set("ui.ftp_connections", conns);
+    connection_form::save_connections(&config, conns);
     let mut folders: Vec<String> = config.get("ui.ftp_connection_folders").unwrap_or_default();
     for f in folders.iter_mut() {
         if let Some(nf) = remap(f) {
@@ -193,9 +179,9 @@ fn rename_folder(config: &client_config::AppConfig, old_path: &str, new_leaf: &s
 
 fn delete_folder(config: &client_config::AppConfig, path: &str) {
     let prefix = format!("{}/", path);
-    let mut conns: Vec<FtpConnection> = config.get("ui.ftp_connections").unwrap_or_default();
+    let mut conns: Vec<Connection> = connection_form::stored_connections(&config);
     conns.retain(|c| !folder_contains(c, path));
-    config.set("ui.ftp_connections", conns);
+    connection_form::save_connections(&config, conns);
     let mut folders: Vec<String> = config.get("ui.ftp_connection_folders").unwrap_or_default();
     folders.retain(|f| f != path && !f.starts_with(&prefix));
     config.set("ui.ftp_connection_folders", folders);
@@ -213,7 +199,10 @@ fn popup_actions(
     popover.set_parent(anchor);
     popover.set_pointing_to(Some(&gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
     for (label, cb) in items {
-        let btn = Button::builder().label(&label).css_classes(vec!["flat"]).build();
+        let btn = Button::builder()
+            .label(&label)
+            .css_classes(vec!["flat"])
+            .build();
         if let Some(child) = btn.child().and_downcast::<Label>() {
             child.set_xalign(0.0);
         }
@@ -250,13 +239,104 @@ fn node_under(tree_view: &ListView, x: f64, y: f64) -> Option<(ConnNode, u32)> {
     Some((node, pos))
 }
 
+type PluginEvent = dyn Fn(&str, Option<&str>, Option<&str>, Option<serde_json::Value>);
+type PluginChange = dyn Fn(&str, &str, serde_json::Value, u32);
+type PluginRebuild = dyn Fn(&str, &ic_view::Document, ic_view::State);
+type PluginRemount = Rc<std::cell::RefCell<Option<Rc<dyn Fn()>>>>;
+
+/// What a kind's form asks to be heard from. A kind whose plugin takes no
+/// events hears nothing, however its document is written.
+fn plugin_form_watches(listens: bool, document: &ic_view::Document) -> Vec<ic_view_session::Watch> {
+    if listens {
+        ic_view_session::watches(document)
+    } else {
+        Vec::new()
+    }
+}
+
+/// One spelling for the kind, so the session, the lookups and the slot the form
+/// is remembered under all agree with each other.
+fn plugin_kind_id(protocol: &str) -> String {
+    protocol.to_lowercase()
+}
+
+/// Every kind is seeded from the record being edited, never from what the kind
+/// shown before it left behind under the same binds.
+fn seeded_from_record(
+    document: &ic_view::Document,
+    kind: &str,
+    record: Option<&Connection>,
+) -> ic_view::State {
+    let Some(record) = record else {
+        let mut fresh = ic_view::State::default();
+        fresh.set_view("mode", serde_json::Value::String("new".to_string()));
+        return fresh;
+    };
+    let mut state = plugin_state_from_record(document, record);
+    state.set_view("mode", serde_json::Value::String("edit".to_string()));
+    for bind in connection_form::stored_secrets(record, kind) {
+        state.stored_secrets.insert(bind);
+    }
+    state
+}
+
+/// What a rebuilt form cannot seed back from the state: a value a widget holds
+/// that never reached it.
+fn carried_into_rebuild(
+    document: &ic_view::Document,
+    state: &ic_view::State,
+    held: &dyn Fn(&str) -> Option<serde_json::Value>,
+) -> Vec<(String, serde_json::Value)> {
+    let mut carried = Vec::new();
+    document.form.walk(&mut |node| {
+        let (Some(id), Some(bind)) = (node.id.as_ref(), node.bind.as_ref()) else {
+            return;
+        };
+        if state.state.contains_key(bind) {
+            return;
+        }
+        let Some(value) = held(id) else {
+            return;
+        };
+        if value.as_str().is_some_and(str::is_empty) {
+            return;
+        }
+        carried.push((bind.clone(), value));
+    });
+    carried
+}
+
+/// Tickets for the debounced changes still ticking: a timer cannot be recalled,
+/// so a rebuild forgets every ticket it handed out and the numbering never restarts.
+#[derive(Default)]
+struct Debounces {
+    issued: u64,
+    live: std::collections::BTreeMap<String, u64>,
+}
+
+impl Debounces {
+    fn arm(&mut self, node: &str) -> u64 {
+        self.issued += 1;
+        self.live.insert(node.to_string(), self.issued);
+        self.issued
+    }
+
+    fn still_armed(&self, node: &str, ticket: u64) -> bool {
+        self.live.get(node).copied() == Some(ticket)
+    }
+
+    fn forget(&mut self) {
+        self.live.clear();
+    }
+}
+
 pub fn create_manage_ftp_widget(
     parent: &gtk::Window,
     on_change: Rc<dyn Fn() + 'static>,
     config: client_config::AppConfig,
-    on_connect: Option<Rc<dyn Fn(FtpConnection) + 'static>>,
+    on_connect: Option<Rc<dyn Fn(Connection) + 'static>>,
 ) -> gtk::Widget {
-     let main_hbox = Box::builder()
+    let main_hbox = Box::builder()
         .orientation(Orientation::Horizontal)
         .spacing(12)
         .margin_start(16)
@@ -273,7 +353,10 @@ pub fn create_manage_ftp_widget(
         .build();
 
     let list_label = Label::builder()
-        .label(&format!("<b>{}</b>", crate::i18n::tr("conn_manager.saved_connections")))
+        .label(&format!(
+            "<b>{}</b>",
+            crate::i18n::tr("conn_manager.saved_connections")
+        ))
         .use_markup(true)
         .halign(Align::Start)
         .build();
@@ -370,185 +453,40 @@ pub fn create_manage_ftp_widget(
         .build();
 
     let form_label = Label::builder()
-        .label(&format!("<b>{}</b>", crate::i18n::tr("conn_manager.add_new_connection")))
+        .label(&format!(
+            "<b>{}</b>",
+            crate::i18n::tr("conn_manager.add_new_connection")
+        ))
         .use_markup(true)
         .halign(Align::Start)
         .build();
     right_vbox.append(&form_label);
 
-    let form_box = Box::builder()
+    let plugin_box = Box::builder()
         .orientation(Orientation::Vertical)
         .spacing(8)
         .build();
-
-    let form_scrolled = gtk::ScrolledWindow::builder()
+    let plugin_scrolled = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vscrollbar_policy(gtk::PolicyType::Automatic)
-        .child(&form_box)
+        .child(&plugin_box)
         .vexpand(true)
         .build();
-    right_vbox.append(&form_scrolled);
-
-    let entry_name = gtk::Entry::builder()
-        .placeholder_text(crate::i18n::tr("conn_manager.conn_name_placeholder").as_str())
-        .build();
-    let entry_host = gtk::Entry::builder()
-        .placeholder_text(crate::i18n::tr("conn_manager.host_placeholder").as_str())
-        .build();
-    let entry_port = gtk::Entry::builder()
-        .placeholder_text(crate::i18n::tr("conn_manager.port_placeholder").as_str())
-        .build();
-    let entry_user = gtk::Entry::builder()
-        .placeholder_text(crate::i18n::tr("conn_manager.username_placeholder").as_str())
-        .build();
-    let entry_pass = gtk::Entry::builder()
-        .placeholder_text(crate::i18n::tr("conn_manager.password_placeholder").as_str())
-        .visibility(false)
-        .build();
-    let entry_remote_path = gtk::Entry::builder()
-        .placeholder_text(crate::i18n::tr("conn_manager.remote_path_placeholder").as_str())
-        .build();
+    right_vbox.append(&plugin_scrolled);
 
     let editing_index = Rc::new(std::cell::Cell::new(Option::<usize>::None));
 
-    let protocol_dropdown = gtk::DropDown::from_strings(&["FTP", "SFTP", "WebDAV"]);
-    let row_proto = adw::ActionRow::builder().title(&*crate::i18n::tr("conn_manager.protocol")).build();
+    let kinds = std::rc::Rc::new(kind_table());
+    let kind_labels: Vec<&str> = kinds.iter().map(|entry| entry.label.as_str()).collect();
+    let protocol_dropdown = gtk::DropDown::from_strings(&kind_labels);
+    let row_proto = adw::ActionRow::builder()
+        .title(&*crate::i18n::tr("conn_manager.protocol"))
+        .build();
     row_proto.add_suffix(&protocol_dropdown);
 
-    let auth_dropdown = gtk::DropDown::from_strings(&[
-        &*crate::i18n::tr("conn_manager.auth_password"),
-        &*crate::i18n::tr("conn_manager.auth_ssh_key"),
-    ]);
-    let row_auth = adw::ActionRow::builder()
-        .title(&*crate::i18n::tr("conn_manager.auth_type"))
-        .build();
-    row_auth.add_suffix(&auth_dropdown);
-
-    let pref_group = adw::PreferencesGroup::new();
-    pref_group.add(&row_proto);
-    pref_group.add(&row_auth);
-
-    form_box.append(&entry_name);
-    form_box.append(&pref_group);
-
-    let host_port_box = Box::builder()
-        .orientation(Orientation::Horizontal)
-        .spacing(8)
-        .build();
-    entry_host.set_hexpand(true);
-    entry_port.set_width_request(100);
-    host_port_box.append(&entry_host);
-    host_port_box.append(&entry_port);
-    form_box.append(&host_port_box);
-
-    let user_pass_box = Box::builder()
-        .orientation(Orientation::Horizontal)
-        .spacing(8)
-        .build();
-    entry_user.set_hexpand(true);
-    entry_pass.set_hexpand(true);
-    user_pass_box.append(&entry_user);
-    user_pass_box.append(&entry_pass);
-    form_box.append(&user_pass_box);
-
-    form_box.append(&entry_remote_path);
-
-    let row_key_path = Box::builder()
-        .orientation(Orientation::Horizontal)
-        .spacing(6)
-        .build();
-    let entry_key_path = gtk::Entry::builder()
-        .placeholder_text(crate::i18n::tr("conn_manager.key_path_placeholder").as_str())
-        .hexpand(true)
-        .build();
-    let btn_browse = Button::builder().label(&*crate::i18n::tr("conn_manager.browse")).build();
-    row_key_path.append(&entry_key_path);
-    row_key_path.append(&btn_browse);
-    form_box.append(&row_key_path);
-
-    let entry_passphrase = gtk::Entry::builder()
-        .placeholder_text(crate::i18n::tr("conn_manager.passphrase_placeholder").as_str())
-        .visibility(false)
-        .build();
-    form_box.append(&entry_passphrase);
-
-    let switch_use_tunnel = gtk::Switch::builder()
-        .valign(Align::Center)
-        .build();
-    let row_use_tunnel = adw::ActionRow::builder()
-        .title(&*crate::i18n::tr("conn_manager.use_tunnel"))
-        .build();
-    row_use_tunnel.add_suffix(&switch_use_tunnel);
-
-    let tunnel_box = Box::builder()
-        .orientation(Orientation::Vertical)
-        .spacing(8)
-        .build();
-
-    let tunnel_sep = gtk::Separator::new(Orientation::Horizontal);
-    tunnel_box.append(&tunnel_sep);
-
-    let entry_tunnel_host = gtk::Entry::builder()
-        .placeholder_text(crate::i18n::tr("conn_manager.tunnel_host_placeholder").as_str())
-        .hexpand(true)
-        .build();
-    let entry_tunnel_port = gtk::Entry::builder()
-        .placeholder_text(crate::i18n::tr("conn_manager.tunnel_port_placeholder").as_str())
-        .build();
-    let tunnel_host_port_box = Box::builder()
-        .orientation(Orientation::Horizontal)
-        .spacing(8)
-        .build();
-    entry_tunnel_port.set_width_request(100);
-    tunnel_host_port_box.append(&entry_tunnel_host);
-    tunnel_host_port_box.append(&entry_tunnel_port);
-    tunnel_box.append(&tunnel_host_port_box);
-
-    let entry_tunnel_user = gtk::Entry::builder()
-        .placeholder_text(crate::i18n::tr("conn_manager.tunnel_user_placeholder").as_str())
-        .build();
-    tunnel_box.append(&entry_tunnel_user);
-
-    let tunnel_auth_dropdown = gtk::DropDown::from_strings(&[
-        &*crate::i18n::tr("conn_manager.auth_password"),
-        &*crate::i18n::tr("conn_manager.auth_ssh_key"),
-    ]);
-    let row_tunnel_auth = adw::ActionRow::builder()
-        .title(&*crate::i18n::tr("conn_manager.tunnel_auth_type"))
-        .build();
-    row_tunnel_auth.add_suffix(&tunnel_auth_dropdown);
-
-    let tunnel_pref_group = adw::PreferencesGroup::new();
-    tunnel_pref_group.add(&row_tunnel_auth);
-    tunnel_box.append(&tunnel_pref_group);
-
-    let entry_tunnel_pass = gtk::Entry::builder()
-        .placeholder_text(crate::i18n::tr("conn_manager.tunnel_password_placeholder").as_str())
-        .visibility(false)
-        .build();
-    tunnel_box.append(&entry_tunnel_pass);
-
-    let row_tunnel_key_path = Box::builder()
-        .orientation(Orientation::Horizontal)
-        .spacing(6)
-        .build();
-    let entry_tunnel_key_path = gtk::Entry::builder()
-        .placeholder_text(crate::i18n::tr("conn_manager.tunnel_key_path_placeholder").as_str())
-        .hexpand(true)
-        .build();
-    let btn_tunnel_browse = Button::builder().label(&*crate::i18n::tr("conn_manager.browse")).build();
-    row_tunnel_key_path.append(&entry_tunnel_key_path);
-    row_tunnel_key_path.append(&btn_tunnel_browse);
-    tunnel_box.append(&row_tunnel_key_path);
-
-    let entry_tunnel_passphrase = gtk::Entry::builder()
-        .placeholder_text(crate::i18n::tr("conn_manager.tunnel_passphrase_placeholder").as_str())
-        .visibility(false)
-        .build();
-    tunnel_box.append(&entry_tunnel_passphrase);
-
-    form_box.append(&row_use_tunnel);
-    form_box.append(&tunnel_box);
+    let proto_group = adw::PreferencesGroup::new();
+    proto_group.add(&row_proto);
+    right_vbox.insert_child_after(&proto_group, Some(&form_label));
 
     let is_view_mode = Rc::new(std::cell::Cell::new(false));
     let previously_selected_index = Rc::new(std::cell::Cell::new(Option::<usize>::None));
@@ -566,7 +504,9 @@ pub fn create_manage_ftp_widget(
         .width_request(140)
         .build();
 
-    let btn_cancel = gtk::Button::builder().label(&*crate::i18n::tr("common.cancel")).build();
+    let btn_cancel = gtk::Button::builder()
+        .label(&*crate::i18n::tr("common.cancel"))
+        .build();
     btn_cancel.set_visible(false);
 
     let buttons_hbox = Box::builder()
@@ -579,103 +519,307 @@ pub fn create_manage_ftp_widget(
     buttons_hbox.append(&btn_connect);
     right_vbox.append(&buttons_hbox);
 
+    let plugin_renderer = ic_view_gtk::Renderer::new(Rc::new(translate_optional));
+    let plugin_session: Rc<std::cell::RefCell<Option<ic_view_session::Session>>> =
+        Rc::new(std::cell::RefCell::new(None));
+    let plugin_view: Rc<std::cell::RefCell<Option<Rc<ic_view_gtk::BuiltView>>>> =
+        Rc::new(std::cell::RefCell::new(None));
+    let plugin_kind: Rc<std::cell::RefCell<Option<String>>> =
+        Rc::new(std::cell::RefCell::new(None));
+    let plugin_debounces: Rc<std::cell::RefCell<Debounces>> =
+        Rc::new(std::cell::RefCell::new(Debounces::default()));
+    let remount_plugin_view: PluginRemount = Rc::new(std::cell::RefCell::new(None));
+
+    {
+        let plugin_session = plugin_session.clone();
+        let plugin_view = plugin_view.clone();
+        let plugin_kind = plugin_kind.clone();
+        let remount = remount_plugin_view.clone();
+        ic_plugin_host::set_form_changed_handler(Rc::new(move |kind: &str| {
+            if plugin_kind
+                .borrow()
+                .as_deref()
+                .is_none_or(|held| !held.eq_ignore_ascii_case(kind))
+            {
+                return;
+            }
+            let Some(built) = plugin_view.borrow().clone() else {
+                return;
+            };
+            let facts = crate::plugin_view::facts();
+            {
+                let mut held = plugin_session.borrow_mut();
+                let Some(session) = held.as_mut() else {
+                    return;
+                };
+                if session.redescribe(built.as_ref(), &ic_plugin_host::Kinds, &facts)
+                    != ic_view_session::Redescribed::Rebuilt
+                {
+                    return;
+                }
+            }
+            let again = remount.borrow().clone();
+            if let Some(again) = again {
+                again();
+            }
+        }));
+    }
+
+    let send_plugin_event: Rc<PluginEvent> = {
+        let plugin_session = plugin_session.clone();
+        let plugin_view = plugin_view.clone();
+        let remount = remount_plugin_view.clone();
+        Rc::new(
+            move |event: &str,
+                  node: Option<&str>,
+                  bind: Option<&str>,
+                  value: Option<serde_json::Value>| {
+                let facts = crate::plugin_view::facts();
+                let Some(built) = plugin_view.borrow().clone() else {
+                    return;
+                };
+                let outcome = {
+                    let mut held = plugin_session.borrow_mut();
+                    let Some(session) = held.as_mut() else {
+                        return;
+                    };
+                    session.send(
+                        built.as_ref(),
+                        &ic_plugin_host::Kinds,
+                        &facts,
+                        event,
+                        node,
+                        bind,
+                        value,
+                    )
+                };
+                if let Some(text) = outcome.clipboard {
+                    if let Some(display) = gdk::Display::default() {
+                        display.clipboard().set_text(&text);
+                    }
+                }
+                if !outcome.redescribe {
+                    return;
+                }
+                {
+                    let mut held = plugin_session.borrow_mut();
+                    let Some(session) = held.as_mut() else {
+                        return;
+                    };
+                    if session.redescribe(built.as_ref(), &ic_plugin_host::Kinds, &facts)
+                        != ic_view_session::Redescribed::Rebuilt
+                    {
+                        return;
+                    }
+                    let carried = carried_into_rebuild(&session.document, &session.state, &|id| {
+                        built.value(id)
+                    });
+                    for (bind, value) in carried {
+                        session.state.set_state(&bind, value);
+                    }
+                }
+                let again = remount.borrow().clone();
+                if let Some(again) = again {
+                    again();
+                }
+            },
+        )
+    };
+
+    let schedule_plugin_change: Rc<PluginChange> = {
+        let plugin_debounces = plugin_debounces.clone();
+        let send = send_plugin_event.clone();
+        Rc::new(
+            move |node: &str, bind: &str, value: serde_json::Value, debounce: u32| {
+                let ticket = plugin_debounces.borrow_mut().arm(node);
+                let pending = plugin_debounces.clone();
+                let send = send.clone();
+                let target = node.to_string();
+                let bound = bind.to_string();
+                let fire = move || {
+                    let still = pending.borrow().still_armed(&target, ticket);
+                    if still {
+                        send("change", Some(&target), Some(&bound), Some(value.clone()));
+                    }
+                };
+                if debounce == 0 {
+                    fire();
+                } else {
+                    glib::timeout_add_local_once(
+                        std::time::Duration::from_millis(u64::from(debounce)),
+                        fire,
+                    );
+                }
+            },
+        )
+    };
+
+    let mount_plugin_view: Rc<dyn Fn()> = {
+        let plugin_box = plugin_box.clone();
+        let plugin_session = plugin_session.clone();
+        let plugin_view = plugin_view.clone();
+        let plugin_debounces = plugin_debounces.clone();
+        let picker_parent = parent.clone();
+        let send = send_plugin_event.clone();
+        let schedule = schedule_plugin_change.clone();
+        Rc::new(move || {
+            let Some((kind, document, state, applying)) =
+                plugin_session.borrow().as_ref().map(|session| {
+                    (
+                        session.id.clone(),
+                        session.document.clone(),
+                        session.state.clone(),
+                        session.applying(),
+                    )
+                })
+            else {
+                return;
+            };
+            plugin_debounces.borrow_mut().forget();
+            while let Some(child) = plugin_box.first_child() {
+                plugin_box.remove(&child);
+            }
+            let built = Rc::new(plugin_renderer.build(&document, &state));
+            plugin_box.append(&built.root);
+            for id in built.ids() {
+                let owned = id.to_string();
+                let sink = plugin_session.clone();
+                let again = built.clone();
+                let guard = applying.clone();
+                built.on_change(&owned, move |bind, value| {
+                    if guard.is_set() {
+                        return;
+                    }
+                    let mut held = sink.borrow_mut();
+                    let Some(session) = held.as_mut() else {
+                        return;
+                    };
+                    session.state.set_state(&bind, value);
+                    session.state.touched.insert(bind);
+                    again.refresh(&session.state);
+                });
+            }
+            let mut pickers = Vec::new();
+            document.form.walk(&mut |node| {
+                if let (Some(id), Some(picker)) = (node.id.as_ref(), node.picker.as_ref()) {
+                    let title = picker
+                        .title
+                        .as_ref()
+                        .map(|text| text.resolve(&translate_optional))
+                        .unwrap_or_default();
+                    pickers.push((id.clone(), title, picker.mode));
+                }
+            });
+            for (id, title, mode) in pickers {
+                let Some(field) = built.entry(&id) else {
+                    continue;
+                };
+                let window = picker_parent.clone();
+                built.on_activate(&id, move |_| {
+                    let dialog = gtk::FileDialog::builder().title(&title).build();
+                    let target = field.clone();
+                    let chosen = move |result: Result<gtk::gio::File, gtk::glib::Error>| {
+                        if let Ok(file) = result {
+                            if let Some(path) = file.path() {
+                                target.set_text(&path.to_string_lossy());
+                            }
+                        }
+                    };
+                    match mode {
+                        ic_view::PickMode::Folder => {
+                            dialog.select_folder(Some(&window), gtk::gio::Cancellable::NONE, chosen)
+                        }
+                        ic_view::PickMode::File => {
+                            dialog.open(Some(&window), gtk::gio::Cancellable::NONE, chosen)
+                        }
+                    }
+                });
+            }
+            let listens = ic_plugin_host::connection_takes_events(&kind);
+            for watch in plugin_form_watches(listens, &document) {
+                let target = watch.node.clone();
+                let guard = applying.clone();
+                if watch.on_value {
+                    let schedule = schedule.clone();
+                    let debounce = watch.debounce_ms;
+                    built.on_change(&watch.node, move |bind, value| {
+                        if guard.is_set() {
+                            return;
+                        }
+                        schedule(&target, &bind, value, debounce);
+                    });
+                } else {
+                    let send = send.clone();
+                    built.on_activate(&watch.node, move |_| {
+                        if guard.is_set() {
+                            return;
+                        }
+                        send("activate", Some(&target), None, None);
+                    });
+                }
+            }
+            *plugin_view.borrow_mut() = Some(built);
+        })
+    };
+    *remount_plugin_view.borrow_mut() = Some(mount_plugin_view.clone());
+
+    let rebuild_plugin_view: Rc<PluginRebuild> = {
+        let plugin_session = plugin_session.clone();
+        let plugin_kind = plugin_kind.clone();
+        let mount = mount_plugin_view.clone();
+        let send = send_plugin_event.clone();
+        Rc::new(
+            move |kind: &str, document: &ic_view::Document, carried: ic_view::State| {
+                let kind = plugin_kind_id(kind);
+                let listens = ic_plugin_host::connection_takes_events(&kind);
+                // The table holds the form as it was when the dialog opened; ask the kind again.
+                let document =
+                    ic_plugin_host::connection_document(&kind).unwrap_or_else(|| document.clone());
+                let session = ic_view_session::Session::over(
+                    &kind,
+                    document,
+                    &carried,
+                    &crate::plugin_view::facts(),
+                );
+                *plugin_session.borrow_mut() = Some(session);
+                *plugin_kind.borrow_mut() = Some(kind);
+                mount();
+                if listens {
+                    send("opened", None, None, None);
+                }
+            },
+        )
+    };
+
     let load_conn = {
-        let entry_name = entry_name.clone();
-        let entry_host = entry_host.clone();
-        let entry_port = entry_port.clone();
-        let entry_user = entry_user.clone();
-        let entry_pass = entry_pass.clone();
-        let entry_remote_path = entry_remote_path.clone();
-        let entry_key_path = entry_key_path.clone();
-        let entry_passphrase = entry_passphrase.clone();
-        let switch_use_tunnel = switch_use_tunnel.clone();
-        let entry_tunnel_host = entry_tunnel_host.clone();
-        let entry_tunnel_port = entry_tunnel_port.clone();
-        let entry_tunnel_user = entry_tunnel_user.clone();
-        let tunnel_auth_dropdown = tunnel_auth_dropdown.clone();
-        let entry_tunnel_pass = entry_tunnel_pass.clone();
-        let entry_tunnel_key_path = entry_tunnel_key_path.clone();
-        let entry_tunnel_passphrase = entry_tunnel_passphrase.clone();
         let protocol_dropdown = protocol_dropdown.clone();
-        let auth_dropdown = auth_dropdown.clone();
-        
-        move |conn: &FtpConnection| {
+        let kinds_load = kinds.clone();
+        let rebuild_load = rebuild_plugin_view.clone();
+
+        move |conn: &Connection| {
             let conn = &crate::secret_store::opened(conn);
-            entry_name.set_text(&conn.name);
-            entry_host.set_text(&conn.host);
-            entry_port.set_text(&conn.port.to_string());
-            entry_user.set_text(&conn.user);
-            entry_pass.set_text(conn.pass.as_deref().unwrap_or(""));
-            entry_remote_path.set_text(conn.remote_path.as_deref().unwrap_or(""));
-            entry_key_path.set_text(conn.key_path.as_deref().unwrap_or(""));
-            entry_passphrase.set_text(conn.passphrase.as_deref().unwrap_or(""));
-
-            let use_tunnel = conn.use_tunnel.unwrap_or(false);
-            switch_use_tunnel.set_active(use_tunnel);
-            entry_tunnel_host.set_text(conn.tunnel_host.as_deref().unwrap_or(""));
-            entry_tunnel_port.set_text(&conn.tunnel_port.map(|p| p.to_string()).unwrap_or_else(|| "".to_string()));
-            entry_tunnel_user.set_text(conn.tunnel_user.as_deref().unwrap_or(""));
-            tunnel_auth_dropdown.set_selected(if conn.tunnel_auth_type.as_deref() == Some("key") { 1 } else { 0 });
-            entry_tunnel_pass.set_text(conn.tunnel_pass.as_deref().unwrap_or(""));
-            entry_tunnel_key_path.set_text(conn.tunnel_key_path.as_deref().unwrap_or(""));
-            entry_tunnel_passphrase.set_text(conn.tunnel_passphrase.as_deref().unwrap_or(""));
-
-            let proto_idx = if conn.protocol.to_uppercase() == "FTP" {
-                0
-            } else if conn.protocol.to_uppercase() == "SFTP" {
-                1
-            } else {
-                2
-            };
-            protocol_dropdown.set_selected(proto_idx);
-
-            let auth_idx = if conn.auth_type.as_deref() == Some("key") {
-                1
-            } else {
-                0
-            };
-            auth_dropdown.set_selected(auth_idx);
+            let selected = kind_index(&kinds_load, &conn.kind);
+            protocol_dropdown.set_selected(selected);
+            if let Some(entry) = kinds_load.get(selected as usize) {
+                let kind = plugin_kind_id(&entry.protocol);
+                let state = seeded_from_record(&entry.document, &kind, Some(conn));
+                rebuild_load(&kind, &entry.document, state);
+            }
         }
     };
     let load_conn = Rc::new(load_conn);
 
     let clear_fields = {
-        let entry_name = entry_name.clone();
-        let entry_host = entry_host.clone();
-        let entry_port = entry_port.clone();
-        let entry_user = entry_user.clone();
-        let entry_pass = entry_pass.clone();
-        let entry_remote_path = entry_remote_path.clone();
-        let entry_key_path = entry_key_path.clone();
-        let entry_passphrase = entry_passphrase.clone();
-        let switch_use_tunnel = switch_use_tunnel.clone();
-        let entry_tunnel_host = entry_tunnel_host.clone();
-        let entry_tunnel_port = entry_tunnel_port.clone();
-        let entry_tunnel_user = entry_tunnel_user.clone();
-        let tunnel_auth_dropdown = tunnel_auth_dropdown.clone();
-        let entry_tunnel_pass = entry_tunnel_pass.clone();
-        let entry_tunnel_key_path = entry_tunnel_key_path.clone();
-        let entry_tunnel_passphrase = entry_tunnel_passphrase.clone();
-        let auth_dropdown = auth_dropdown.clone();
-        
+        let kinds_clear = kinds.clone();
+        let protocol_dropdown_clear = protocol_dropdown.clone();
+        let rebuild_clear = rebuild_plugin_view.clone();
+
         move || {
-            auth_dropdown.set_selected(0);
-            entry_name.set_text("");
-            entry_host.set_text("");
-            entry_port.set_text("");
-            entry_user.set_text("");
-            entry_pass.set_text("");
-            entry_remote_path.set_text("");
-            entry_key_path.set_text("");
-            entry_passphrase.set_text("");
-            switch_use_tunnel.set_active(false);
-            entry_tunnel_host.set_text("");
-            entry_tunnel_port.set_text("");
-            entry_tunnel_user.set_text("");
-            tunnel_auth_dropdown.set_selected(0);
-            entry_tunnel_pass.set_text("");
-            entry_tunnel_key_path.set_text("");
-            entry_tunnel_passphrase.set_text("");
+            if let Some(entry) = kinds_clear.get(protocol_dropdown_clear.selected() as usize) {
+                let kind = plugin_kind_id(&entry.protocol);
+                let state = seeded_from_record(&entry.document, &kind, None);
+                rebuild_clear(&kind, &entry.document, state);
+            }
         }
     };
     let clear_fields = Rc::new(clear_fields);
@@ -686,63 +830,26 @@ pub fn create_manage_ftp_widget(
 
     let update_visibility = Rc::new({
         let protocol_dropdown = protocol_dropdown.clone();
-        let auth_dropdown = auth_dropdown.clone();
-        let row_auth = row_auth.clone();
-        let entry_host = entry_host.clone();
-        let entry_port = entry_port.clone();
-        let entry_pass = entry_pass.clone();
-        let row_key_path = row_key_path.clone();
-        let entry_passphrase = entry_passphrase.clone();
-        let row_use_tunnel = row_use_tunnel.clone();
-        let switch_use_tunnel = switch_use_tunnel.clone();
-        let tunnel_box = tunnel_box.clone();
-        let tunnel_auth_dropdown = tunnel_auth_dropdown.clone();
-        let entry_tunnel_pass = entry_tunnel_pass.clone();
-        let row_tunnel_key_path = row_tunnel_key_path.clone();
-        let entry_tunnel_passphrase = entry_tunnel_passphrase.clone();
+        let kinds_visible = kinds.clone();
+        let plugin_kind_visible = plugin_kind.clone();
+        let rebuild_visible = rebuild_plugin_view.clone();
+        let editing_index_visible = editing_index.clone();
+        let config_visible = config.clone();
         move || {
             let selected_proto = protocol_dropdown.selected();
-            if selected_proto == 2 {
-                row_auth.set_visible(false);
-                let webdav_placeholder = crate::i18n::tr("conn_manager.webdav_url_placeholder");
-                entry_host.set_placeholder_text(Some(&*webdav_placeholder));
-                entry_port.set_visible(false);
-                entry_pass.set_visible(true);
-                row_key_path.set_visible(false);
-                entry_passphrase.set_visible(false);
-                row_use_tunnel.set_visible(false);
-                tunnel_box.set_visible(false);
-            } else {
-                let is_sftp = selected_proto == 1;
-                row_auth.set_visible(is_sftp);
-                row_use_tunnel.set_visible(is_sftp);
-                let host_placeholder = if is_sftp {
-                    crate::i18n::tr("conn_manager.host_sftp_placeholder")
-                } else {
-                    crate::i18n::tr("conn_manager.host_ftp_placeholder")
-                };
-                entry_host.set_placeholder_text(Some(&*host_placeholder));
-                entry_port.set_visible(true);
-                if is_sftp {
-                    let is_key_auth = auth_dropdown.selected() == 1;
-                    entry_pass.set_visible(!is_key_auth);
-                    row_key_path.set_visible(is_key_auth);
-                    entry_passphrase.set_visible(is_key_auth);
-
-                    let use_tunnel = switch_use_tunnel.is_active();
-                    tunnel_box.set_visible(use_tunnel);
-                    if use_tunnel {
-                        let is_tunnel_key_auth = tunnel_auth_dropdown.selected() == 1;
-                        entry_tunnel_pass.set_visible(!is_tunnel_key_auth);
-                        row_tunnel_key_path.set_visible(is_tunnel_key_auth);
-                        entry_tunnel_passphrase.set_visible(is_tunnel_key_auth);
-                    }
-                } else {
-                    entry_pass.set_visible(true);
-                    row_key_path.set_visible(false);
-                    entry_passphrase.set_visible(false);
-                    tunnel_box.set_visible(false);
-                }
+            let Some(entry) = kinds_visible.get(selected_proto as usize) else {
+                return;
+            };
+            let kind = plugin_kind_id(&entry.protocol);
+            let already_built = plugin_kind_visible.borrow().as_deref() == Some(kind.as_str());
+            if !already_built {
+                let edited = editing_index_visible.get().and_then(|at| {
+                    let conns: Vec<Connection> =
+                        connection_form::stored_connections(&config_visible);
+                    conns.get(at).map(crate::secret_store::opened)
+                });
+                let state = seeded_from_record(&entry.document, &kind, edited.as_ref());
+                rebuild_visible(&kind, &entry.document, state);
             }
         }
     });
@@ -752,68 +859,27 @@ pub fn create_manage_ftp_widget(
         move |_| update()
     });
 
-    auth_dropdown.connect_selected_notify({
-        let update = update_visibility.clone();
-        move |_| update()
-    });
-
-    switch_use_tunnel.connect_active_notify({
-        let update = update_visibility.clone();
-        move |_| update()
-    });
-
-    tunnel_auth_dropdown.connect_selected_notify({
-        let update = update_visibility.clone();
-        move |_| update()
-    });
-
     update_visibility();
 
     let set_form_editable = {
-        let entry_name = entry_name.clone();
-        let entry_host = entry_host.clone();
-        let entry_port = entry_port.clone();
-        let entry_user = entry_user.clone();
-        let entry_pass = entry_pass.clone();
-        let entry_remote_path = entry_remote_path.clone();
-        let entry_key_path = entry_key_path.clone();
-        let entry_passphrase = entry_passphrase.clone();
+        let plugin_view_editable = plugin_view.clone();
+        let plugin_session_editable = plugin_session.clone();
         let protocol_dropdown = protocol_dropdown.clone();
-        let auth_dropdown = auth_dropdown.clone();
-        let btn_browse = btn_browse.clone();
-        let switch_use_tunnel = switch_use_tunnel.clone();
-        let entry_tunnel_host = entry_tunnel_host.clone();
-        let entry_tunnel_port = entry_tunnel_port.clone();
-        let entry_tunnel_user = entry_tunnel_user.clone();
-        let tunnel_auth_dropdown = tunnel_auth_dropdown.clone();
-        let entry_tunnel_pass = entry_tunnel_pass.clone();
-        let entry_tunnel_key_path = entry_tunnel_key_path.clone();
-        let entry_tunnel_passphrase = entry_tunnel_passphrase.clone();
-        let btn_tunnel_browse = btn_tunnel_browse.clone();
-        
+
         move |editable: bool| {
-            entry_name.set_sensitive(editable);
-            entry_host.set_sensitive(editable);
-            entry_port.set_sensitive(editable);
-            entry_user.set_sensitive(editable);
-            entry_pass.set_sensitive(editable);
-            entry_remote_path.set_sensitive(editable);
-            entry_key_path.set_sensitive(editable);
-            entry_passphrase.set_sensitive(editable);
-            
             protocol_dropdown.set_sensitive(editable);
-            auth_dropdown.set_sensitive(editable);
-            btn_browse.set_sensitive(editable);
-            
-            switch_use_tunnel.set_sensitive(editable);
-            entry_tunnel_host.set_sensitive(editable);
-            entry_tunnel_port.set_sensitive(editable);
-            entry_tunnel_user.set_sensitive(editable);
-            tunnel_auth_dropdown.set_sensitive(editable);
-            entry_tunnel_pass.set_sensitive(editable);
-            entry_tunnel_key_path.set_sensitive(editable);
-            entry_tunnel_passphrase.set_sensitive(editable);
-            btn_tunnel_browse.set_sensitive(editable);
+
+            let mut held = plugin_session_editable.borrow_mut();
+            let Some(session) = held.as_mut() else {
+                return;
+            };
+            session.state.set_view(
+                "mode",
+                serde_json::Value::String(if editable { "edit" } else { "view" }.to_string()),
+            );
+            if let Some(view) = plugin_view_editable.borrow().as_ref() {
+                view.refresh(&session.state);
+            }
         }
     };
 
@@ -828,11 +894,11 @@ pub fn create_manage_ftp_widget(
         let has_on_connect = on_connect.is_some();
         let btn_new_conn = btn_new_conn.clone();
         let form_label = form_label.clone();
-        
+
         move || {
             let idx_opt = editing_index.get();
             let view_mode = is_view_mode.get();
-            
+
             match idx_opt {
                 None => {
                     set_form_editable(true);
@@ -844,7 +910,10 @@ pub fn create_manage_ftp_widget(
                     btn_cancel.set_visible(true);
                     btn_cancel.set_label(&*crate::i18n::tr("common.cancel"));
                     btn_new_conn.set_visible(false);
-                    form_label.set_markup(&format!("<b>{}</b>", crate::i18n::tr("conn_manager.add_new_connection")));
+                    form_label.set_markup(&format!(
+                        "<b>{}</b>",
+                        crate::i18n::tr("conn_manager.add_new_connection")
+                    ));
                 }
                 Some(_) => {
                     if view_mode {
@@ -862,7 +931,10 @@ pub fn create_manage_ftp_widget(
                         btn_cancel.set_visible(has_on_connect);
                         btn_cancel.set_label(&*crate::i18n::tr("common.cancel"));
                         btn_new_conn.set_visible(true);
-                        form_label.set_markup(&format!("<b>{}</b>", crate::i18n::tr("conn_manager.view_title")));
+                        form_label.set_markup(&format!(
+                            "<b>{}</b>",
+                            crate::i18n::tr("conn_manager.view_title")
+                        ));
                     } else {
                         set_form_editable(true);
                         btn_connect.set_visible(false);
@@ -873,20 +945,31 @@ pub fn create_manage_ftp_widget(
                         btn_cancel.set_visible(true);
                         btn_cancel.set_label(&*crate::i18n::tr("common.cancel"));
                         btn_new_conn.set_visible(false);
-                        form_label.set_markup(&format!("<b>{}</b>", crate::i18n::tr("conn_manager.edit_title")));
+                        form_label.set_markup(&format!(
+                            "<b>{}</b>",
+                            crate::i18n::tr("conn_manager.edit_title")
+                        ));
                     }
                 }
             }
 
             let primary_is_connect = btn_connect.has_css_class("suggested-action");
-            btn_connect.set_margin_start(if primary_is_connect { PRIMARY_BUTTON_GAP } else { 0 });
-            btn_add.set_margin_start(if primary_is_connect { 0 } else { PRIMARY_BUTTON_GAP });
+            btn_connect.set_margin_start(if primary_is_connect {
+                PRIMARY_BUTTON_GAP
+            } else {
+                0
+            });
+            btn_add.set_margin_start(if primary_is_connect {
+                0
+            } else {
+                PRIMARY_BUTTON_GAP
+            });
 
             update_visibility();
         }
     });
 
-    let conns: Vec<FtpConnection> = config.get("ui.ftp_connections").unwrap_or_default();
+    let conns: Vec<Connection> = connection_form::stored_connections(&config);
     if !conns.is_empty() {
         editing_index.set(Some(0));
         previously_selected_index.set(Some(0));
@@ -928,47 +1011,6 @@ pub fn create_manage_ftp_widget(
         })
     };
 
-    let parent_clone = parent.clone();
-    let entry_key_path_clone = entry_key_path.clone();
-    btn_browse.connect_clicked(move |_| {
-        let entry_key_path_inner = entry_key_path_clone.clone();
-        let dialog = gtk::FileDialog::builder()
-            .title(&*crate::i18n::tr("conn_manager.select_ssh_key"))
-            .build();
-        dialog.open(
-            Some(&parent_clone),
-            gtk::gio::Cancellable::NONE,
-            move |res| {
-                if let Ok(file) = res {
-                    if let Some(path) = file.path() {
-                        entry_key_path_inner.set_text(&path.to_string_lossy());
-                    }
-                }
-            },
-        );
-    });
-
-    let parent_clone2 = parent.clone();
-    let entry_tunnel_key_path_clone = entry_tunnel_key_path.clone();
-    btn_tunnel_browse.connect_clicked(move |_| {
-        let entry_key_path_inner = entry_tunnel_key_path_clone.clone();
-        let dialog = gtk::FileDialog::builder()
-            .title(&*crate::i18n::tr("conn_manager.select_tunnel_ssh_key"))
-            .build();
-        dialog.open(
-            Some(&parent_clone2),
-            gtk::gio::Cancellable::NONE,
-            move |res| {
-                if let Ok(file) = res {
-                    if let Some(path) = file.path() {
-                        entry_key_path_inner.set_text(&path.to_string_lossy());
-                    }
-                }
-            },
-        );
-    });
-
-
     let load_conn_cancel = load_conn.clone();
     let editing_index_cancel = editing_index.clone();
     let previously_selected_index_cancel = previously_selected_index.clone();
@@ -983,7 +1025,7 @@ pub fn create_manage_ftp_widget(
 
         if let Some(idx) = idx_opt {
             if !view_mode {
-                let conns: Vec<FtpConnection> = config_cancel.get("ui.ftp_connections").unwrap_or_default();
+                let conns: Vec<Connection> = connection_form::stored_connections(&config_cancel);
                 if idx < conns.len() {
                     load_conn_cancel(&conns[idx]);
                 }
@@ -999,7 +1041,7 @@ pub fn create_manage_ftp_widget(
             }
         } else {
             let prev_idx_opt = previously_selected_index_cancel.get();
-            let conns: Vec<FtpConnection> = config_cancel.get("ui.ftp_connections").unwrap_or_default();
+            let conns: Vec<Connection> = connection_form::stored_connections(&config_cancel);
             if let Some(prev_idx) = prev_idx_opt {
                 if prev_idx < conns.len() {
                     editing_index_cancel.set(Some(prev_idx));
@@ -1035,13 +1077,18 @@ pub fn create_manage_ftp_widget(
         .orientation(Orientation::Vertical)
         .spacing(8)
         .build();
-    let folder_title = Label::builder().use_markup(true).halign(Align::Start).build();
+    let folder_title = Label::builder()
+        .use_markup(true)
+        .halign(Align::Start)
+        .build();
     folder_page.append(&folder_title);
     let folder_search = gtk::SearchEntry::builder()
         .placeholder_text(&*crate::i18n::tr("conn_manager.search"))
         .build();
     folder_page.append(&folder_search);
-    let folder_list = gtk::ListBox::builder().css_classes(vec!["boxed-list"]).build();
+    let folder_list = gtk::ListBox::builder()
+        .css_classes(vec!["boxed-list"])
+        .build();
     let folder_scroll = ScrolledWindow::builder()
         .vexpand(true)
         .child(&folder_list)
@@ -1076,6 +1123,30 @@ pub fn create_manage_ftp_widget(
 
     right_stack.add_named(&folder_page, Some("folder"));
 
+    let pinned_page = Box::builder()
+        .orientation(Orientation::Vertical)
+        .hexpand(true)
+        .vexpand(true)
+        .build();
+    right_stack.add_named(&pinned_page, Some("pinned"));
+    let pinned_shown: Rc<std::cell::RefCell<Option<String>>> =
+        Rc::new(std::cell::RefCell::new(None));
+    let show_pinned: Rc<dyn Fn(&ic_plugin_host::PinnedConnection)> = {
+        let pinned_page = pinned_page.clone();
+        let pinned_shown = pinned_shown.clone();
+        let right_stack = right_stack.clone();
+        Rc::new(move |pin: &ic_plugin_host::PinnedConnection| {
+            while let Some(child) = pinned_page.first_child() {
+                pinned_page.remove(&child);
+            }
+            if let Some(shown) = crate::plugin_view::embed(&pin.view, &pin.id) {
+                pinned_page.append(&shown);
+            }
+            *pinned_shown.borrow_mut() = Some(pin.id.clone());
+            right_stack.set_visible_child_name("pinned");
+        })
+    };
+
     let folder_state: Rc<std::cell::RefCell<Option<String>>> =
         Rc::new(std::cell::RefCell::new(None));
 
@@ -1105,11 +1176,15 @@ pub fn create_manage_ftp_widget(
             }
             let query = folder_search.text().to_lowercase();
             let prefix = format!("{}/", path);
-            let conns: Vec<FtpConnection> = config.get("ui.ftp_connections").unwrap_or_default();
+            let conns: Vec<Connection> = connection_form::stored_connections(&config);
             let mut total_in_folder = 0usize;
             for (idx, conn) in conns.into_iter().enumerate() {
                 let in_folder = conn.folder.as_deref() == Some(path.as_str())
-                    || conn.folder.as_deref().map(|f| f.starts_with(&prefix)).unwrap_or(false);
+                    || conn
+                        .folder
+                        .as_deref()
+                        .map(|f| f.starts_with(&prefix))
+                        .unwrap_or(false);
                 if !in_folder {
                     continue;
                 }
@@ -1117,17 +1192,7 @@ pub fn create_manage_ftp_widget(
                 if !query.is_empty() && !conn.name.to_lowercase().contains(&query) {
                     continue;
                 }
-                let subtitle = if conn.protocol.eq_ignore_ascii_case("webdav") {
-                    conn.host.clone()
-                } else {
-                    format!(
-                        "{}://{}@{}:{}",
-                        conn.protocol.to_lowercase(),
-                        conn.user,
-                        conn.host,
-                        conn.port
-                    )
-                };
+                let subtitle = connection_form::kind_summary(&conn).unwrap_or_default();
                 let row = adw::ActionRow::builder()
                     .title(&conn.name)
                     .subtitle(&subtitle)
@@ -1135,13 +1200,8 @@ pub fn create_manage_ftp_widget(
                     .subtitle_lines(1)
                     .activatable(true)
                     .build();
-                let res = if conn.protocol.eq_ignore_ascii_case("webdav") {
-                    "/com/icecommander/gtk/netdrive.svg"
-                } else {
-                    "/com/icecommander/gtk/ftp.svg"
-                };
-                let icon = Image::from_resource(res);
-                icon.set_pixel_size(20);
+                let icon = Image::new();
+                draw_kind(&icon, &conn.kind, 20);
                 row.add_prefix(&icon);
 
                 let on_connect = on_connect.clone();
@@ -1266,12 +1326,12 @@ pub fn create_manage_ftp_widget(
 
                     match &pending.edit {
                         TreeEdit::RenameConnection { index } => {
-                            let mut conns: Vec<FtpConnection> =
-                                config.get("ui.ftp_connections").unwrap_or_default();
+                            let mut conns: Vec<Connection> =
+                                connection_form::stored_connections(&config);
                             let conn = conns.get_mut(*index).ok_or(CommitError::Empty)?;
                             if conn.name != typed {
                                 conn.name = typed.to_string();
-                                config.set("ui.ftp_connections", conns);
+                                connection_form::save_connections(&config, conns);
                                 config.save();
                                 on_change();
                             }
@@ -1295,8 +1355,8 @@ pub fn create_manage_ftp_widget(
                                 TreeEdit::RenameFolder { path: old } if *old == path
                             );
                             if !unchanged {
-                                let conns: Vec<FtpConnection> =
-                                    config.get("ui.ftp_connections").unwrap_or_default();
+                                let conns: Vec<Connection> =
+                                    connection_form::stored_connections(&config);
                                 let folders: Vec<String> =
                                     config.get("ui.ftp_connection_folders").unwrap_or_default();
                                 if connection_folder_paths(&conns, &folders)
@@ -1440,15 +1500,14 @@ pub fn create_manage_ftp_widget(
                     let target = match &*node.borrow::<ConnNode>() {
                         ConnNode::Folder(p) => Some(p.clone()),
                         ConnNode::Connection { conn, .. } => conn.folder.clone(),
-                        ConnNode::NewFolder => return false,
+                        ConnNode::NewFolder | ConnNode::Pinned(_) => return false,
                     };
-                    let mut conns: Vec<FtpConnection> =
-                        config.get("ui.ftp_connections").unwrap_or_default();
+                    let mut conns: Vec<Connection> = connection_form::stored_connections(&config);
                     if (from as usize) >= conns.len() {
                         return false;
                     }
                     conns[from as usize].folder = target;
-                    config.set("ui.ftp_connections", conns);
+                    connection_form::save_connections(&config, conns);
                     config.save();
                     on_change();
                     if let Some(rc) = refresh_weak.upgrade() {
@@ -1551,16 +1610,18 @@ pub fn create_manage_ftp_widget(
                 }
             }
             ConnNode::Connection { conn, .. } => {
-                let res = if conn.protocol.eq_ignore_ascii_case("webdav") {
-                    "/com/icecommander/gtk/netdrive.svg"
-                } else {
-                    "/com/icecommander/gtk/ftp.svg"
-                };
-                icon.set_resource(Some(res));
+                draw_kind(&icon, &conn.kind, 20);
                 label.set_text(&conn.name);
                 if renaming {
                     begin_edit(&conn.name);
                 }
+            }
+            ConnNode::Pinned(pin) => {
+                match crate::plugin_host::texture_from_svg(&pin.svg, 20) {
+                    Some(texture) => icon.set_paintable(Some(&texture)),
+                    None => icon.set_resource(Some(NO_PICTURE)),
+                }
+                label.set_text(&pin.title);
             }
             ConnNode::NewFolder => {
                 icon.set_resource(Some("/com/icecommander/gtk/add-folder.svg"));
@@ -1594,8 +1655,7 @@ pub fn create_manage_ftp_widget(
                 let Ok(from) = value.get::<u32>() else {
                     return false;
                 };
-                let mut conns: Vec<FtpConnection> =
-                    config.get("ui.ftp_connections").unwrap_or_default();
+                let mut conns: Vec<Connection> = connection_form::stored_connections(&config);
                 let Some(conn) = conns.get_mut(from as usize) else {
                     return false;
                 };
@@ -1603,7 +1663,7 @@ pub fn create_manage_ftp_widget(
                     return true;
                 }
                 conn.folder = None;
-                config.set("ui.ftp_connections", conns);
+                connection_form::save_connections(&config, conns);
                 config.save();
                 on_change();
                 if let Some(f) = refresh_list_rc.borrow().as_ref() {
@@ -1625,6 +1685,7 @@ pub fn create_manage_ftp_widget(
         let update_ui_state = update_ui_state.clone();
         let right_stack = right_stack.clone();
         let show_folder = show_folder.clone();
+        let show_pinned = show_pinned.clone();
         selection.connect_selection_changed(move |sel, _, _| {
             let Some(obj) = sel.selected_item() else {
                 return;
@@ -1651,6 +1712,7 @@ pub fn create_manage_ftp_widget(
                 ConnNode::Folder(path) => {
                     show_folder(path.clone());
                 }
+                ConnNode::Pinned(pin) => show_pinned(pin),
                 ConnNode::NewFolder => {}
             }
         });
@@ -1659,7 +1721,10 @@ pub fn create_manage_ftp_widget(
     let selected_node = {
         let selection = selection.clone();
         Rc::new(move || -> Option<ConnNode> {
-            let row = selection.selected_item()?.downcast::<gtk::TreeListRow>().ok()?;
+            let row = selection
+                .selected_item()?
+                .downcast::<gtk::TreeListRow>()
+                .ok()?;
             let node = row.item()?.downcast::<glib::BoxedAnyObject>().ok()?;
             let node = node.borrow::<ConnNode>().clone();
             Some(node)
@@ -1704,14 +1769,29 @@ pub fn create_manage_ftp_widget(
         let selection = selection.clone();
         let pending_edit = pending_edit.clone();
         let update_toolbar_state = update_toolbar_state.clone();
+        let pinned_shown = pinned_shown.clone();
+        let pinned_page = pinned_page.clone();
+        let clear_form = clear_form.clone();
         move || {
-            let conns: Vec<FtpConnection> =
-                config.get("ui.ftp_connections").unwrap_or_default();
-            let folders: Vec<String> =
-                config.get("ui.ftp_connection_folders").unwrap_or_default();
+            let conns: Vec<Connection> = connection_form::stored_connections(&config);
+            let folders: Vec<String> = config.get("ui.ftp_connection_folders").unwrap_or_default();
             let pending = pending_edit.borrow().clone();
             let map = Rc::new(build_children_map(&conns, &folders, pending.as_ref()));
             let root = gio::ListStore::new::<glib::BoxedAnyObject>();
+            let pins = ic_plugin_host::pinned_connections();
+            let shown = pinned_shown.borrow().clone();
+            if let Some(shown) = shown {
+                if !pins.iter().any(|pin| pin.id == shown) {
+                    *pinned_shown.borrow_mut() = None;
+                    while let Some(child) = pinned_page.first_child() {
+                        pinned_page.remove(&child);
+                    }
+                    clear_form();
+                }
+            }
+            for pin in pins {
+                root.append(&glib::BoxedAnyObject::new(ConnNode::Pinned(pin)));
+            }
             if let Some(children) = map.get(&None) {
                 for node in children {
                     root.append(&glib::BoxedAnyObject::new(node.clone()));
@@ -1741,6 +1821,16 @@ pub fn create_manage_ftp_widget(
     *refresh_list_rc.borrow_mut() =
         Some(std::boxed::Box::new(refresh_list.clone()) as std::boxed::Box<dyn Fn()>);
     refresh_list();
+    {
+        let refresh_weak = Rc::downgrade(&refresh_list_rc);
+        ic_plugin_host::set_pinned_changed_handler(Rc::new(move || {
+            if let Some(rc) = refresh_weak.upgrade() {
+                if let Some(f) = rc.borrow().as_ref() {
+                    f();
+                }
+            }
+        }));
+    }
 
     let start_tree_edit: Rc<dyn Fn(TreeEdit)> = {
         let pending_edit = pending_edit.clone();
@@ -1814,7 +1904,8 @@ pub fn create_manage_ftp_widget(
                     .orientation(Orientation::Horizontal)
                     .spacing(6)
                     .build();
-                let icon = Image::from_resource("/com/icecommander/gtk/ftp.svg");
+                let icon = Image::new();
+                icon.set_resource(Some(NO_PICTURE));
                 icon.set_pixel_size(16);
                 row.append(&icon);
                 row.append(
@@ -1906,11 +1997,10 @@ pub fn create_manage_ftp_widget(
             let refresh_list = refresh_list.clone();
             dialog.connect_response(None, move |d, resp| {
                 if resp == "delete" {
-                    let mut conns: Vec<FtpConnection> =
-                        config.get("ui.ftp_connections").unwrap_or_default();
+                    let mut conns: Vec<Connection> = connection_form::stored_connections(&config);
                     if index < conns.len() {
                         conns.remove(index);
-                        config.set("ui.ftp_connections", conns);
+                        connection_form::save_connections(&config, conns);
                         config.save();
                         on_change();
                         clear_form();
@@ -1953,11 +2043,8 @@ pub fn create_manage_ftp_widget(
                         let start_new_folder = start_new_folder.clone();
                         let path = path.clone();
                         items.push((
-                            crate::i18n::tr("conn_manager.new_subfolder")
-                                .to_string(),
-                            std::boxed::Box::new(move || {
-                                start_new_folder(Some(path.clone()))
-                            }),
+                            crate::i18n::tr("conn_manager.new_subfolder").to_string(),
+                            std::boxed::Box::new(move || start_new_folder(Some(path.clone()))),
                         ));
                     }
                     {
@@ -1984,9 +2071,7 @@ pub fn create_manage_ftp_widget(
                         let path = path.clone();
                         items.push((
                             crate::i18n::tr("conn_manager.add_new_connection").to_string(),
-                            std::boxed::Box::new(move || {
-                                add_conn_in_folder(Some(path.clone()))
-                            }),
+                            std::boxed::Box::new(move || add_conn_in_folder(Some(path.clone()))),
                         ));
                     }
                 }
@@ -1994,8 +2079,7 @@ pub fn create_manage_ftp_widget(
                     if let Some(cb) = on_connect.clone() {
                         let conn = conn.clone();
                         items.push((
-                            crate::i18n::tr("conn_manager.connect_btn")
-                                .to_string(),
+                            crate::i18n::tr("conn_manager.connect_btn").to_string(),
                             std::boxed::Box::new(move || cb(crate::secret_store::opened(&conn))),
                         ));
                     }
@@ -2016,11 +2100,11 @@ pub fn create_manage_ftp_widget(
                         items.push((
                             crate::i18n::tr("conn_manager.delete").to_string(),
                             std::boxed::Box::new(move || {
-                                let mut conns: Vec<FtpConnection> =
-                                    config.get("ui.ftp_connections").unwrap_or_default();
+                                let mut conns: Vec<Connection> =
+                                    connection_form::stored_connections(&config);
                                 if index < conns.len() {
                                     conns.remove(index);
-                                    config.set("ui.ftp_connections", conns);
+                                    connection_form::save_connections(&config, conns);
                                     config.save();
                                     on_change();
                                     clear_form();
@@ -2030,13 +2114,12 @@ pub fn create_manage_ftp_widget(
                         ));
                     }
                 }
-                Some(ConnNode::NewFolder) => {}
+                Some(ConnNode::NewFolder) | Some(ConnNode::Pinned(_)) => {}
                 None => {
                     {
                         let start_new_folder = start_new_folder.clone();
                         items.push((
-                            crate::i18n::tr("conn_manager.new_folder_title")
-                                .to_string(),
+                            crate::i18n::tr("conn_manager.new_folder_title").to_string(),
                             std::boxed::Box::new(move || start_new_folder(None)),
                         ));
                     }
@@ -2061,8 +2144,7 @@ pub fn create_manage_ftp_widget(
         let config_exp = config.clone();
         let parent_exp = parent.clone();
         btn_export.connect_clicked(move |_| {
-            let conns: Vec<FtpConnection> =
-                config_exp.get("ui.ftp_connections").unwrap_or_default();
+            let conns: Vec<Connection> = connection_form::stored_connections(&config_exp);
             if conns.is_empty() {
                 show_error(
                     &parent_exp,
@@ -2080,41 +2162,41 @@ pub fn create_manage_ftp_widget(
                     let Some(pw) = pw else { return };
                     let json = crate::secret_store::export_connections(
                         &conns,
-                        if pw.is_empty() { None } else { Some(pw.as_str()) },
+                        if pw.is_empty() {
+                            None
+                        } else {
+                            Some(pw.as_str())
+                        },
                     );
                     let plain = pw.is_empty();
                     let parent3 = parent2.clone();
                     let fd = gtk::FileDialog::builder()
                         .initial_name("ice-commander-connections.json")
                         .build();
-                    fd.save(
-                        Some(&parent2),
-                        gtk::gio::Cancellable::NONE,
-                        move |res| {
-                            let Ok(file) = res else { return };
-                            let Some(path) = file.path() else { return };
-                            match std::fs::write(&path, &json) {
-                                Ok(()) => {
-                                    ::secret_store::harden_file_permissions(&path);
-                                    let body = if plain {
-                                        crate::i18n::tr("conn_manager.export_done_plain")
-                                    } else {
-                                        crate::i18n::tr("conn_manager.export_done_encrypted")
-                                    };
-                                    show_error(
-                                        &parent3,
-                                        &crate::i18n::tr("conn_manager.export_done_title"),
-                                        &body,
-                                    );
-                                }
-                                Err(e) => show_error(
+                    fd.save(Some(&parent2), gtk::gio::Cancellable::NONE, move |res| {
+                        let Ok(file) = res else { return };
+                        let Some(path) = file.path() else { return };
+                        match std::fs::write(&path, &json) {
+                            Ok(()) => {
+                                ::secret_store::harden_file_permissions(&path);
+                                let body = if plain {
+                                    crate::i18n::tr("conn_manager.export_done_plain")
+                                } else {
+                                    crate::i18n::tr("conn_manager.export_done_encrypted")
+                                };
+                                show_error(
                                     &parent3,
-                                    &crate::i18n::tr("conn_manager.export_failed"),
-                                    &e.to_string(),
-                                ),
+                                    &crate::i18n::tr("conn_manager.export_done_title"),
+                                    &body,
+                                );
                             }
-                        },
-                    );
+                            Err(e) => show_error(
+                                &parent3,
+                                &crate::i18n::tr("conn_manager.export_failed"),
+                                &e.to_string(),
+                            ),
+                        }
+                    });
                 }),
             );
         });
@@ -2133,8 +2215,8 @@ pub fn create_manage_ftp_widget(
             std::rc::Rc::new(move |text: String, pw: Option<String>| {
                 match crate::secret_store::parse_import(&text, pw.as_deref()) {
                     Ok(list) => {
-                        let mut conns: Vec<FtpConnection> =
-                            config.get("ui.ftp_connections").unwrap_or_default();
+                        let mut conns: Vec<Connection> =
+                            connection_form::stored_connections(&config);
                         let (mut added, mut updated) = (0usize, 0usize);
                         for mut c in list {
                             crate::secret_store::seal_connection(&config, &mut c);
@@ -2149,7 +2231,7 @@ pub fn create_manage_ftp_widget(
                                 }
                             }
                         }
-                        config.set("ui.ftp_connections", conns);
+                        connection_form::save_connections(&config, conns);
                         config.save();
                         on_change();
                         if let Some(f) = refresh.borrow().as_ref() {
@@ -2160,7 +2242,13 @@ pub fn create_manage_ftp_widget(
                             &crate::i18n::tr("conn_manager.import_done_title"),
                             &format!(
                                 "{}\n\n{}",
-                                crate::i18n::trf("conn_manager.import_done_body", &[("added", &*(added).to_string()), ("updated", &*(updated).to_string())]),
+                                crate::i18n::trf(
+                                    "conn_manager.import_done_body",
+                                    &[
+                                        ("added", &*(added).to_string()),
+                                        ("updated", &*(updated).to_string())
+                                    ]
+                                ),
                                 crate::i18n::tr("conn_manager.import_delete_reminder")
                             ),
                         );
@@ -2220,15 +2308,6 @@ pub fn create_manage_ftp_widget(
     let on_change_add = on_change.clone();
     let editing_index_add = editing_index.clone();
     let previously_selected_index_add = previously_selected_index.clone();
-    let entry_remote_path_add = entry_remote_path.clone();
-    let switch_use_tunnel_add = switch_use_tunnel.clone();
-    let entry_tunnel_host_add = entry_tunnel_host.clone();
-    let entry_tunnel_port_add = entry_tunnel_port.clone();
-    let entry_tunnel_user_add = entry_tunnel_user.clone();
-    let tunnel_auth_dropdown_add = tunnel_auth_dropdown.clone();
-    let entry_tunnel_pass_add = entry_tunnel_pass.clone();
-    let entry_tunnel_key_path_add = entry_tunnel_key_path.clone();
-    let entry_tunnel_passphrase_add = entry_tunnel_passphrase.clone();
     let config_add = config.clone();
     let is_view_mode_add = is_view_mode.clone();
     let update_ui_state_add = update_ui_state.clone();
@@ -2236,6 +2315,9 @@ pub fn create_manage_ftp_widget(
 
     let config_seal = config.clone();
     let new_conn_folder_add = new_conn_folder.clone();
+    let kinds_add = kinds.clone();
+    let plugin_view_add = plugin_view.clone();
+    let plugin_session_add = plugin_session.clone();
     btn_add.connect_clicked(move |_| {
         let is_view = is_view_mode_add.get();
         if is_view && editing_index_add.get().is_some() {
@@ -2244,165 +2326,40 @@ pub fn create_manage_ftp_widget(
             return;
         }
 
-        let name = entry_name.text().to_string();
-        let host = entry_host.text().to_string();
-        let port_str = entry_port.text().to_string();
-        let user = entry_user.text().to_string();
-        let protocol = match protocol_dropdown.selected() {
-            0 => "FTP".to_string(),
-            1 => "SFTP".to_string(),
-            _ => "WEBDAV".to_string(),
-        };
-
-        if name.is_empty() || host.is_empty() || user.is_empty() {
+        let open = plugin_session_add
+            .borrow()
+            .as_ref()
+            .map(|session| (session.document.clone(), session.state.clone()));
+        let Some((document, held)) = open else {
             return;
-        }
-
-        let default_port = if protocol == "FTP" {
-            21
-        } else if protocol == "SFTP" {
-            22
-        } else {
-            80
         };
-        let port = port_str.parse::<u16>().unwrap_or(default_port);
-
-        let pass = if protocol == "FTP" || auth_dropdown.selected() == 0 {
-            let p = entry_pass.text().to_string();
-            if p.is_empty() {
-                None
-            } else {
-                Some(p)
-            }
-        } else {
-            None
+        let form = {
+            let shown = plugin_view_add.borrow();
+            let Some(view) = shown.as_ref() else {
+                return;
+            };
+            let values = connection_form::values_to_commit(&held, view.values());
+            let Some(collected) =
+                collect_plugin_form(&document, values, view.touched(), &held.stored_secrets)
+            else {
+                return;
+            };
+            collected
         };
 
-        let auth_type = if protocol == "SFTP" {
-            Some(match auth_dropdown.selected() {
-                0 => "password".to_string(),
-                _ => "key".to_string(),
-            })
-        } else {
-            None
-        };
-
-        let key_path = if protocol == "SFTP" && auth_dropdown.selected() == 1 {
-            let p = entry_key_path.text().to_string();
-            if p.is_empty() {
-                None
-            } else {
-                Some(p)
-            }
-        } else {
-            None
-        };
-
-        let passphrase = if protocol == "SFTP" && auth_dropdown.selected() == 1 {
-            let p = entry_passphrase.text().to_string();
-            if p.is_empty() {
-                None
-            } else {
-                Some(p)
-            }
-        } else {
-            None
-        };
-
-        let remote_path = {
-            let p = entry_remote_path_add.text().to_string();
-            if p.is_empty() {
-                None
-            } else {
-                Some(p)
-            }
-        };
-
-        let use_tunnel = if protocol == "SFTP" {
-            Some(switch_use_tunnel_add.is_active())
-        } else {
-            None
-        };
-
-        let tunnel_host = if protocol == "SFTP" && switch_use_tunnel_add.is_active() {
-            let p = entry_tunnel_host_add.text().to_string();
-            if p.is_empty() { None } else { Some(p) }
-        } else {
-            None
-        };
-
-        let tunnel_port = if protocol == "SFTP" && switch_use_tunnel_add.is_active() {
-            let p = entry_tunnel_port_add.text().to_string();
-            Some(p.parse::<u16>().unwrap_or(22))
-        } else {
-            None
-        };
-
-        let tunnel_user = if protocol == "SFTP" && switch_use_tunnel_add.is_active() {
-            let p = entry_tunnel_user_add.text().to_string();
-            if p.is_empty() { None } else { Some(p) }
-        } else {
-            None
-        };
-
-        let tunnel_auth_type = if protocol == "SFTP" && switch_use_tunnel_add.is_active() {
-            Some(if tunnel_auth_dropdown_add.selected() == 1 {
-                "key".to_string()
-            } else {
-                "password".to_string()
-            })
-        } else {
-            None
-        };
-
-        let tunnel_pass = if protocol == "SFTP" && switch_use_tunnel_add.is_active() && tunnel_auth_dropdown_add.selected() == 0 {
-            let p = entry_tunnel_pass_add.text().to_string();
-            if p.is_empty() { None } else { Some(p) }
-        } else {
-            None
-        };
-
-        let tunnel_key_path = if protocol == "SFTP" && switch_use_tunnel_add.is_active() && tunnel_auth_dropdown_add.selected() == 1 {
-            let p = entry_tunnel_key_path_add.text().to_string();
-            if p.is_empty() { None } else { Some(p) }
-        } else {
-            None
-        };
-
-        let tunnel_passphrase = if protocol == "SFTP" && switch_use_tunnel_add.is_active() && tunnel_auth_dropdown_add.selected() == 1 {
-            let p = entry_tunnel_passphrase_add.text().to_string();
-            if p.is_empty() { None } else { Some(p) }
-        } else {
-            None
-        };
-
-        let mut conns: Vec<FtpConnection> =
-            config_add.get("ui.ftp_connections").unwrap_or_default();
+        let protocol = kind_protocol(&kinds_add, protocol_dropdown.selected());
+        let mut conns: Vec<Connection> = connection_form::stored_connections(&config_add);
         let folder = match editing_index_add.get() {
             Some(idx) => conns.get(idx).and_then(|c| c.folder.clone()),
             None => new_conn_folder_add.borrow().clone(),
         };
-        let mut new_conn = FtpConnection {
-            name,
-            folder,
-            protocol,
-            host,
-            port,
-            user,
-            pass,
-            auth_type,
-            key_path,
-            passphrase,
-            remote_path,
-            use_tunnel,
-            tunnel_host,
-            tunnel_port,
-            tunnel_user,
-            tunnel_auth_type,
-            tunnel_pass,
-            tunnel_key_path,
-            tunnel_passphrase,
-        };
+        let mut new_conn = connection_form::record_from_form(&form, &protocol, folder);
+        // A secret the form did not ask again for stays as it was stored.
+        if let Some(previous) = editing_index_add.get().and_then(|at| conns.get(at)) {
+            let opened = crate::secret_store::opened(previous);
+            let kind = new_conn.kind.clone();
+            connection_form::carry_secrets(&mut new_conn, &opened, &kind);
+        }
         crate::secret_store::seal_connection(&config_seal, &mut new_conn);
 
         let saved_idx = if let Some(idx) = editing_index_add.get() {
@@ -2416,7 +2373,7 @@ pub fn create_manage_ftp_widget(
             conns.push(new_conn);
             conns.len() - 1
         };
-        config_add.set("ui.ftp_connections", conns.clone());
+        connection_form::save_connections(&config_add, conns.clone());
         config_add.save();
         *new_conn_folder_add.borrow_mut() = None;
 
@@ -2437,13 +2394,16 @@ pub fn create_manage_ftp_widget(
         let config_conn = config.clone();
         btn_connect.connect_clicked(move |_| {
             if let Some(idx) = editing_index_conn.get() {
-                let conns: Vec<FtpConnection> = config_conn.get("ui.ftp_connections").unwrap_or_default();
+                let conns: Vec<Connection> = connection_form::stored_connections(&config_conn);
                 if idx < conns.len() {
                     on_connect_cb(crate::secret_store::opened(&conns[idx]));
                 }
             }
         });
     }
+
+    // A timer armed as the dialog closes would otherwise reach the plugin with the form gone.
+    main_hbox.connect_unmap(move |_| plugin_debounces.borrow_mut().forget());
 
     main_hbox.upcast::<gtk::Widget>()
 }
@@ -2467,7 +2427,7 @@ pub fn show_manage_ftp_dialog(
     parent: &impl IsA<gtk::Window>,
     on_change: Rc<dyn Fn() + 'static>,
     config: client_config::AppConfig,
-    on_connect: Option<Rc<dyn Fn(FtpConnection) + 'static>>,
+    on_connect: Option<Rc<dyn Fn(Connection) + 'static>>,
 ) {
     let window = gtk::Window::builder()
         .title(&*crate::i18n::tr("conn_manager.title"))
@@ -2493,10 +2453,10 @@ pub fn show_manage_ftp_dialog(
     let win_connect = window.clone();
     let on_connect_wrapped = on_connect.map(|cb| {
         let win = win_connect.clone();
-        Rc::new(move |conn: FtpConnection| {
+        Rc::new(move |conn: Connection| {
             cb(conn);
             win.close();
-        }) as Rc<dyn Fn(FtpConnection)>
+        }) as Rc<dyn Fn(Connection)>
     });
     let widget = create_manage_ftp_widget(&window, on_change, config, on_connect_wrapped);
     window.set_child(Some(&widget));
@@ -2517,7 +2477,10 @@ fn prompt_password(
     body: &str,
     on_done: Rc<dyn Fn(Option<String>)>,
 ) {
-    let dialog = adw::AlertDialog::builder().heading(heading).body(body).build();
+    let dialog = adw::AlertDialog::builder()
+        .heading(heading)
+        .body(body)
+        .build();
     let entry = gtk::PasswordEntry::builder()
         .show_peek_icon(true)
         .activates_default(true)
@@ -2537,8 +2500,316 @@ fn prompt_password(
     dialog.present(Some(parent));
 }
 
+const NO_PICTURE: &str = "/com/icecommander/gtk/connect.svg";
+
+/// Draws a connection the way its own kind says it looks.
+pub fn draw_kind(icon: &Image, kind: &str, size: i32) {
+    icon.set_pixel_size(size);
+    match connection_form::kind_picture(kind) {
+        connection_form::KindPicture::Svg(bytes) => {
+            match crate::plugin_host::texture_from_svg(&bytes, size as u32) {
+                Some(drawn) => icon.set_paintable(Some(&drawn)),
+                None => icon.set_resource(Some(NO_PICTURE)),
+            }
+        }
+        connection_form::KindPicture::Theme(named) => icon.set_icon_name(Some(&named)),
+        connection_form::KindPicture::None => icon.set_resource(Some(NO_PICTURE)),
+    }
+}
+
+pub fn mount_through_plugin(
+    conn: &Connection,
+) -> Option<std::rc::Rc<dyn fm_core::rpc::FileSystemRpc>> {
+    let document = ic_plugin_host::connection_document(&conn.kind)?;
+    let opened = crate::secret_store::opened(conn);
+    let icon_svg = match connection_form::kind_picture(&conn.kind) {
+        connection_form::KindPicture::Svg(bytes) => String::from_utf8(bytes).ok(),
+        _ => None,
+    };
+    ic_plugin_host::mount_connection_shown(
+        &conn.kind,
+        &plugin_mount_settings(&document, &opened),
+        Some(fm_core::plugin_fs::Shown {
+            name: conn.name.clone(),
+            icon_svg,
+        }),
+    )
+}
+
 pub fn show_error(parent: &impl IsA<gtk::Widget>, title: &str, msg: &str) {
     let dialog = adw::AlertDialog::builder().heading(title).body(msg).build();
     dialog.add_response("ok", &*crate::i18n::tr("common.ok"));
     dialog.present(Some(parent));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        carried_into_rebuild, plugin_form_watches, plugin_kind_id, seeded_from_record, Connection,
+        Debounces,
+    };
+    use serde_json::json;
+    use std::collections::BTreeMap;
+
+    fn grouped_record() -> Connection {
+        Connection {
+            name: "cloud".to_string(),
+            folder: Some("work/servers".to_string()),
+            kind: "webdav".to_string(),
+            settings: BTreeMap::from([
+                (
+                    "url".to_string(),
+                    "https://dav.example.org/remote.php/dav".to_string(),
+                ),
+                ("user".to_string(), "ivan".to_string()),
+            ]),
+        }
+    }
+
+    #[test]
+    fn a_folder_and_a_settings_map_survive_the_round_trip_through_the_api_record() {
+        let stored = grouped_record();
+        let as_api: panel_server::ApiConnection =
+            serde_json::from_value(serde_json::to_value(&stored).expect("encodes"))
+                .expect("the api record reads what the dialog wrote");
+        let back: Connection =
+            serde_json::from_value(serde_json::to_value(&as_api).expect("encodes"))
+                .expect("the dialog reads what the api record wrote");
+        assert_eq!(back.folder, stored.folder);
+        assert_eq!(back.kind, stored.kind);
+        assert_eq!(back.settings, stored.settings);
+    }
+
+    fn a_form_that_wants_to_be_heard() -> ic_view::Document {
+        serde_json::from_value(serde_json::json!({
+            "schema": 1,
+            "kind": "example",
+            "fields": [
+                { "bind": "token", "type": "text" },
+                { "bind": "key_path", "type": "text" },
+            ],
+            "form": { "t": "column", "children": [
+                { "t": "input", "id": "token", "bind": "token", "emit": "change", "debounce_ms": 300 },
+                { "t": "input", "id": "key_path", "bind": "key_path", "picker": { "mode": "file" } },
+                { "t": "button", "id": "login", "intent": { "do": "emit", "node": "login" } },
+                { "t": "button", "id": "cancel", "intent": { "do": "close" } },
+            ]},
+        }))
+        .expect("a document")
+    }
+
+    #[test]
+    fn a_kind_whose_plugin_takes_no_events_is_wired_to_nothing_however_its_form_is_written() {
+        assert!(plugin_form_watches(false, &a_form_that_wants_to_be_heard()).is_empty());
+    }
+
+    #[test]
+    fn a_listening_kind_is_wired_to_its_emitting_buttons_and_to_the_fields_that_ask_to_be_heard() {
+        let watched = plugin_form_watches(true, &a_form_that_wants_to_be_heard());
+        assert_eq!(
+            watched,
+            vec![
+                ic_view_session::Watch {
+                    node: "token".to_string(),
+                    debounce_ms: 300,
+                    on_value: true,
+                },
+                ic_view_session::Watch {
+                    node: "login".to_string(),
+                    debounce_ms: 0,
+                    on_value: false,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn only_the_last_keystroke_of_a_debounced_node_is_still_armed_when_its_timer_fires() {
+        let mut waiting = Debounces::default();
+        let first = waiting.arm("token");
+        let second = waiting.arm("token");
+        let other = waiting.arm("key_path");
+        assert!(!waiting.still_armed("token", first));
+        assert!(waiting.still_armed("token", second));
+        assert!(waiting.still_armed("key_path", other));
+    }
+
+    #[test]
+    fn a_change_armed_before_a_rebuild_is_dropped_even_when_the_same_node_is_typed_in_again() {
+        let mut waiting = Debounces::default();
+        let before = waiting.arm("token");
+        waiting.forget();
+        assert!(!waiting.still_armed("token", before));
+        let after = waiting.arm("token");
+        assert_ne!(before, after, "a ticket is never handed out twice");
+        assert!(!waiting.still_armed("token", before));
+        assert!(waiting.still_armed("token", after));
+    }
+
+    #[test]
+    fn every_change_still_ticking_when_the_dialog_goes_away_is_dropped_instead_of_being_sent() {
+        let mut waiting = Debounces::default();
+        let token = waiting.arm("token");
+        let key_path = waiting.arm("key_path");
+        waiting.forget();
+        assert!(!waiting.still_armed("token", token));
+        assert!(!waiting.still_armed("key_path", key_path));
+    }
+
+    fn facts() -> ic_view_session::HostFacts {
+        ic_view_session::HostFacts::new("gtk", "en", &["copy"])
+    }
+
+    // The application knows no protocol: a kind exists only because something declared it.
+    fn declare(kind: &str, document: &serde_json::Value) {
+        let encoded = document.to_string();
+        let host = ic_plugin_host::host_table();
+        let id = std::ffi::CString::new(kind).expect("a kind id");
+        assert_eq!(
+            (host.register_connection_kind)(
+                id.as_ptr(),
+                encoded.as_ptr(),
+                encoded.len() as u64,
+                std::ptr::null(),
+                std::ptr::null_mut(),
+            ),
+            ic_plugin_api::IC_OK
+        );
+    }
+
+    fn a_form_with_a_default_port(port: u16) -> ic_view::Document {
+        serde_json::from_value(json!({
+            "schema": 1,
+            "kind": "example",
+            "fields": [
+                { "bind": "host", "type": "text" },
+                { "bind": "port", "type": "integer", "default": port },
+            ],
+            "form": { "t": "column", "children": [
+                { "t": "input", "id": "host", "bind": "host" },
+                { "t": "input", "id": "port", "bind": "port" },
+            ]},
+        }))
+        .expect("a document")
+    }
+
+    #[test]
+    fn the_view_a_kind_is_told_it_is_carries_the_id_the_plugin_registered_not_the_table_spelling() {
+        assert_eq!(plugin_kind_id("SFTP"), "sftp");
+        let session = ic_view_session::Session::over(
+            &plugin_kind_id("SFTP"),
+            a_form_that_wants_to_be_heard(),
+            &ic_view::State::default(),
+            &facts(),
+        );
+        let event = session.envelope(
+            "change",
+            Some("token"),
+            Some("token"),
+            None,
+            json!({}),
+            &facts(),
+        );
+        assert_eq!(
+            event["view"],
+            json!("sftp"),
+            "a plugin comparing the view it is given against its own id must see one spelling"
+        );
+    }
+
+    #[test]
+    fn a_kind_shown_after_another_is_seeded_from_the_record_so_its_own_default_still_applies() {
+        let first = a_form_with_a_default_port(21);
+        let previous = ic_view_session::Session::over(
+            "first",
+            first.clone(),
+            &seeded_from_record(&first, "first", None),
+            &facts(),
+        );
+        assert_eq!(previous.state.state.get("port"), Some(&json!(21)));
+
+        let second = a_form_with_a_default_port(22);
+        let session = ic_view_session::Session::over(
+            "second",
+            second.clone(),
+            &seeded_from_record(&second, "second", None),
+            &facts(),
+        );
+        assert_eq!(
+            session.state.state.get("port"),
+            Some(&json!(22)),
+            "what the kind shown before it was seeded with must not survive the switch"
+        );
+        assert_eq!(session.state.view.get("mode"), Some(&json!("new")));
+    }
+
+    #[test]
+    fn the_kind_being_switched_to_is_seeded_from_the_record_the_dialog_is_editing() {
+        let document = a_form_with_a_default_port(22);
+        let mut record = Connection::new("second");
+        record.put("host", "files.example.org".to_string());
+        record.put("port", "2222".to_string());
+        let state = seeded_from_record(&document, "second", Some(&record));
+        assert_eq!(state.state.get("host"), Some(&json!("files.example.org")));
+        assert_eq!(state.state.get("port"), Some(&json!("2222")));
+        assert_eq!(state.view.get("mode"), Some(&json!("edit")));
+    }
+
+    #[test]
+    fn a_secret_the_record_already_holds_is_marked_stored_so_the_form_offers_to_keep_it() {
+        let declared = json!({
+            "schema": 1,
+            "kind": "gtkstored",
+            "fields": [
+                { "bind": "pass", "type": "text", "secret": true },
+                { "bind": "passphrase", "type": "text", "secret": true },
+            ],
+            "form": { "t": "column", "children": [
+                { "t": "input", "id": "pass", "bind": "pass" },
+            ]},
+        });
+        declare("gtkstored", &declared);
+        let document: ic_view::Document =
+            serde_json::from_value(declared).expect("the declared document");
+
+        let mut record = Connection::new("gtkstored");
+        record.put("pass", "hunter2".to_string());
+        let state = seeded_from_record(&document, "gtkstored", Some(&record));
+        assert!(state.stored_secrets.contains("pass"));
+        assert!(
+            !state.stored_secrets.contains("passphrase"),
+            "only a secret the record holds a value for is marked"
+        );
+        assert!(
+            seeded_from_record(&document, "gtkstored", None)
+                .stored_secrets
+                .is_empty(),
+            "a connection being added holds nothing yet"
+        );
+    }
+
+    #[test]
+    fn a_value_the_reply_put_into_the_widgets_is_carried_into_the_form_the_rebuild_renders() {
+        let document = a_form_that_wants_to_be_heard();
+        let mut state = ic_view::State::default();
+        state.set_state("key_path", json!("/home/ivan/.ssh/id_ed25519"));
+        let carried = carried_into_rebuild(&document, &state, &|id| match id {
+            "token" => Some(json!("put-by-the-plugin")),
+            "key_path" => Some(json!("/tmp/stale")),
+            _ => None,
+        });
+        assert_eq!(
+            carried,
+            vec![("token".to_string(), json!("put-by-the-plugin"))],
+            "only what the state cannot seed back is carried"
+        );
+    }
+
+    #[test]
+    fn an_empty_widget_carries_nothing_into_the_rebuild_and_leaves_the_new_default_alone() {
+        let document = a_form_that_wants_to_be_heard();
+        let carried =
+            carried_into_rebuild(&document, &ic_view::State::default(), &|_| Some(json!("")));
+        assert!(carried.is_empty());
+    }
 }

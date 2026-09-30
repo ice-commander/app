@@ -12,7 +12,11 @@ pub(super) fn setup_keyboard(
     active_panel: std::rc::Rc<std::cell::Cell<super::ActivePanelSide>>,
     selector_updaters: std::rc::Rc<std::cell::RefCell<Vec<std::rc::Rc<dyn Fn()>>>>,
     shift_held: std::rc::Rc<std::cell::Cell<bool>>,
-    global_on_connect: std::rc::Rc<std::cell::RefCell<Option<std::rc::Rc<dyn Fn(crate::connection_manager::FtpConnection) + 'static>>>>,
+    global_on_connect: std::rc::Rc<
+        std::cell::RefCell<
+            Option<std::rc::Rc<dyn Fn(crate::connection_manager::Connection) + 'static>>,
+        >,
+    >,
     btn_f4_ref: std::rc::Rc<std::cell::RefCell<Option<gtk::Button>>>,
     btn_f7_ref: std::rc::Rc<std::cell::RefCell<Option<gtk::Button>>>,
     on_expand: std::rc::Rc<dyn Fn(super::ActivePanelSide)>,
@@ -85,8 +89,7 @@ pub(super) fn setup_keyboard(
             }
         }
 
-        let terminal_focused = left_term_pressed.has_focus()
-            || right_term_pressed.has_focus();
+        let terminal_focused = left_term_pressed.has_focus() || right_term_pressed.has_focus();
 
         if let Some(action_id) = crate::hotkey::resolve_action(&config_pressed, keyval, state) {
             match action_id.as_str() {
@@ -172,9 +175,12 @@ pub(super) fn setup_keyboard(
                     }
                     "clip_cut" | "clip_copy" | "clip_paste" => {
                         let editing = gtk::prelude::GtkWindowExt::focus(&window_pressed)
-                            .map_or(false, |w| w.is::<gtk::Editable>() || w.is::<gtk::TextView>());
-                        let dialog_up = adw::prelude::AdwApplicationWindowExt::visible_dialog(&window_pressed)
-                            .is_some();
+                            .map_or(false, |w| {
+                                w.is::<gtk::Editable>() || w.is::<gtk::TextView>()
+                            });
+                        let dialog_up =
+                            adw::prelude::AdwApplicationWindowExt::visible_dialog(&window_pressed)
+                                .is_some();
                         if editing || dialog_up {
                             return gtk::glib::Propagation::Proceed;
                         }
@@ -210,8 +216,12 @@ pub(super) fn setup_keyboard(
                 Some(right_info_pressed.active_toggle_terminal())
             } else {
                 match active_panel_pressed.get() {
-                    super::ActivePanelSide::Left => Some(left_info_pressed.active_toggle_terminal()),
-                    super::ActivePanelSide::Right => Some(right_info_pressed.active_toggle_terminal()),
+                    super::ActivePanelSide::Left => {
+                        Some(left_info_pressed.active_toggle_terminal())
+                    }
+                    super::ActivePanelSide::Right => {
+                        Some(right_info_pressed.active_toggle_terminal())
+                    }
                     super::ActivePanelSide::None => None,
                 }
             };
@@ -244,7 +254,9 @@ pub(super) fn setup_keyboard(
             }
         } else if keyval == gtk::gdk::Key::BackSpace {
             let is_editable = gtk::prelude::GtkWindowExt::focus(&window_pressed)
-                .map_or(false, |w| w.is::<gtk::Editable>() || w.is::<gtk::TextView>());
+                .map_or(false, |w| {
+                    w.is::<gtk::Editable>() || w.is::<gtk::TextView>()
+                });
             if is_editable {
                 gtk::glib::Propagation::Proceed
             } else if let Some((active_fm, _)) = get_active_panels() {
@@ -327,8 +339,12 @@ pub(super) fn setup_keyboard(
             || keyval == gtk::gdk::Key::KP_Delete
         {
             let is_editable = gtk::prelude::GtkWindowExt::focus(&window_pressed)
-                .map_or(false, |w| w.is::<gtk::Editable>() || w.is::<gtk::TextView>());
-            if (keyval == gtk::gdk::Key::Delete || keyval == gtk::gdk::Key::KP_Delete) && is_editable {
+                .map_or(false, |w| {
+                    w.is::<gtk::Editable>() || w.is::<gtk::TextView>()
+                });
+            if (keyval == gtk::gdk::Key::Delete || keyval == gtk::gdk::Key::KP_Delete)
+                && is_editable
+            {
                 gtk::glib::Propagation::Proceed
             } else if let Some((active_fm, _)) = get_active_panels() {
                 active_fm.request_delete();

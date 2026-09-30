@@ -93,6 +93,21 @@ pub fn tr(key: &str) -> String {
     key.to_string()
 }
 
+/// English overlaid with `lang`, which is what a remote frontend needs in one
+/// request: it cannot fall back key by key the way `tr` does.
+pub fn dictionary(lang: &str) -> HashMap<String, String> {
+    let held = store().read().unwrap();
+    let mut merged = held.get("en").cloned().unwrap_or_default();
+    if lang != "en" {
+        if let Some(chosen) = held.get(lang) {
+            for (key, value) in chosen {
+                merged.insert(key.clone(), value.clone());
+            }
+        }
+    }
+    merged
+}
+
 pub fn trf(key: &str, args: &[(&str, &str)]) -> String {
     let template = tr(key);
     let mut out = String::with_capacity(template.len());
@@ -145,6 +160,9 @@ mod tests {
             trf("b.msg", &[("added", "3"), ("updated", "2")]),
             "Added 3, updated 2."
         );
-        assert_eq!(trf("b.msg", &[("added", "3")]), "Added 3, updated %{updated}.");
+        assert_eq!(
+            trf("b.msg", &[("added", "3")]),
+            "Added 3, updated %{updated}."
+        );
     }
 }

@@ -96,7 +96,11 @@ pub(super) fn build(page_box: &Box, parent: &gtk::Window, config: client_config:
         let config = config.clone();
         std::rc::Rc::new(move |e: &gtk::Entry| {
             let text = e.text().trim().to_string();
-            if config.get::<String>("ui.external_editor_path").unwrap_or_default() == text {
+            if config
+                .get::<String>("ui.external_editor_path")
+                .unwrap_or_default()
+                == text
+            {
                 return;
             }
             config.set("ui.external_editor_path", text);

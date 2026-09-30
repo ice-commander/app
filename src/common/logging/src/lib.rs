@@ -1,4 +1,3 @@
-
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -175,7 +174,11 @@ impl State {
         }
 
         if self.settings.max_bytes > 0 {
-            let size = self.file.as_ref().and_then(|f| f.metadata().ok()).map_or(0, |m| m.len());
+            let size = self
+                .file
+                .as_ref()
+                .and_then(|f| f.metadata().ok())
+                .map_or(0, |m| m.len());
             if size + line.len() as u64 > self.settings.max_bytes {
                 self.rotate();
             }
@@ -217,7 +220,10 @@ pub fn apply(settings: Settings) {
     let sink = sink();
 
     if !INSTALLED.swap(true, Ordering::SeqCst) && log::set_logger(sink).is_err() {
-        let _ = writeln!(std::io::stderr(), "[logging] another logger is already installed");
+        let _ = writeln!(
+            std::io::stderr(),
+            "[logging] another logger is already installed"
+        );
     }
 
     if let Ok(mut state) = sink.state.lock() {
@@ -229,8 +235,16 @@ pub fn apply(settings: Settings) {
         state.settings = settings;
     }
 
-    let level = sink.state.lock().map(|s| s.settings.level).unwrap_or(LevelFilter::Off);
-    let target_off = sink.state.lock().map(|s| s.settings.target == Target::Off).unwrap_or(true);
+    let level = sink
+        .state
+        .lock()
+        .map(|s| s.settings.level)
+        .unwrap_or(LevelFilter::Off);
+    let target_off = sink
+        .state
+        .lock()
+        .map(|s| s.settings.target == Target::Off)
+        .unwrap_or(true);
     log::set_max_level(if target_off { LevelFilter::Off } else { level });
 }
 
@@ -249,7 +263,10 @@ mod tests {
         let path = temp_path("off");
         let _ = std::fs::remove_file(&path);
         let mut state = State {
-            settings: Settings { file: path.clone(), ..Settings::default() },
+            settings: Settings {
+                file: path.clone(),
+                ..Settings::default()
+            },
             file: None,
             file_error_reported: false,
         };

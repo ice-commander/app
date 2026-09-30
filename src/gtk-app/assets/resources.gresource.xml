@@ -16,7 +16,6 @@
     <file compressed="true" preprocess="xml-stripblanks">file.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">fileexplorer.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">folder.svg</file>
-    <file compressed="true" preprocess="xml-stripblanks">ftp.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">music.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">login.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">list-icons.svg</file>
@@ -83,14 +82,11 @@
     <file compressed="true" preprocess="xml-stripblanks">edit-file.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">empty-star.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">expand.svg</file>
-    <file compressed="true" preprocess="xml-stripblanks">netdrive.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">night.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">at-home.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">ssd.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">star.svg</file>
-    <file compressed="true" preprocess="xml-stripblanks">sysinfo.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">processes.svg</file>
-    <file compressed="true" preprocess="xml-stripblanks">toolbox.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">search.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">start.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">hidden.svg</file>
