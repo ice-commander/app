@@ -18,33 +18,42 @@ they are not covered by the generated section — this list is maintained by han
 | Library | License | Where | Linking |
 | --- | --- | --- | --- |
 | GTK 4, libadwaita, GLib, Pango, Cairo, gdk-pixbuf, librsvg | LGPL-2.1-or-later | all platforms | dynamic |
-| GStreamer (video playback) | LGPL-2.1-or-later | Linux | dynamic |
-| libmpv, FFmpeg (video playback, decode-only) | LGPL-2.1-or-later | Windows, macOS | dynamic |
-| dav1d (AV1 decoder) | BSD-2-Clause | macOS | dynamic |
 | fakelzo (our stand-in for lzo2) | MIT | Windows, macOS | dynamic |
 | fakejbig (our stand-in for libjbig) | MIT | Windows, macOS | dynamic |
 | FreeType | FTL (used under FTL, not the GPL-2.0 alternative) | Windows, macOS | dynamic |
 | PDFium | BSD-3-Clause | all platforms | dynamic |
-| libssh2 | BSD-3-Clause | all platforms | static |
-| OpenSSL 3.x | Apache-2.0 | where system TLS is used | dynamic |
+| libssh2 | BSD-3-Clause | Windows bundle, arriving with curl in the MSYS2 GTK tree | dynamic |
+| OpenSSL 3.x | Apache-2.0 | Windows bundle, same tree | dynamic |
+
+Nothing here links libssh2 or OpenSSL any more: the application speaks TLS through
+`rustls`, and SSH left with the SFTP transport when it became a plugin. Both libraries are
+still in the Windows bundle because the MSYS2 GTK tree brings them.
+
+**Plugins carry their own dependencies and their own licence file.** A plugin is a separate
+library from a separate repository — what it links is listed there, not here.
 
 **LGPL components** are linked dynamically and shipped as separate shared
 libraries, so they may be replaced by the user. Their license texts are
 included in the release packages.
 
-**The media stack is LGPL.** The video viewer
-([`src/gtk-app/src/viewer/video.rs`](src/gtk-app/src/viewer/video.rs)) uses libmpv on
-Windows and macOS, and both bundles ship an LGPL build of it: mpv is configured with
-`-Dgpl=false` and its FFmpeg carries no `--enable-gpl`, so the GPL parts — the x264 and
-x265 encoders, libpostproc, the DVD/CD readers — are simply not built. The viewer only
-ever decodes; the macOS build contains zero encoders and zero muxers. On Linux video
-plays through GStreamer, which is not bundled.
+**Video is not decoded here.** The application plays no video at all; the video plugin
+does, from its own repository (`plugin-video`), through the LGPL libmpv it carries — one and
+the same component on Linux, macOS and Windows. What the plugin links is listed with the
+plugin.
+
+mpv is built with `-Dgpl=false` and its FFmpeg without `--enable-gpl`, so the GPL parts —
+the x264 and x265 encoders, libpostproc, the DVD/CD readers — are not built. The builds are
+`docker-libmpv-multibuild` for Linux and
+[`builder/build_libmpv_ffmpeg_lgpl.sh`](builder/build_libmpv_ffmpeg_lgpl.sh) for macOS;
+Windows uses a prebuilt LGPL `libmpv-2.dll`.
+
+**Sound is the application's own.** Audio plays through the `rodio` crate, listed with the
+rest of the Rust dependencies below. Nothing here uses the toolkit's media stack.
 
 **No GPL code ships in any bundle.** Two GPL libraries used to arrive, neither of them asked
-for. `liblzo2`
-(GPL-2.0-or-later), and it was never something the application asked for — GTK links it
-through the cairo script interpreter (`libgtk-4 → libcairo-script-interpreter → liblzo2`),
-a debugging facility nothing here drives.
+for. The first is `liblzo2` (GPL-2.0-or-later): GTK links it through the cairo script
+interpreter (`libgtk-4 → libcairo-script-interpreter → liblzo2`), a debugging facility
+nothing here drives.
 
 It is replaced on both desktop platforms by [`src/fakelzo/`](src/fakelzo/), our own
 MIT-licensed stand-in exporting the only two symbols the interpreter imports

@@ -13,9 +13,11 @@ mod page_connections;
 mod page_editors;
 mod page_hotkeys;
 mod page_interface;
-pub mod page_toolbar;
 mod page_logging;
+mod page_plugins;
 mod page_security;
+pub mod page_toolbar;
+mod reset;
 
 pub fn show_settings_dialog(
     parent_window: &gtk::Window,
@@ -52,6 +54,44 @@ pub fn show_settings_dialog(
 
     sidebar_box.append(&sidebar_scroll);
 
+    // Under the categories rather than inside one: it undoes all of them.
+    let reset_btn = gtk::Button::builder()
+        .label(&*crate::i18n::tr("settings.reset_all"))
+        .margin_start(8)
+        .margin_end(8)
+        .margin_top(6)
+        .margin_bottom(8)
+        .build();
+    reset_btn.add_css_class("flat");
+    reset_btn.set_cursor_from_name(Some("pointer"));
+    {
+        let config = config.clone();
+        let dialog = settings_dialog.clone();
+        reset_btn.connect_clicked(move |_| {
+            let ask = adw::AlertDialog::builder()
+                .heading(&*crate::i18n::tr("settings.reset_all"))
+                .body(&*crate::i18n::tr("settings.reset_all_body"))
+                .build();
+            ask.add_response("cancel", &crate::i18n::tr("common.cancel"));
+            ask.add_response("reset", &crate::i18n::tr("settings.reset_all_confirm"));
+            ask.set_response_appearance("reset", adw::ResponseAppearance::Destructive);
+            ask.set_default_response(Some("cancel"));
+            ask.set_close_response("cancel");
+            let config = config.clone();
+            ask.connect_response(None, move |asked, answer| {
+                asked.close();
+                if answer != "reset" {
+                    return;
+                }
+                let cleared = reset::reset_settings(&config);
+                ic_logging::info!("settings reset: {cleared} key(s) cleared");
+                crate::utils::restart_app();
+            });
+            ask.present(Some(&dialog));
+        });
+    }
+    sidebar_box.append(&reset_btn);
+
     let separator = Separator::new(Orientation::Vertical);
 
     let stack = Stack::builder()
@@ -70,7 +110,10 @@ pub fn show_settings_dialog(
     sidebar_list.connect_row_selected(move |_, row| {
         let Some(row) = row else { return };
         let index = row.index() as usize;
-        let builder = builders_select.borrow_mut().get_mut(index).and_then(Option::take);
+        let builder = builders_select
+            .borrow_mut()
+            .get_mut(index)
+            .and_then(Option::take);
         let page_box = pages_select.borrow().get(index).cloned();
         if let (Some(build), Some(page_box)) = (builder, page_box) {
             build(&page_box);
@@ -78,42 +121,16 @@ pub fn show_settings_dialog(
         stack_clone.set_visible_child_name(&format!("page_{}", index));
     });
 
-    let mut categories = vec![(
-        "About",
-        crate::i18n::tr("settings.cat_about"),
-    )];
-    categories.push((
-        "Connections",
-        crate::i18n::tr("settings.cat_connections"),
-    ));
-    categories.push((
-        "Interface",
-        crate::i18n::tr("settings.cat_interface"),
-    ));
-    categories.push((
-        "Toolbar",
-        crate::i18n::tr("settings.cat_toolbar"),
-    ));
-    categories.push((
-        "Hot keys",
-        crate::i18n::tr("settings.cat_hotkeys"),
-    ));
-    categories.push((
-        "Editors",
-        crate::i18n::tr("settings.cat_editors"),
-    ));
-    categories.push((
-        "Applications",
-        crate::i18n::tr("settings.cat_applications"),
-    ));
-    categories.push((
-        "Security",
-        crate::i18n::tr("settings.cat_security"),
-    ));
-    categories.push((
-        "Logging",
-        crate::i18n::tr("settings.cat_logging"),
-    ));
+    let mut categories = vec![("About", crate::i18n::tr("settings.cat_about"))];
+    categories.push(("Connections", crate::i18n::tr("settings.cat_connections")));
+    categories.push(("Interface", crate::i18n::tr("settings.cat_interface")));
+    categories.push(("Toolbar", crate::i18n::tr("settings.cat_toolbar")));
+    categories.push(("Hot keys", crate::i18n::tr("settings.cat_hotkeys")));
+    categories.push(("Editors", crate::i18n::tr("settings.cat_editors")));
+    categories.push(("Applications", crate::i18n::tr("settings.cat_applications")));
+    categories.push(("Security", crate::i18n::tr("settings.cat_security")));
+    categories.push(("Plugins", crate::i18n::tr("settings.cat_plugins")));
+    categories.push(("Logging", crate::i18n::tr("settings.cat_logging")));
 
     let mut first_row = None;
 
@@ -156,12 +173,7 @@ pub fn show_settings_dialog(
                 let config = config.clone();
                 let on_changed = on_connections_changed.clone();
                 Some(std::boxed::Box::new(move |page_box: &Box| {
-                    page_connections::build(
-                        page_box,
-                        &dialog,
-                        config.clone(),
-                        on_changed.clone(),
-                    );
+                    page_connections::build(page_box, &dialog, config.clone(), on_changed.clone());
                 }))
             }
             "Interface" => {
@@ -205,6 +217,13 @@ pub fn show_settings_dialog(
                 let config = config.clone();
                 Some(std::boxed::Box::new(move |page_box: &Box| {
                     page_security::build(page_box, &dialog, config.clone());
+                }))
+            }
+            "Plugins" => {
+                let dialog = settings_dialog.clone();
+                let config = config.clone();
+                Some(std::boxed::Box::new(move |page_box: &Box| {
+                    page_plugins::build(page_box, &dialog, config.clone());
                 }))
             }
             "Logging" => {

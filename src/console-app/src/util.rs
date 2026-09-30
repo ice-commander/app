@@ -29,7 +29,20 @@ pub(crate) fn fmt_time(ts: u64) -> String {
 pub(crate) fn centered_rect(w: u16, h: u16, area: Rect) -> Rect {
     let w = w.min(area.width);
     let h = h.min(area.height);
-    Rect { x: area.x + (area.width - w) / 2, y: area.y + (area.height - h) / 2, width: w, height: h }
+    Rect {
+        x: area.x + (area.width - w) / 2,
+        y: area.y + (area.height - h) / 2,
+        width: w,
+        height: h,
+    }
+}
+
+/// The byte offset of the `cx`-th character, or the end of the line.
+pub(crate) fn byte_at(line: &str, cx: usize) -> usize {
+    line.char_indices()
+        .nth(cx)
+        .map(|(b, _)| b)
+        .unwrap_or(line.len())
 }
 
 pub(crate) fn is_binary(bytes: &[u8]) -> bool {
@@ -101,28 +114,52 @@ mod tests {
 
     #[test]
     fn centered_rect_is_centered_inside_the_area() {
-        let area = Rect { x: 0, y: 0, width: 100, height: 50 };
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 50,
+        };
         let r = centered_rect(20, 10, area);
         assert_eq!((r.x, r.y, r.width, r.height), (40, 20, 20, 10));
     }
 
     #[test]
     fn centered_rect_respects_the_area_origin() {
-        let area = Rect { x: 7, y: 3, width: 20, height: 10 };
+        let area = Rect {
+            x: 7,
+            y: 3,
+            width: 20,
+            height: 10,
+        };
         let r = centered_rect(10, 4, area);
         assert_eq!((r.x, r.y), (12, 6));
     }
 
     #[test]
     fn centered_rect_never_grows_past_the_area() {
-        let area = Rect { x: 0, y: 0, width: 10, height: 4 };
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 4,
+        };
         let r = centered_rect(80, 40, area);
         assert_eq!((r.x, r.y, r.width, r.height), (0, 0, 10, 4));
     }
 
     #[test]
     fn centered_rect_of_an_empty_area_is_empty() {
-        let r = centered_rect(30, 8, Rect { x: 0, y: 0, width: 0, height: 0 });
+        let r = centered_rect(
+            30,
+            8,
+            Rect {
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+            },
+        );
         assert_eq!((r.width, r.height), (0, 0));
     }
 

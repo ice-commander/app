@@ -88,8 +88,9 @@ impl TerminalView {
                         glib::timeout_add_local(Duration::from_millis(20), move || {
                             while let Ok(data) = gui_rx.try_recv() {
                                 if data.is_empty() {
-                                    let _ = sender_feed
-                                        .send(TerminalInput::Feed(b"\r\n[Session Ended]\r\n".to_vec()));
+                                    let _ = sender_feed.send(TerminalInput::Feed(
+                                        b"\r\n[Session Ended]\r\n".to_vec(),
+                                    ));
                                     if let Some(cb) = on_ended.borrow().as_ref() {
                                         cb();
                                     }
@@ -215,12 +216,6 @@ impl TerminalView {
         *self.session_factory.borrow_mut() = Some(factory);
         (self.start)();
         let _ = self.sender.send(TerminalInput::GrabFocus);
-    }
-
-    pub fn start_ssh_session(&self, target: fm_core::rpc::SshShellTarget) {
-        self.start_session_with(Rc::new(move || {
-            Ok(virtualfs::ssh_shell::open_ssh_shell(target.clone(), 24, 80))
-        }));
     }
 
     pub fn stop_session(&self) {

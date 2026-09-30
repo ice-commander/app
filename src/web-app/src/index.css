@@ -1469,3 +1469,98 @@
 	max-width: none;
 	max-height: none;
 }
+
+/* ── A plugin document's list lines ─────────────────────────────────────────
+   The `row` / `row_selected` roles, drawn the way the GTK builder draws them:
+   no frame, the text where the eye looks for it, and a height that a short
+   window shortens the list by rather than squeezing the lines. */
+.view-row {
+	display: block;
+	width: 100%;
+	height: 38px;
+	flex-shrink: 0;
+	padding: 0 10px;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--text-main);
+	font-family: var(--font-sans);
+	font-size: 13px;
+	text-align: left;
+	/* `pre`, not `nowrap`: the spaces a plugin lines its rows up with are its own. */
+	white-space: pre;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	cursor: pointer;
+}
+
+.view-row:hover:not(:disabled) {
+	background-color: var(--border-light);
+}
+
+.view-row:disabled {
+	cursor: default;
+}
+
+.view-row.selected {
+	background-color: var(--accent-blue-bg);
+	color: var(--accent-blue-hover);
+	font-weight: 600;
+}
+
+/* A plugin's document draws itself with plain controls — a player, a checkbox, a
+   dropdown — so tell the browser which way round its own chrome goes. */
+.view-document {
+	color-scheme: dark;
+}
+
+.app-window.light-theme .view-document {
+	color-scheme: light;
+}
+
+/* The buttons a plugin document and the connection editor ask for by name. */
+.btn {
+	height: 34px;
+	padding: 0 14px;
+	border-radius: 6px;
+	border: 1px solid var(--border-light);
+	background-color: transparent;
+	color: var(--text-muted);
+	font-family: var(--font-sans);
+	font-size: 12px;
+	font-weight: 600;
+	cursor: pointer;
+	transition: all 0.15s;
+}
+
+.btn:hover:not(:disabled) {
+	background-color: rgba(255, 255, 255, 0.03);
+	color: var(--text-main);
+}
+
+.btn:disabled {
+	opacity: 0.45;
+	cursor: default;
+}
+
+.btn-primary {
+	background-color: var(--accent-blue);
+	border-color: transparent;
+	color: #ffffff;
+}
+
+.btn-primary:hover:not(:disabled) {
+	background-color: var(--accent-blue-hover);
+	color: #ffffff;
+}
+
+.btn-danger {
+	background-color: #dc2626;
+	border-color: transparent;
+	color: #ffffff;
+}
+
+.btn-danger:hover:not(:disabled) {
+	background-color: #ef4444;
+	color: #ffffff;
+}

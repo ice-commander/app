@@ -10,7 +10,7 @@ echo "--- Starting Debian build (console) ---"
 echo "Rust version: $(rustc --version)"
 
 # Same target dir as the GTK/webserver deb builds: the shared crates are already compiled, so
-# only the GTK-free graph (virtualfs no-gtk, panel-core, console-app) links here.
+# only the GTK-free graph (localfs no-gtk, panel-core, console-app) links here.
 export CARGO_TARGET_DIR="/home/builder/workdir/bin/distr/deb/target"
 export CARGO_HOME="/home/builder/workdir/bin/distr/cargo-home-shared"
 node ./builder/gen-version.js console deb

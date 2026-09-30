@@ -116,9 +116,18 @@ pub fn show_delete_dialog(
     let body_text = if files.len() == 1 {
         let mut p = parent.clone();
         p.push(files[0].0.clone());
-        crate::i18n::trf("fm.confirm_delete_single", &[("path", &*(gtk::glib::markup_escape_text(&build_path_string(&p))).to_string())])
+        crate::i18n::trf(
+            "fm.confirm_delete_single",
+            &[(
+                "path",
+                &*(gtk::glib::markup_escape_text(&build_path_string(&p))).to_string(),
+            )],
+        )
     } else {
-        crate::i18n::trf("fm.confirm_delete_multiple", &[("count", &*(files.len()).to_string())])
+        crate::i18n::trf(
+            "fm.confirm_delete_multiple",
+            &[("count", &*(files.len()).to_string())],
+        )
     };
 
     let extra_box = gtk::Box::builder()
@@ -226,8 +235,11 @@ pub fn rename_dialog_for(
     };
     let old_path = format!("{}{}", safe_parent, old_name);
 
-    let dialog =
-        adw::MessageDialog::new(Some(window), Some(&*crate::i18n::tr("fm.rename_title")), None);
+    let dialog = adw::MessageDialog::new(
+        Some(window),
+        Some(&*crate::i18n::tr("fm.rename_title")),
+        None,
+    );
     let entry = gtk::Entry::builder()
         .text(old_name)
         .activates_default(true)
@@ -312,19 +324,34 @@ pub fn chmod_dialog_for(
         .margin_top(8)
         .margin_bottom(8)
         .build();
-    for (col, title) in ["Class", "Read", "Write", "Exec", "Special"].iter().enumerate() {
+    for (col, title) in ["Class", "Read", "Write", "Exec", "Special"]
+        .iter()
+        .enumerate()
+    {
         grid.attach(&gtk::Label::new(Some(title)), col as i32, 0, 1, 1);
     }
 
     let rows: [(&str, [(&str, u32); 4]); 3] = [
-        ("Owner", [("", 0o400), ("", 0o200), ("", 0o100), ("SUID", 0o4000)]),
-        ("Group", [("", 0o040), ("", 0o020), ("", 0o010), ("SGID", 0o2000)]),
-        ("Others", [("", 0o004), ("", 0o002), ("", 0o001), ("Sticky", 0o1000)]),
+        (
+            "Owner",
+            [("", 0o400), ("", 0o200), ("", 0o100), ("SUID", 0o4000)],
+        ),
+        (
+            "Group",
+            [("", 0o040), ("", 0o020), ("", 0o010), ("SGID", 0o2000)],
+        ),
+        (
+            "Others",
+            [("", 0o004), ("", 0o002), ("", 0o001), ("Sticky", 0o1000)],
+        ),
     ];
     let mut checks: Vec<(gtk::CheckButton, u32)> = Vec::with_capacity(12);
     for (row_idx, (class_label, cells)) in rows.iter().enumerate() {
         let r = (row_idx + 1) as i32;
-        let lbl = gtk::Label::builder().label(*class_label).halign(gtk::Align::Start).build();
+        let lbl = gtk::Label::builder()
+            .label(*class_label)
+            .halign(gtk::Align::Start)
+            .build();
         grid.attach(&lbl, 0, r, 1, 1);
         for (col_idx, (cb_label, mask)) in cells.iter().enumerate() {
             let cb = gtk::CheckButton::builder().label(*cb_label).build();
@@ -375,7 +402,10 @@ pub fn chmod_dialog_for(
     }
     octal.add_controller(focus);
     grid.attach(
-        &gtk::Label::builder().label("Octal:").halign(gtk::Align::Start).build(),
+        &gtk::Label::builder()
+            .label("Octal:")
+            .halign(gtk::Align::Start)
+            .build(),
         0,
         4,
         1,
@@ -423,15 +453,6 @@ pub fn resolve_drive_details(
     key: &str,
     config: &client_config::AppConfig,
 ) -> (String, String, bool) {
-    #[derive(serde::Deserialize, Clone, Debug)]
-    struct DialogFtpConnection {
-        name: String,
-        protocol: String,
-        host: String,
-        port: u16,
-        user: String,
-    }
-
     let favorites = config
         .get::<Vec<String>>("ui.favorites")
         .unwrap_or_default();
@@ -440,35 +461,7 @@ pub fn resolve_drive_details(
     let mut icon = "/com/fm-ui/gtk/ssd.svg".to_string();
     let mut key_for_fav = key.to_string();
 
-    if key.starts_with("webdav://") {
-        icon = "/com/fm-ui/gtk/netdrive.svg".to_string();
-        let all_conns = config
-            .get::<Vec<DialogFtpConnection>>("ui.ftp_connections")
-            .unwrap_or_default();
-        name = all_conns
-            .iter()
-            .find(|c| format!("webdav://{}@{}", c.user, c.host) == key)
-            .map(|c| c.name.clone())
-            .unwrap_or_else(|| key.to_string());
-    } else if key.starts_with("ftp://") || key.starts_with("sftp://") {
-        icon = "/com/fm-ui/gtk/ftp.svg".to_string();
-        let all_conns = config
-            .get::<Vec<DialogFtpConnection>>("ui.ftp_connections")
-            .unwrap_or_default();
-        name = all_conns
-            .iter()
-            .find(|c| {
-                format!(
-                    "{}://{}@{}:{}",
-                    c.protocol.to_lowercase(),
-                    c.user,
-                    c.host,
-                    c.port
-                ) == key
-            })
-            .map(|c| c.name.clone())
-            .unwrap_or_else(|| key.to_string());
-    } else if key.starts_with("local_fs:") {
+    if key.starts_with("local_fs:") {
         let path = key.strip_prefix("local_fs:").unwrap_or("");
         let path_norm = path.replace('\\', "/");
         let home_path = std::env::var("HOME")

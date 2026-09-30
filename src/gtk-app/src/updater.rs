@@ -100,9 +100,10 @@ fn run_check(parent: gtk::Window, on_complete: Option<Box<dyn Fn()>>) {
                     let _ = ctrl.sender().send(UpdaterInput::Downloading {
                         version: pkg.version.clone(),
                     });
-                    let rx = spawn_on_tokio(async move {
-                        download_update_package(&pkg, FILE_PREFIX).await
-                    });
+                    let rx =
+                        spawn_on_tokio(
+                            async move { download_update_package(&pkg, FILE_PREFIX).await },
+                        );
                     match rx.await {
                         Ok(Ok((path, _version, _md5))) => install_downloaded(&ctrl, path).await,
                         Ok(Err(e)) => {
@@ -215,7 +216,10 @@ async fn perform_update_check() -> Result<Option<AvailableUpdate>, String> {
         url: check.url,
         md5: check.md5,
     };
-    Ok(Some(AvailableUpdate { pkg, notes: check.notes }))
+    Ok(Some(AvailableUpdate {
+        pkg,
+        notes: check.notes,
+    }))
 }
 
 fn is_newer_version(current: &str, latest: &str) -> bool {

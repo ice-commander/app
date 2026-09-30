@@ -1,4 +1,3 @@
-
 use adw::prelude::*;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -42,13 +41,7 @@ fn escape(c: char) -> String {
     }
 }
 
-fn row_markup(
-    row: usize,
-    bytes: &[u8],
-    original: &[u8],
-    cursor: &Cursor,
-    focused: bool,
-) -> String {
+fn row_markup(row: usize, bytes: &[u8], original: &[u8], cursor: &Cursor, focused: bool) -> String {
     let start = row * PER_ROW;
     let mut out = format!("<span alpha='60%'>{:08x}</span>  ", start);
 
@@ -65,13 +58,25 @@ fn row_markup(
                 if on_cursor && cursor.column == Column::Hex {
                     let (head, tail) = text.split_at(1);
                     let (a, b) = if cursor.low_nibble {
-                        (head.to_string(), format!("<span background='#3584e4' foreground='#ffffff'>{tail}</span>"))
+                        (
+                            head.to_string(),
+                            format!(
+                                "<span background='#3584e4' foreground='#ffffff'>{tail}</span>"
+                            ),
+                        )
                     } else {
-                        (format!("<span background='#3584e4' foreground='#ffffff'>{head}</span>"), tail.to_string())
+                        (
+                            format!(
+                                "<span background='#3584e4' foreground='#ffffff'>{head}</span>"
+                            ),
+                            tail.to_string(),
+                        )
                     };
                     out.push_str(&format!("{a}{b} "));
                 } else if on_cursor {
-                    out.push_str(&format!("<span background='#3584e4' foreground='#ffffff'>{text}</span> "));
+                    out.push_str(&format!(
+                        "<span background='#3584e4' foreground='#ffffff'>{text}</span> "
+                    ));
                 } else if changed {
                     out.push_str(&format!("<span foreground='#e66100'><b>{text}</b></span> "));
                 } else {
@@ -88,11 +93,17 @@ fn row_markup(
         let Some(byte) = bytes.get(idx) else {
             break;
         };
-        let ch = if (32..=126).contains(byte) { *byte as char } else { '.' };
+        let ch = if (32..=126).contains(byte) {
+            *byte as char
+        } else {
+            '.'
+        };
         let text = escape(ch);
         let changed = original.get(idx) != Some(byte);
         if focused && idx == cursor.byte && cursor.column == Column::Ascii {
-            out.push_str(&format!("<span background='#3584e4' foreground='#ffffff'>{text}</span>"));
+            out.push_str(&format!(
+                "<span background='#3584e4' foreground='#ffffff'>{text}</span>"
+            ));
         } else if changed {
             out.push_str(&format!("<span foreground='#e66100'><b>{text}</b></span>"));
         } else {
@@ -163,7 +174,11 @@ impl HexView {
             model,
             bytes,
             original,
-            cursor: Rc::new(RefCell::new(Cursor { byte: 0, low_nibble: false, column: Column::Hex })),
+            cursor: Rc::new(RefCell::new(Cursor {
+                byte: 0,
+                low_nibble: false,
+                column: Column::Hex,
+            })),
             editable: Rc::new(Cell::new(false)),
             on_changed,
             status,
@@ -288,7 +303,8 @@ impl HexView {
         self.refresh_row(old_row);
         if new_row != old_row {
             self.refresh_row(new_row);
-            self.list.scroll_to(new_row as u32, gtk::ListScrollFlags::empty(), None);
+            self.list
+                .scroll_to(new_row as u32, gtk::ListScrollFlags::empty(), None);
         }
         self.update_status();
     }
@@ -307,7 +323,8 @@ impl HexView {
         let row = self.cursor.borrow().byte / PER_ROW;
         self.refresh_row(old_row);
         self.refresh_row(row);
-        self.list.scroll_to(row as u32, gtk::ListScrollFlags::empty(), None);
+        self.list
+            .scroll_to(row as u32, gtk::ListScrollFlags::empty(), None);
         self.update_status();
         self.list.grab_focus();
     }
@@ -372,7 +389,11 @@ impl HexView {
         self.refresh_visible();
     }
 
-    fn on_key(&self, keyval: gtk::gdk::Key, state: gtk::gdk::ModifierType) -> gtk::glib::Propagation {
+    fn on_key(
+        &self,
+        keyval: gtk::gdk::Key,
+        state: gtk::gdk::ModifierType,
+    ) -> gtk::glib::Propagation {
         use gtk::gdk::Key;
 
         let ctrl = state.contains(gtk::gdk::ModifierType::CONTROL_MASK);
@@ -437,7 +458,11 @@ mod tests {
 
     #[test]
     fn a_row_shows_offset_bytes_and_ascii() {
-        let cursor = Cursor { byte: 99, low_nibble: false, column: Column::Hex };
+        let cursor = Cursor {
+            byte: 99,
+            low_nibble: false,
+            column: Column::Hex,
+        };
         let markup = row_markup(0, b"AB", b"AB", &cursor, false);
         assert!(markup.contains("00000000"), "{markup}");
         assert!(markup.contains("41 42"), "{markup}");
@@ -446,23 +471,41 @@ mod tests {
 
     #[test]
     fn an_edited_byte_is_highlighted() {
-        let cursor = Cursor { byte: 99, low_nibble: false, column: Column::Hex };
+        let cursor = Cursor {
+            byte: 99,
+            low_nibble: false,
+            column: Column::Hex,
+        };
         let markup = row_markup(0, b"AC", b"AB", &cursor, false);
-        assert!(markup.contains("<span foreground='#e66100'><b>43</b></span>"), "{markup}");
+        assert!(
+            markup.contains("<span foreground='#e66100'><b>43</b></span>"),
+            "{markup}"
+        );
     }
 
     #[test]
     fn markup_escapes_ascii_specials() {
-        let cursor = Cursor { byte: 99, low_nibble: false, column: Column::Hex };
+        let cursor = Cursor {
+            byte: 99,
+            low_nibble: false,
+            column: Column::Hex,
+        };
         let markup = row_markup(0, b"<&>", b"<&>", &cursor, false);
         assert!(markup.ends_with("|&lt;&amp;&gt;|"), "{markup}");
     }
 
     #[test]
     fn the_cursor_marks_the_nibble_it_will_replace() {
-        let low = Cursor { byte: 0, low_nibble: true, column: Column::Hex };
+        let low = Cursor {
+            byte: 0,
+            low_nibble: true,
+            column: Column::Hex,
+        };
         let markup = row_markup(0, b"A", b"A", &low, true);
-        assert!(markup.contains("4<span background='#3584e4' foreground='#ffffff'>1</span>"), "{markup}");
+        assert!(
+            markup.contains("4<span background='#3584e4' foreground='#ffffff'>1</span>"),
+            "{markup}"
+        );
     }
 
     #[test]

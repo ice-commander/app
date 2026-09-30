@@ -36,10 +36,11 @@ Unless you state otherwise, any contribution you submit is licensed under the
 same terms as the project — **MIT OR Apache-2.0**, at the user's option. See
 [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE).
 
-Note on binaries: the release bundles carry no GPL code. `libmpv` and FFmpeg are
-built LGPL and decode-only, and `liblzo2` (GPL-2.0-or-later), which GTK drags in
-through the cairo script interpreter, is replaced in both desktop bundles by our own
-MIT stub (`src/fakelzo/`). The Linux build uses neither. See
+Note on binaries: the release bundles carry no GPL code. `liblzo2`
+(GPL-2.0-or-later), which GTK drags in through the cairo script interpreter, is
+replaced in both desktop bundles by our own MIT stub (`src/fakelzo/`); the Linux
+build uses neither. Video is not decoded here at all — it travels with the video
+plugin, whose `libmpv` and FFmpeg are built LGPL and decode-only. See
 [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md).
 
 The name "Ice Commander" and the project logo are not covered by the code
@@ -66,8 +67,14 @@ npm run build-webserver # headless web server
 Release packages (deb / rpm / zst / exe / dmg) are produced by the container
 recipes in [builder/](builder/) — see `builder/build-all.sh`. The Windows and
 macOS bundles additionally need prebuilt native libraries (GTK4 for MinGW,
-PDFium, libmpv) which are not kept in this repository; Linux builds need
-nothing extra.
+PDFium) which are not kept in this repository; Linux builds need nothing extra.
+
+This repository is the application only. Connections, archives and the extra
+windows are plugins, built from
+[ice-commander/plugins](https://github.com/ice-commander/plugins); the interface
+they are written against, with worked examples, is
+[ice-commander-plugin-sdk](https://github.com/savchenko-igor/ice-commander-plugin-sdk).
+A change that a plugin could carry belongs there rather than here.
 
 ## The one rule about background work
 

@@ -21,9 +21,20 @@ pub fn show_editor(
 
     let file_path_str = entry.path();
     let name = entry.name();
-    crate::viewer::source::confirm_large_file(parent_window, &entry.name(), entry.size(), move || {
-        crate::viewer::open_in_host(&parent, file_path_str.clone(), name.clone(), router.clone(), true);
-    });
+    crate::viewer::source::confirm_large_file(
+        parent_window,
+        &entry.name(),
+        entry.size(),
+        move || {
+            crate::viewer::open_in_host(
+                &parent,
+                file_path_str.clone(),
+                name.clone(),
+                router.clone(),
+                true,
+            );
+        },
+    );
 }
 
 fn external_editor(router: &Rc<PanelRouter>) -> Option<String> {

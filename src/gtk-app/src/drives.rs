@@ -1,7 +1,7 @@
-use crate::connection_manager::FtpConnection;
-use virtualfs::utils::{get_drives, DriveInfo};
-use panel_router::PanelRouter;
+use crate::connection_manager::Connection;
 use gtk::prelude::*;
+use localfs::utils::{get_drives, DriveInfo};
+use panel_router::PanelRouter;
 use std::rc::Rc;
 
 #[derive(Clone)]
@@ -10,16 +10,31 @@ pub enum AppDriveItem {
     UserHome,
     LocalDrive(String),
     Volume(gtk::gio::Volume),
-    NetConnection(FtpConnection),
+    NetConnection(Connection),
+    /// Offered by a plugin rather than saved by the user — a peer's share, for
+    /// instance. Mounted through the connection kind that published it.
+    Offered {
+        kind: String,
+        settings: std::collections::BTreeMap<String, String>,
+        /// How the row showed itself, so the path begins with the same name
+        /// and picture the user picked.
+        shown: fm_core::plugin_fs::Shown,
+    },
 }
+
+/// What a saved connection is drawn with when its kind brought no picture.
+const NO_PICTURE: &str = "/com/icecommander/gtk/connect.svg";
 
 #[derive(Clone)]
 pub struct AppDrive {
     pub item: AppDriveItem,
     pub name: String,
     pub subtitle: String,
-    pub icon: String,      // e.g., "/com/icecommander/gtk/ssd.svg"
-    pub key: String,       // e.g., "local_fs:/", "ftp://..."
+    pub icon: String, // e.g., "/com/icecommander/gtk/ssd.svg"
+    /// An icon the entry brought with it, for a drive a plugin offers. Empty
+    /// means draw `icon` from the application's own resources.
+    pub svg: Vec<u8>,
+    pub key: String, // e.g., "local_fs:/", "ftp://..."
     pub is_favorite: bool,
     pub is_online: bool,
     #[allow(dead_code)]
@@ -37,14 +52,16 @@ impl AppDrive {
         match &self.item {
             AppDriveItem::RootFs | AppDriveItem::UserHome | AppDriveItem::LocalDrive(_) => true,
             AppDriveItem::Volume(vol) => vol.get_mount().is_some(),
-            AppDriveItem::NetConnection(_) => false,
+            AppDriveItem::NetConnection(_) | AppDriveItem::Offered { .. } => false,
         }
     }
 }
 
 pub fn get_all_app_drives(config: &client_config::AppConfig) -> Vec<AppDrive> {
     let mut drives = Vec::new();
-    let favorites = config.get::<Vec<String>>("ui.favorites").unwrap_or_default();
+    let favorites = config
+        .get::<Vec<String>>("ui.favorites")
+        .unwrap_or_default();
 
     let root_key = "local_fs:/".to_string();
     drives.push(AppDrive {
@@ -55,6 +72,7 @@ pub fn get_all_app_drives(config: &client_config::AppConfig) -> Vec<AppDrive> {
         key: root_key.clone(),
         is_favorite: favorites.contains(&root_key),
         is_online: true,
+        svg: Vec::new(),
         drive_info: None,
     });
 
@@ -71,6 +89,7 @@ pub fn get_all_app_drives(config: &client_config::AppConfig) -> Vec<AppDrive> {
         key: home_key.clone(),
         is_favorite: favorites.contains(&home_key),
         is_online: true,
+        svg: Vec::new(),
         drive_info: None,
     });
 
@@ -84,6 +103,7 @@ pub fn get_all_app_drives(config: &client_config::AppConfig) -> Vec<AppDrive> {
                 icon: "/com/icecommander/gtk/ssd.svg".to_string(),
                 is_favorite: favorites.contains(&key),
                 is_online: true,
+                svg: Vec::new(),
                 key,
                 drive_info: Some(drive),
             });
@@ -102,6 +122,7 @@ pub fn get_all_app_drives(config: &client_config::AppConfig) -> Vec<AppDrive> {
                 icon: "/com/icecommander/gtk/ssd.svg".to_string(),
                 is_favorite: favorites.contains(&key),
                 is_online: false,
+                svg: Vec::new(),
                 key,
                 drive_info: Some(DriveInfo {
                     path: name.clone(),
@@ -115,40 +136,62 @@ pub fn get_all_app_drives(config: &client_config::AppConfig) -> Vec<AppDrive> {
         }
     }
 
-    let all_conns: Vec<FtpConnection> = config.get("ui.ftp_connections").unwrap_or_default();
+    let all_conns: Vec<Connection> = connection_form::stored_connections(&config);
     for conn in &all_conns {
-        let is_webdav = conn.protocol.to_uppercase() == "WEBDAV";
-        let key = if is_webdav {
-            format!("webdav://{}@{}", conn.user, conn.host)
-        } else {
-            format!(
-                "{}://{}@{}:{}",
-                conn.protocol.to_lowercase(),
-                conn.user,
-                conn.host,
-                conn.port
-            )
+        let key = connection_form::connection_key(conn);
+        let svg = match connection_form::kind_picture(&conn.kind) {
+            connection_form::KindPicture::Svg(bytes) => bytes,
+            _ => Vec::new(),
         };
-        let icon = if is_webdav {
-            "/com/icecommander/gtk/netdrive.svg".to_string()
-        } else {
-            "/com/icecommander/gtk/ftp.svg".to_string()
-        };
-        let subtitle = format!("{}://{}", conn.protocol.to_lowercase(), conn.host);
+        let subtitle = connection_form::kind_summary(conn).unwrap_or_default();
 
         drives.push(AppDrive {
             item: AppDriveItem::NetConnection(conn.clone()),
             name: conn.name.clone(),
             subtitle,
-            icon,
+            icon: NO_PICTURE.to_string(),
             is_favorite: favorites.contains(&key),
             is_online: true,
+            svg,
             key,
             drive_info: None,
         });
     }
 
+    drives.extend(offered_drives(&favorites));
+
     drives
+}
+
+/// What the plugins offer right now. Ported from the fork's `p2p_app_drives`:
+/// each of a peer's shares is its own row, named after the share, and the key
+/// is the plugin's so a favourite survives a restart.
+fn offered_drives(favorites: &[String]) -> Vec<AppDrive> {
+    ic_plugin_host::plugin_drives()
+        .into_iter()
+        .map(|drive| AppDrive {
+            name: drive.name.clone(),
+            subtitle: drive.subtitle,
+            icon: if drive.online {
+                "/com/icecommander/gtk/connect.svg".to_string()
+            } else {
+                "/com/icecommander/gtk/disconnect.svg".to_string()
+            },
+            is_favorite: favorites.contains(&drive.key),
+            is_online: drive.online,
+            svg: drive.svg.clone(),
+            key: drive.key,
+            drive_info: None,
+            item: AppDriveItem::Offered {
+                kind: drive.kind,
+                settings: drive.settings,
+                shown: fm_core::plugin_fs::Shown {
+                    name: drive.name.clone(),
+                    icon_svg: String::from_utf8(drive.svg.clone()).ok(),
+                },
+            },
+        })
+        .collect()
 }
 
 pub fn activate_drive_item(item: &AppDriveItem, router: &Rc<PanelRouter>) -> DriveActivation {
@@ -170,62 +213,25 @@ pub fn activate_drive_item(item: &AppDriveItem, router: &Rc<PanelRouter>) -> Dri
             DriveActivation::Shown
         }
         AppDriveItem::Volume(vol) => DriveActivation::NeedsAsyncMount(vol.clone()),
+        AppDriveItem::Offered {
+            kind,
+            settings,
+            shown,
+        } => {
+            if let Some(served) =
+                ic_plugin_host::mount_connection_shown(kind, settings, Some(shown.clone()))
+            {
+                let at = connection_form::opening_path_in(kind, settings)
+                    .unwrap_or_else(|| "/".to_string());
+                router.mount_provider(served, kind, at);
+            }
+            DriveActivation::Shown
+        }
         AppDriveItem::NetConnection(conn) => {
             let conn = &crate::secret_store::opened(conn);
-            let rpath = conn.remote_path.clone().unwrap_or_else(|| "/".to_string());
-
-            match conn.protocol.to_uppercase().as_str() {
-                "FTP" => {
-                    let ftp_rpc = Rc::new(virtualfs::ftp_rpc::LocalFtpRpc {
-                        name: conn.name.clone(),
-                        host: conn.host.clone(),
-                        port: conn.port,
-                        user: conn.user.clone(),
-                        pass: conn.pass.clone().unwrap_or_default(),
-                        ftp_session: std::sync::Arc::new(std::sync::Mutex::new(None)),
-                    });
-                    router.mount_provider(ftp_rpc, "ftp", rpath);
-                }
-                "WEBDAV" => {
-                    let webdav_rpc = Rc::new(virtualfs::webdav_rpc::LocalWebDavRpc {
-                        name: conn.name.clone(),
-                        url: conn.host.clone(),
-                        user: if conn.user.is_empty() {
-                            None
-                        } else {
-                            Some(conn.user.clone())
-                        },
-                        pass: conn.pass.clone(),
-                        remote_path: conn.remote_path.clone(),
-                    });
-                    router.mount_provider(webdav_rpc, "webdav", rpath);
-                }
-                _ => {
-                    let sftp_rpc = Rc::new(virtualfs::sftp_rpc::LocalSftpRpc {
-                        name: conn.name.clone(),
-                        host: conn.host.clone(),
-                        port: conn.port,
-                        user: conn.user.clone(),
-                        pass: conn.pass.clone(),
-                        auth_type: conn
-                            .auth_type
-                            .clone()
-                            .unwrap_or_else(|| "password".to_string()),
-                        key_path: conn.key_path.clone(),
-                        passphrase: conn.passphrase.clone(),
-                        use_tunnel: conn.use_tunnel,
-                        tunnel_host: conn.tunnel_host.clone(),
-                        tunnel_port: conn.tunnel_port,
-                        tunnel_user: conn.tunnel_user.clone(),
-                        tunnel_auth_type: conn.tunnel_auth_type.clone(),
-                        tunnel_pass: conn.tunnel_pass.clone(),
-                        tunnel_key_path: conn.tunnel_key_path.clone(),
-                        tunnel_passphrase: conn.tunnel_passphrase.clone(),
-                        sftp_session: std::sync::Arc::new(std::sync::Mutex::new(None)),
-                        tunnel: std::sync::Arc::new(std::sync::Mutex::new(None)),
-                    });
-                    router.mount_provider(sftp_rpc, "sftp", rpath);
-                }
+            let at = connection_form::opening_path(conn).unwrap_or_else(|| "/".to_string());
+            if let Some(served) = crate::connection_manager::mount_through_plugin(conn) {
+                router.mount_provider(served, &conn.kind, at);
             }
             DriveActivation::Shown
         }

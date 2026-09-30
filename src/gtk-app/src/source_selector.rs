@@ -3,56 +3,14 @@ use gtk::{Align, Box, Button, Label, ListBox, Orientation, Stack};
 use panel_router::PanelRouter;
 use std::rc::Rc;
 
-use crate::connection_manager::{
-    show_error, show_manage_ftp_dialog, FtpConnection,
-};
+use crate::connection_manager::{show_error, show_manage_ftp_dialog, Connection};
 
-pub fn connect_to_connection(conn: FtpConnection, router: &Rc<PanelRouter>) {
+pub fn connect_to_connection(conn: Connection, router: &Rc<PanelRouter>) {
     let conn = crate::secret_store::opened(&conn);
     router.switch_to_selector(false);
-    let rpath = conn.remote_path.clone().unwrap_or_else(|| "/".to_string());
-
-    if conn.protocol.to_uppercase() == "FTP" {
-        let ftp_rpc = std::rc::Rc::new(virtualfs::ftp_rpc::LocalFtpRpc {
-            name: conn.name.clone(),
-            host: conn.host.clone(),
-            port: conn.port,
-            user: conn.user.clone(),
-            pass: conn.pass.clone().unwrap_or_default(),
-            ftp_session: std::sync::Arc::new(std::sync::Mutex::new(None)),
-        });
-        router.mount_provider(ftp_rpc, "ftp", rpath.clone());
-    } else if conn.protocol.to_uppercase() == "WEBDAV" {
-        let webdav_rpc = std::rc::Rc::new(virtualfs::webdav_rpc::LocalWebDavRpc {
-            name: conn.name.clone(),
-            url: conn.host.clone(),
-            user: if conn.user.is_empty() { None } else { Some(conn.user.clone()) },
-            pass: conn.pass.clone(),
-            remote_path: conn.remote_path.clone(),
-        });
-        router.mount_provider(webdav_rpc, "webdav", rpath.clone());
-    } else if conn.protocol.to_uppercase() == "SFTP" {
-        let sftp_rpc = std::rc::Rc::new(virtualfs::sftp_rpc::LocalSftpRpc {
-            name: conn.name.clone(),
-            host: conn.host.clone(),
-            port: conn.port,
-            user: conn.user.clone(),
-            pass: conn.pass.clone(),
-            auth_type: conn.auth_type.clone().unwrap_or_else(|| "password".to_string()),
-            key_path: conn.key_path.clone(),
-            passphrase: conn.passphrase.clone(),
-            use_tunnel: conn.use_tunnel,
-            tunnel_host: conn.tunnel_host.clone(),
-            tunnel_port: conn.tunnel_port,
-            tunnel_user: conn.tunnel_user.clone(),
-            tunnel_auth_type: conn.tunnel_auth_type.clone(),
-            tunnel_pass: conn.tunnel_pass.clone(),
-            tunnel_key_path: conn.tunnel_key_path.clone(),
-            tunnel_passphrase: conn.tunnel_passphrase.clone(),
-            sftp_session: std::sync::Arc::new(std::sync::Mutex::new(None)),
-            tunnel: std::sync::Arc::new(std::sync::Mutex::new(None)),
-        });
-        router.mount_provider(sftp_rpc, "sftp", rpath.clone());
+    let at = connection_form::opening_path(&conn).unwrap_or_else(|| "/".to_string());
+    if let Some(served) = crate::connection_manager::mount_through_plugin(&conn) {
+        router.mount_provider(served, &conn.kind, at);
     }
 }
 
@@ -62,7 +20,7 @@ pub fn create_source_selector(
     stack: Stack,
     selector_updaters: Rc<std::cell::RefCell<Vec<Rc<dyn Fn()>>>>,
     on_open_registry: Rc<dyn Fn()>,
-    on_open_process_manager: Rc<dyn Fn()>,
+    on_open_panel_source: Rc<dyn Fn(&str)>,
 ) -> Box {
     #[cfg(not(target_os = "windows"))]
     let _ = &on_open_registry;
@@ -82,10 +40,12 @@ pub fn create_source_selector(
     container.append(&header);
 
     let btn_ftp_box = Box::new(Orientation::Horizontal, 6);
-    let btn_ftp_img = gtk::Image::from_resource("/com/icecommander/gtk/ftp.svg");
+    let btn_ftp_img = gtk::Image::from_resource("/com/icecommander/gtk/connect.svg");
     btn_ftp_img.set_pixel_size(20);
     btn_ftp_box.append(&btn_ftp_img);
-    btn_ftp_box.append(&Label::new(Some(&*crate::i18n::tr("selector.btn_connections"))));
+    btn_ftp_box.append(&Label::new(Some(&*crate::i18n::tr(
+        "selector.btn_connections",
+    ))));
 
     let btn_ftp = Button::builder()
         .child(&btn_ftp_box)
@@ -101,7 +61,9 @@ pub fn create_source_selector(
         let btn_reg_img = gtk::Image::from_resource("/com/icecommander/gtk/registry.svg");
         btn_reg_img.set_pixel_size(20);
         btn_reg_box.append(&btn_reg_img);
-        btn_reg_box.append(&Label::new(Some(&*crate::i18n::tr("selector.btn_registry"))));
+        btn_reg_box.append(&Label::new(Some(&*crate::i18n::tr(
+            "selector.btn_registry",
+        ))));
 
         let btn_reg = Button::builder()
             .child(&btn_reg_box)
@@ -117,23 +79,23 @@ pub fn create_source_selector(
         btn_reg
     };
 
-    let btn_sysinfo_box = Box::new(Orientation::Horizontal, 6);
-    let btn_sysinfo_img = gtk::Image::from_resource("/com/icecommander/gtk/processes.svg");
-    btn_sysinfo_img.set_pixel_size(20);
-    btn_sysinfo_box.append(&btn_sysinfo_img);
-    btn_sysinfo_box.append(&Label::new(Some(&*crate::i18n::tr("selector.btn_processes"))));
+    for source in ic_plugin_host::panel_sources() {
+        let shown = Box::new(Orientation::Horizontal, 6);
+        if let Some(image) = crate::plugin_host::image_from_svg_at(&source.svg, 20) {
+            shown.append(&image);
+        }
+        let title = crate::connection_manager::translate_optional(&source.title)
+            .unwrap_or_else(|| source.title.clone());
+        shown.append(&Label::new(Some(&title)));
 
-    let btn_sysinfo = Button::builder()
-        .child(&btn_sysinfo_box)
-        .tooltip_text(&*crate::i18n::tr("selector.tooltip_processes"))
-        .build();
-    btn_sysinfo.add_css_class("flat");
-    btn_sysinfo.set_cursor_from_name(Some("pointer"));
-    let on_open_process_manager_activated = on_open_process_manager.clone();
-    btn_sysinfo.connect_clicked(move |_| {
-        on_open_process_manager_activated();
-    });
-    header.pack_end(&btn_sysinfo);
+        let button = Button::builder().child(&shown).tooltip_text(&title).build();
+        button.add_css_class("flat");
+        button.set_cursor_from_name(Some("pointer"));
+        let open = on_open_panel_source.clone();
+        let id = source.id.clone();
+        button.connect_clicked(move |_| open(&id));
+        header.pack_end(&button);
+    }
 
     let selector_box = Box::builder()
         .orientation(Orientation::Vertical)
@@ -174,7 +136,10 @@ pub fn create_source_selector(
         .build();
 
     let favorites_hint_label = Label::builder()
-        .label(&format!("<span size='small' color='gray'>{}</span>", crate::i18n::tr("selector.shift_hint")))
+        .label(&format!(
+            "<span size='small' color='gray'>{}</span>",
+            crate::i18n::tr("selector.shift_hint")
+        ))
         .use_markup(true)
         .halign(Align::Center)
         .margin_bottom(16)
@@ -203,6 +168,8 @@ pub fn create_source_selector(
         move |title: &str,
               subtitle: &str,
               icon_name: &str,
+              // Instead of the icon named above, not beside it.
+              svg: Option<&[u8]>,
               key: Option<&str>,
               updaters: &Rc<std::cell::RefCell<Vec<Rc<dyn Fn()>>>>|
               -> adw::ActionRow {
@@ -211,7 +178,12 @@ pub fn create_source_selector(
                 .subtitle(subtitle)
                 .activatable(true)
                 .build();
-            let icon = gtk::Image::from_resource(&format!("/com/icecommander/gtk/{}", icon_name));
+            let brought = svg
+                .filter(|svg| !svg.is_empty())
+                .and_then(|svg| crate::plugin_host::image_from_svg_at(svg, 30));
+            let icon = brought.unwrap_or_else(|| {
+                gtk::Image::from_resource(&format!("/com/icecommander/gtk/{}", icon_name))
+            });
             icon.set_pixel_size(30);
             row.add_prefix(&icon);
 
@@ -250,7 +222,8 @@ pub fn create_source_selector(
                 row.add_suffix(&btn);
             }
 
-            let go_icon = gtk::Image::from_icon_name("go-next-symbolic");            go_icon.set_pixel_size(16);
+            let go_icon = gtk::Image::from_icon_name("go-next-symbolic");
+            go_icon.set_pixel_size(16);
             row.add_suffix(&go_icon);
             row
         }
@@ -285,8 +258,36 @@ pub fn create_source_selector(
 
             for p in &all_drives {
                 match &p.item {
+                    crate::drives::AppDriveItem::Offered { .. } => {
+                        let row_offered = add_source_row(
+                            &p.name,
+                            &p.subtitle,
+                            p.icon.rsplit('/').next().unwrap_or("connect.svg"),
+                            Some(p.svg.as_slice()),
+                            Some(&p.key),
+                            &selector_updaters_clone,
+                        );
+                        let router_offered = router.clone();
+                        let stack_offered = stack.clone();
+                        let item_offered = p.item.clone();
+                        row_offered.connect_activated(move |_| {
+                            if let crate::drives::DriveActivation::Shown =
+                                crate::drives::activate_drive_item(&item_offered, &router_offered)
+                            {
+                                stack_offered.set_visible_child_name("filemanager");
+                            }
+                        });
+                        list_box.append(&row_offered);
+                    }
                     crate::drives::AppDriveItem::RootFs => {
-                        let row_root = add_source_row(&p.name, &p.subtitle, "home.svg", Some(&p.key), &selector_updaters_clone);
+                        let row_root = add_source_row(
+                            &p.name,
+                            &p.subtitle,
+                            "home.svg",
+                            None,
+                            Some(&p.key),
+                            &selector_updaters_clone,
+                        );
                         let router_root = router.clone();
                         let stack_root = stack.clone();
                         let item_root = p.item.clone();
@@ -301,7 +302,14 @@ pub fn create_source_selector(
                         list_box.select_row(Some(&row_root));
                     }
                     crate::drives::AppDriveItem::UserHome => {
-                        let row_home = add_source_row(&p.name, &p.subtitle, "at-home.svg", Some(&p.key), &selector_updaters_clone);
+                        let row_home = add_source_row(
+                            &p.name,
+                            &p.subtitle,
+                            "at-home.svg",
+                            None,
+                            Some(&p.key),
+                            &selector_updaters_clone,
+                        );
                         let router_home = router.clone();
                         let stack_home = stack.clone();
                         let item_home = p.item.clone();
@@ -321,7 +329,14 @@ pub fn create_source_selector(
             for p in &all_drives {
                 match &p.item {
                     crate::drives::AppDriveItem::LocalDrive(_path) => {
-                        let row_drive = add_source_row(&p.name, &p.subtitle, "ssd.svg", Some(&p.key), &selector_updaters_clone);
+                        let row_drive = add_source_row(
+                            &p.name,
+                            &p.subtitle,
+                            "ssd.svg",
+                            None,
+                            Some(&p.key),
+                            &selector_updaters_clone,
+                        );
                         let router_drive = router.clone();
                         let stack_drive = stack.clone();
                         let item_drive = p.item.clone();
@@ -335,7 +350,14 @@ pub fn create_source_selector(
                         list_box.append(&row_drive);
                     }
                     crate::drives::AppDriveItem::Volume(vol) => {
-                        let row_vol = add_source_row(&p.name, &p.subtitle, "ssd.svg", Some(&p.key), &selector_updaters_clone);
+                        let row_vol = add_source_row(
+                            &p.name,
+                            &p.subtitle,
+                            "ssd.svg",
+                            None,
+                            Some(&p.key),
+                            &selector_updaters_clone,
+                        );
                         let vol_clone = vol.clone();
                         let router_vol = router.clone();
                         let stack_vol = stack.clone();
@@ -349,13 +371,35 @@ pub fn create_source_selector(
                                 let mut mount_success = true;
                                 if vol_inner.get_mount().is_none() {
                                     let root_opt = stack_inner.root();
-                                    let parent_win = root_opt.clone().and_then(|r| r.downcast::<gtk::Window>().ok());
+                                    let parent_win = root_opt
+                                        .clone()
+                                        .and_then(|r| r.downcast::<gtk::Window>().ok());
                                     let mount_op = gtk::MountOperation::new(parent_win.as_ref());
-                                    match vol_inner.mount_future(gtk::gio::MountMountFlags::NONE, Some(&mount_op)).await {
+                                    match vol_inner
+                                        .mount_future(
+                                            gtk::gio::MountMountFlags::NONE,
+                                            Some(&mount_op),
+                                        )
+                                        .await
+                                    {
                                         Ok(_) => {}
                                         Err(e) => {
-                                            let msg = crate::i18n::trf("selector.mount_failed_body", &[("device", &*(vol_inner.name().to_string()).to_string()), ("error", &*(e.to_string()).to_string())]);
-                                            show_error(&row_inner, &*crate::i18n::tr("selector.mount_failed_title"), &msg);
+                                            let msg = crate::i18n::trf(
+                                                "selector.mount_failed_body",
+                                                &[
+                                                    (
+                                                        "device",
+                                                        &*(vol_inner.name().to_string())
+                                                            .to_string(),
+                                                    ),
+                                                    ("error", &*(e.to_string()).to_string()),
+                                                ],
+                                            );
+                                            show_error(
+                                                &row_inner,
+                                                &*crate::i18n::tr("selector.mount_failed_title"),
+                                                &msg,
+                                            );
                                             mount_success = false;
                                         }
                                     }
@@ -368,12 +412,40 @@ pub fn create_source_selector(
                                             router_inner.open_local_path(path_str);
                                             stack_inner.set_visible_child_name("filemanager");
                                         } else {
-                                            let msg = crate::i18n::trf("selector.path_resolution_failed_body", &[("device", &*(vol_inner.name().to_string()).to_string()), ("uri", &*(root.uri().to_string()).to_string())]);
-                                            show_error(&row_inner, &*crate::i18n::tr("selector.path_resolution_failed_title"), &msg);
+                                            let msg = crate::i18n::trf(
+                                                "selector.path_resolution_failed_body",
+                                                &[
+                                                    (
+                                                        "device",
+                                                        &*(vol_inner.name().to_string())
+                                                            .to_string(),
+                                                    ),
+                                                    ("uri", &*(root.uri().to_string()).to_string()),
+                                                ],
+                                            );
+                                            show_error(
+                                                &row_inner,
+                                                &*crate::i18n::tr(
+                                                    "selector.path_resolution_failed_title",
+                                                ),
+                                                &msg,
+                                            );
                                         }
                                     } else {
-                                        let msg = crate::i18n::trf("selector.mount_details_unavailable_body", &[("device", &*(vol_inner.name().to_string()).to_string())]);
-                                        show_error(&row_inner, &*crate::i18n::tr("selector.mount_details_unavailable_title"), &msg);
+                                        let msg = crate::i18n::trf(
+                                            "selector.mount_details_unavailable_body",
+                                            &[(
+                                                "device",
+                                                &*(vol_inner.name().to_string()).to_string(),
+                                            )],
+                                        );
+                                        show_error(
+                                            &row_inner,
+                                            &*crate::i18n::tr(
+                                                "selector.mount_details_unavailable_title",
+                                            ),
+                                            &msg,
+                                        );
                                     }
                                 }
                             });
@@ -385,7 +457,10 @@ pub fn create_source_selector(
             }
 
             let conn_header = adw::ActionRow::builder()
-                .title(&format!("<b>{}</b>", crate::i18n::tr("selector.connections_section")))
+                .title(&format!(
+                    "<b>{}</b>",
+                    crate::i18n::tr("selector.connections_section")
+                ))
                 .selectable(false)
                 .activatable(false)
                 .build();
@@ -416,9 +491,14 @@ pub fn create_source_selector(
                             }
                         });
                         let router_clone = router_for_btn.clone();
-                        show_manage_ftp_dialog(win, on_change, config_manage_ftp.clone(), Some(Rc::new(move |conn| {
-                            connect_to_connection(conn, &router_clone);
-                        })));
+                        show_manage_ftp_dialog(
+                            win,
+                            on_change,
+                            config_manage_ftp.clone(),
+                            Some(Rc::new(move |conn| {
+                                connect_to_connection(conn, &router_clone);
+                            })),
+                        );
                     }
                 }
             });
@@ -426,13 +506,15 @@ pub fn create_source_selector(
             list_box.append(&conn_header);
 
             for p in &all_drives {
-                if let crate::drives::AppDriveItem::NetConnection(conn) = &p.item {
-                    let icon_file = if conn.protocol.to_uppercase() == "WEBDAV" {
-                        "netdrive.svg"
-                    } else {
-                        "ftp.svg"
-                    };
-                    let row_vol = add_source_row(&p.name, &p.subtitle, icon_file, Some(&p.key), &selector_updaters_clone);
+                if let crate::drives::AppDriveItem::NetConnection(_) = &p.item {
+                    let row_vol = add_source_row(
+                        &p.name,
+                        &p.subtitle,
+                        "connect.svg",
+                        Some(p.svg.as_slice()),
+                        Some(&p.key),
+                        &selector_updaters_clone,
+                    );
                     let stack_vol = stack.clone();
                     let router_clone = router.clone();
                     let item_conn = p.item.clone();
@@ -477,9 +559,14 @@ pub fn create_source_selector(
                     }
                 });
                 let router_clone = router.clone();
-                show_manage_ftp_dialog(win, on_change, config_btn_ftp.clone(), Some(Rc::new(move |conn| {
-                    connect_to_connection(conn, &router_clone);
-                })));
+                show_manage_ftp_dialog(
+                    win,
+                    on_change,
+                    config_btn_ftp.clone(),
+                    Some(Rc::new(move |conn| {
+                        connect_to_connection(conn, &router_clone);
+                    })),
+                );
             }
         }
     });

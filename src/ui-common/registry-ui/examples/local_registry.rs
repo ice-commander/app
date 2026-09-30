@@ -1,6 +1,6 @@
-use ic_model::RegistryValueInfo;
 use gtk::prelude::*;
 use gtk_registry_ui::{RegistryInit, RegistryInput, RegistryModel, RegistryOutput};
+use ic_model::RegistryValueInfo;
 use relm4::prelude::*;
 
 #[cfg(not(target_os = "windows"))]

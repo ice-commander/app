@@ -1,4 +1,12 @@
 import type { Connection, Drive, FileContent, Operation, PanelState, Side } from './types'
+import type {
+  ConnectionKinds,
+  Json,
+  ViewerAnswer,
+  ViewerClosed,
+  ViewerOpened,
+  ViewSnapshot,
+} from '../lib/view/types'
 
 /**
  * The single seam between the web UI and whatever fulfills it.
@@ -81,6 +89,31 @@ export interface Backend {
   exportConnections(password?: string): Promise<string>
   importConnections(data: string, password?: string): Promise<number>
   connectTo(side: Side, connection: Connection): Promise<void>
+
+  // ── the declarative plugin surface ──────────────────────────────────────────
+  /** Every connection kind a plugin declared, each with the document to render. */
+  fetchConnectionKinds(): Promise<ConnectionKinds>
+  /** Posts the binds a rendered form collected; the host commits and stores them. */
+  submitConnectionForm(form: {
+    kind: string
+    values: Record<string, Json>
+    touched: string[]
+    editing?: string
+    connect?: Side
+  }): Promise<{ ok: boolean; name?: string; missing?: string[] }>
+  /** Hands one event from a rendered connection form to the plugin behind the kind. */
+  sendConnectionFormEvent(kind: string, event: Record<string, unknown>): Promise<ViewSnapshot>
+  /** The plugin windows this host offers. */
+  fetchPluginViews(): Promise<{ id: string; title: string }[]>
+  openPluginView(id: string, argument?: string): Promise<ViewSnapshot>
+  sendPluginViewEvent(id: string, event: Record<string, unknown>): Promise<ViewSnapshot>
+  closePluginView(id: string): Promise<void>
+  openViewer(side: Side, path: string): Promise<ViewerOpened | null>
+  sendViewerEvent(instance: number, event: Record<string, unknown>): Promise<ViewerAnswer>
+  viewerPartUrl(instance: number, name: string, drawn?: number): string
+  closeViewer(instance: number, force?: boolean): Promise<ViewerClosed>
+  /** The merged dictionary for the host's language, plugin keys included. */
+  fetchTranslations(): Promise<{ lang: string; keys: Record<string, string> }>
 
   // ── favorites ───────────────────────────────────────────────────────────────
   /** `key` is the unified drive key (e.g. "local_fs:/"). */

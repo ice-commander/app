@@ -2,6 +2,7 @@ mod fbuttons;
 pub(crate) mod header;
 mod keyboard;
 mod panels;
+pub(crate) mod selection;
 
 use adw::prelude::*;
 use gtk::glib;
@@ -40,7 +41,7 @@ impl MainWindow {
         let btn_f7_ref: std::rc::Rc<std::cell::RefCell<Option<gtk::Button>>> =
             std::rc::Rc::new(std::cell::RefCell::new(None));
         let global_on_connect = std::rc::Rc::new(std::cell::RefCell::new(
-            None::<std::rc::Rc<dyn Fn(crate::connection_manager::FtpConnection) + 'static>>,
+            None::<std::rc::Rc<dyn Fn(crate::connection_manager::Connection) + 'static>>,
         ));
 
         let theme_index = config.get::<u32>("ui.theme_index").unwrap_or(0);
@@ -70,17 +71,23 @@ impl MainWindow {
         let root_vbox = Box::builder().orientation(Orientation::Vertical).build();
         window.set_content(Some(&root_vbox));
 
-        let header::HeaderResult {
-            bar,
-            settings_btn,
-            on_open_sysinfo,
-        } = header::build_header_bar(
+        let header::HeaderResult { bar, settings_btn } = header::build_header_bar(
             &window,
             &config,
             selector_updaters.clone(),
             global_on_connect.clone(),
         );
         root_vbox.append(&bar);
+        crate::plugin_view::install(window.upcast_ref::<gtk::Window>());
+        {
+            // A drive a plugin learns of after the lists were drawn.
+            let again = selector_updaters.clone();
+            ic_plugin_host::set_drives_changed_handler(std::rc::Rc::new(move || {
+                for updater in again.borrow().iter() {
+                    updater();
+                }
+            }));
+        }
 
         let (term_out_left, term_out_right) = match &api_channel {
             Some((_, _, _, l, r)) => (l.clone(), r.clone()),
@@ -112,7 +119,6 @@ impl MainWindow {
             &my_info,
             clipboard.clone(),
             shift_held.clone(),
-            on_open_sysinfo.clone(),
             selector_updaters.clone(),
             width,
             term_out_left,
@@ -154,13 +160,17 @@ impl MainWindow {
                     }));
             }
             {
-                *expanded_notifier.borrow_mut() = Some(std::rc::Rc::new(move |s: Option<ActivePanelSide>| {
-                    match s {
-                        Some(ActivePanelSide::Left) => crate::api::notify_terminal_expanded("left", true),
-                        Some(ActivePanelSide::Right) => crate::api::notify_terminal_expanded("right", true),
+                *expanded_notifier.borrow_mut() = Some(std::rc::Rc::new(
+                    move |s: Option<ActivePanelSide>| match s {
+                        Some(ActivePanelSide::Left) => {
+                            crate::api::notify_terminal_expanded("left", true)
+                        }
+                        Some(ActivePanelSide::Right) => {
+                            crate::api::notify_terminal_expanded("right", true)
+                        }
                         _ => crate::api::notify_terminal_expanded("", false),
-                    }
-                }));
+                    },
+                ));
             }
             let left_term_bridge = crate::api::TerminalBridge {
                 open: left_info.open_terminal.clone(),
@@ -184,7 +194,16 @@ impl MainWindow {
                         on_collapse_c();
                     }
                 });
-            crate::api::start_api_dispatcher(rx, left_info.clone(), right_info.clone(), config.clone(), selector_updaters.clone(), left_term_bridge, right_term_bridge, term_expand);
+            crate::api::start_api_dispatcher(
+                rx,
+                left_info.clone(),
+                right_info.clone(),
+                config.clone(),
+                selector_updaters.clone(),
+                left_term_bridge,
+                right_term_bridge,
+                term_expand,
+            );
         }
 
         {
@@ -193,41 +212,71 @@ impl MainWindow {
             let right_info_conn = right_info.clone();
             let config_conn = config.clone();
 
-            *global_on_connect.borrow_mut() =
-                Some(std::rc::Rc::new(move |conn| {
-                    let left_router_conn = left_info_conn.active_router();
-                    let right_router_conn = right_info_conn.active_router();
+            *global_on_connect.borrow_mut() = Some(std::rc::Rc::new(move |conn| {
+                let left_router_conn = left_info_conn.active_router();
+                let right_router_conn = right_info_conn.active_router();
 
-                    let open_target = config_conn
-                        .get::<String>("ui.open_connection_target")
-                        .unwrap_or_else(|| "active".to_string());
+                let open_target = config_conn
+                    .get::<String>("ui.open_connection_target")
+                    .unwrap_or_else(|| "active".to_string());
 
-                    let target_side = match open_target.as_str() {
-                        "left" => ActivePanelSide::Left,
-                        "right" => ActivePanelSide::Right,
-                        "opposite" => match active_panel_conn.get() {
-                            ActivePanelSide::Left => ActivePanelSide::Right,
-                            ActivePanelSide::Right => ActivePanelSide::Left,
-                            ActivePanelSide::None => ActivePanelSide::Left,
-                        },
-                        _ => match active_panel_conn.get() {
-                            ActivePanelSide::Left => ActivePanelSide::Left,
-                            ActivePanelSide::Right => ActivePanelSide::Right,
-                            ActivePanelSide::None => ActivePanelSide::Left,
-                        },
-                    };
+                let target_side = match open_target.as_str() {
+                    "left" => ActivePanelSide::Left,
+                    "right" => ActivePanelSide::Right,
+                    "opposite" => match active_panel_conn.get() {
+                        ActivePanelSide::Left => ActivePanelSide::Right,
+                        ActivePanelSide::Right => ActivePanelSide::Left,
+                        ActivePanelSide::None => ActivePanelSide::Left,
+                    },
+                    _ => match active_panel_conn.get() {
+                        ActivePanelSide::Left => ActivePanelSide::Left,
+                        ActivePanelSide::Right => ActivePanelSide::Right,
+                        ActivePanelSide::None => ActivePanelSide::Left,
+                    },
+                };
 
-                    let target_router = match target_side {
-                        ActivePanelSide::Left => &left_router_conn,
-                        ActivePanelSide::Right => &right_router_conn,
-                        ActivePanelSide::None => &left_router_conn,
-                    };
+                let target_router = match target_side {
+                    ActivePanelSide::Left => &left_router_conn,
+                    ActivePanelSide::Right => &right_router_conn,
+                    ActivePanelSide::None => &left_router_conn,
+                };
 
-                    crate::source_selector::connect_to_connection(conn, target_router);
-                }));
+                crate::source_selector::connect_to_connection(conn, target_router);
+            }));
         }
 
         {
+            let left_sel = left_info.clone();
+            let right_sel = right_info.clone();
+            selection::install(
+                active_panel.clone(),
+                std::rc::Rc::new(move || {
+                    crate::panel_builder::selection_of(&left_sel.active_router())
+                }),
+                std::rc::Rc::new(move || {
+                    crate::panel_builder::selection_of(&right_sel.active_router())
+                }),
+            );
+        }
+
+        {
+            // Only the panels standing in an extension the plugin named are listed again.
+            let left_stale = left_info.clone();
+            let right_stale = right_info.clone();
+            ic_plugin_host::set_fs_invalidate_handler(std::rc::Rc::new(
+                move |extensions: &[String]| {
+                    for info in [&left_stale, &right_stale] {
+                        for router in info.all_routers() {
+                            let scope = router.state.active_provider().plugin_scope();
+                            let Some(scope) = scope else { continue };
+                            if extensions.iter().any(|e| *e == scope) {
+                                router.refresh_spawned();
+                            }
+                        }
+                    }
+                },
+            ));
+
             let selector_updaters_s = selector_updaters.clone();
             let window_s = window.clone();
             let left_router_s = left_router.clone();
@@ -248,7 +297,11 @@ impl MainWindow {
                     }
                     left_router_inner.refresh_spawned();
                     right_router_inner.refresh_spawned();
-                    for r in left_info_rs.all_routers().iter().chain(right_info_rs.all_routers().iter()) {
+                    for r in left_info_rs
+                        .all_routers()
+                        .iter()
+                        .chain(right_info_rs.all_routers().iter())
+                    {
                         r.re_render();
                     }
                 });
@@ -452,7 +505,7 @@ impl MainWindow {
                 border-radius: 6px;
                 min-height: 0;
                 padding: 2px 2px;
-                margin 4px 0px 8px 0px;
+                margin: 4px 0 0px 0;
             }
             .nav-pill button,
             .address-pill button {
@@ -514,7 +567,10 @@ impl MainWindow {
                 }
 
                 if !right_router_close.is_showing_selector() {
-                    config_close.set("ui.right_panel_path", process_panel_path(&right_router_close));
+                    config_close.set(
+                        "ui.right_panel_path",
+                        process_panel_path(&right_router_close),
+                    );
                 } else {
                     config_close.set("ui.right_panel_path", "");
                 }
@@ -559,11 +615,7 @@ impl MainWindow {
                 lfm.refresh_spawned();
                 rfm.refresh_spawned();
             });
-            crate::wizard::show_setup_wizard(
-                window.upcast_ref(),
-                wiz_config.clone(),
-                on_changed,
-            );
+            crate::wizard::show_setup_wizard(window.upcast_ref(), wiz_config.clone(), on_changed);
         }
 
         if let Some((host, port)) = network_warning {

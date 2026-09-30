@@ -1,9 +1,9 @@
 #![allow(deprecated)] // TreeView/TreeStore/CellRenderer* + adw::MessageDialog — modernization tracked separately
 
 use adw::prelude::*;
-use ic_model::{RegistryValueData, RegistryValueInfo};
 use gdk_pixbuf::Pixbuf;
 use gtk::glib;
+use ic_model::{RegistryValueData, RegistryValueInfo};
 use relm4::prelude::*;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -26,14 +26,20 @@ pub enum RegistryInput {
         values: Vec<RegistryValueInfo>,
     },
     Reset,
-    KeySelected { path: String },
-    KeyExpanded { path: String },
+    KeySelected {
+        path: String,
+    },
+    KeyExpanded {
+        path: String,
+    },
     ValueSelected(Option<String>),
 }
 
 #[derive(Debug)]
 pub enum RegistryOutput {
-    RequestKeys { path: String },
+    RequestKeys {
+        path: String,
+    },
     SetValue {
         path: String,
         value_name: String,
@@ -299,7 +305,10 @@ impl SimpleComponent for RegistryModel {
             } else {
                 val_info.name.clone()
             };
-            let editing_body = crate::i18n::trf("registry.editing_format", &[("name", &*(val_display_name).to_string())]);
+            let editing_body = crate::i18n::trf(
+                "registry.editing_format",
+                &[("name", &*(val_display_name).to_string())],
+            );
             let dialog = adw::MessageDialog::builder()
                 .heading(&*crate::i18n::tr("registry.edit_value_title"))
                 .body(&*editing_body)
@@ -422,8 +431,10 @@ impl SimpleComponent for RegistryModel {
             } else {
                 val_name.clone()
             };
-            let delete_confirm_body =
-                crate::i18n::trf("registry.delete_confirm_format", &[("name", &*(val_display_name).to_string())]);
+            let delete_confirm_body = crate::i18n::trf(
+                "registry.delete_confirm_format",
+                &[("name", &*(val_display_name).to_string())],
+            );
             let dialog = adw::MessageDialog::builder()
                 .heading(&*crate::i18n::tr("registry.delete_value_title"))
                 .body(&*delete_confirm_body)

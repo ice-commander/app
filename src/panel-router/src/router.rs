@@ -5,7 +5,9 @@ use client_config::AppConfig;
 use common::AppError;
 use fm_core::rpc::{ContentWait, FileSystemRpc};
 use gtk::glib;
-use gtk_fm_ui::{BreadcrumbSegment, FileEntry, FmPanelInput, FmPanelModel, FmPanelOutput, SourceInfo};
+use gtk_fm_ui::{
+    BreadcrumbSegment, FileEntry, FmPanelInput, FmPanelModel, FmPanelOutput, SourceInfo,
+};
 use panel_core::RouterState;
 use relm4::prelude::*;
 use relm4::Controller;
@@ -16,210 +18,30 @@ fn join_display(dir: &str, name: &str) -> String {
     fm_core::path::join_segment_names(&parts)
 }
 
-pub struct RoutingProvider {
-    provider: Rc<dyn FileSystemRpc>,
-    display_prefix: String,
-    rel_prefix: String,
-}
-
-impl RoutingProvider {
-    pub fn snapshot(state: &RouterState) -> Self {
-        let nav = state.path.borrow();
-        Self {
-            provider: nav.active().fs.clone(),
-            display_prefix: nav.absolute_path(),
-            rel_prefix: nav.active().relative_path.clone(),
-        }
-    }
-
-    pub fn from_parts(
-        provider: Rc<dyn FileSystemRpc>,
-        display_prefix: String,
-        rel_prefix: String,
-    ) -> Self {
-        Self { provider, display_prefix, rel_prefix }
-    }
-
-    pub fn inner(&self) -> Rc<dyn FileSystemRpc> {
-        self.provider.clone()
-    }
-    pub fn display_prefix(&self) -> &str {
-        &self.display_prefix
-    }
-    pub fn rel_prefix(&self) -> &str {
-        &self.rel_prefix
-    }
-
-    fn resolve(&self, abs: &str) -> String {
-        let tail = abs.strip_prefix(&self.display_prefix).unwrap_or(abs);
-        let mut parts = fm_core::path::split_joined(&self.rel_prefix);
-        parts.extend(fm_core::path::split_joined(tail));
-        fm_core::path::join_segment_names(&parts)
-    }
-}
-
-#[async_trait::async_trait(?Send)]
-impl FileSystemRpc for RoutingProvider {
-    fn as_any(&self) -> Option<&dyn std::any::Any> {
-        Some(self)
-    }
-    async fn list_dir(&self, path: String) -> Result<Vec<fm_core::rpc::RemoteFileEntry>, AppError> {
-        self.provider.list_dir(self.resolve(&path)).await
-    }
-    async fn create_directory(
-        &self,
-        parent_path: String,
-        dir_name: String,
-        permissions: Option<u32>,
-    ) -> Result<(), AppError> {
-        self.provider
-            .create_directory(self.resolve(&parent_path), dir_name, permissions)
-            .await
-    }
-    async fn delete_entries(&self, paths: Vec<String>) -> Result<(), AppError> {
-        let rel: Vec<String> = paths.iter().map(|p| self.resolve(p)).collect();
-        self.provider.delete_entries(rel).await
-    }
-    async fn rename_entry(&self, path: String, new_path: String) -> Result<(), AppError> {
-        self.provider
-            .rename_entry(self.resolve(&path), self.resolve(&new_path))
-            .await
-    }
-    async fn duplicate_entry(&self, src: String, dst: String) -> Result<(), AppError> {
-        self.provider
-            .duplicate_entry(self.resolve(&src), self.resolve(&dst))
-            .await
-    }
-    async fn get_permissions(&self, path: String) -> Result<u32, AppError> {
-        self.provider.get_permissions(self.resolve(&path)).await
-    }
-    async fn set_permissions(&self, path: String, permissions: u32) -> Result<(), AppError> {
-        self.provider
-            .set_permissions(self.resolve(&path), permissions)
-            .await
-    }
-    async fn read_file(
-        &self,
-        path: String,
-        progress_callback: Option<Box<dyn Fn(u64) + 'static>>,
-    ) -> Result<Vec<u8>, AppError> {
-        self.provider
-            .read_file(self.resolve(&path), progress_callback)
-            .await
-    }
-    async fn read_file_opt(
-        &self,
-        path: String,
-        progress_callback: Option<Box<dyn Fn(u64) + 'static>>,
-        blocking: bool,
-    ) -> Result<Vec<u8>, AppError> {
-        self.provider
-            .read_file_opt(self.resolve(&path), progress_callback, blocking)
-            .await
-    }
-    async fn write_file(
-        &self,
-        path: String,
-        content: Vec<u8>,
-        permissions: Option<u32>,
-        progress_callback: Option<Box<dyn Fn(u64) + 'static>>,
-    ) -> Result<(), AppError> {
-        self.provider
-            .write_file(self.resolve(&path), content, permissions, progress_callback)
-            .await
-    }
-    async fn read_at(&self, path: String, offset: u64, len: usize) -> Result<Vec<u8>, AppError> {
-        self.provider.read_at(self.resolve(&path), offset, len).await
-    }
-    async fn write_at(&self, path: String, offset: u64, data: Vec<u8>) -> Result<(), AppError> {
-        self.provider
-            .write_at(self.resolve(&path), offset, data)
-            .await
-    }
-    async fn set_file_length(&self, path: String, len: u64) -> Result<(), AppError> {
-        self.provider.set_file_length(self.resolve(&path), len).await
-    }
-    fn supports_offset_io(&self) -> bool {
-        self.provider.supports_offset_io()
-    }
-    fn extra_columns(&self) -> Vec<fm_core::rpc::ColumnSpec> {
-        self.provider.extra_columns()
-    }
-    async fn extract_archive(&self, archive_path: String) -> Result<(), AppError> {
-        self.provider.extract_archive(self.resolve(&archive_path)).await
-    }
-    async fn compress_to_archive(
-        &self,
-        entry_path: String,
-        archive_path: String,
-    ) -> Result<(), AppError> {
-        self.provider
-            .compress_to_archive(self.resolve(&entry_path), self.resolve(&archive_path))
-            .await
-    }
-    fn request_file_download(&self, file_path: String, transfer_id: uuid::Uuid) {
-        self.provider
-            .request_file_download(self.resolve(&file_path), transfer_id);
-    }
-    fn trigger_file_upload(
-        &self,
-        target_path: String,
-        file_name: String,
-        local_file_path: std::path::PathBuf,
-        transfer_id: uuid::Uuid,
-    ) {
-        self.provider.trigger_file_upload(
-            self.resolve(&target_path),
-            file_name,
-            local_file_path,
-            transfer_id,
-        );
-    }
-
-    fn is_local(&self) -> bool {
-        self.provider.is_local()
-    }
-    fn is_read_only(&self) -> bool {
-        self.provider.is_read_only()
-    }
-    fn is_root_fs(&self) -> bool {
-        self.provider.is_root_fs()
-    }
-    fn connection_id(&self) -> Option<String> {
-        self.provider.connection_id()
-    }
-    fn display_name(&self) -> Option<String> {
-        self.provider.display_name()
-    }
-    fn get_icon(&self, path: &str) -> String {
-        self.provider.get_icon(path)
-    }
-    fn get_last_selected(&self, path: &str) -> Option<String> {
-        self.provider.get_last_selected(path)
-    }
-    fn get_ssh_connection_command(&self, remote_path: &str) -> Option<Vec<String>> {
-        self.provider.get_ssh_connection_command(remote_path)
-    }
-
-    fn get_ssh_shell_target(&self, remote_path: &str) -> Option<fm_core::rpc::SshShellTarget> {
-        self.provider.get_ssh_shell_target(remote_path)
-    }
-
-    fn supports_terminal(&self) -> bool {
-        self.provider.supports_terminal()
-    }
-}
+pub use panel_core::RoutingProvider;
 
 fn push_listing(state: &Rc<RouterState>, sender: &relm4::Sender<FmPanelInput>) {
-    let (path, entries, root_fs, root_rel, extra_columns) = {
+    let (
+        path,
+        entries,
+        root_fs,
+        root_rel,
+        extra_columns,
+        columns_replace_defaults,
+        nav_read_only,
+        wants_filter,
+    ) = {
         let nav = state.path.borrow();
         let root = &nav.levels()[0];
         (
             nav.absolute_path(),
-            (*nav.active().entries).clone(),
+            (*nav.active().entries()).clone(),
             root.fs.clone(),
             root.relative_path.clone(),
-            nav.active().fs.extra_columns(),
+            nav.active().shown_as().columns,
+            nav.active().shown_as().columns_replace_defaults,
+            nav.active().shown_as().read_only,
+            nav.active().shown_as().wants_quick_filter,
         )
     };
     let breadcrumb: Vec<BreadcrumbSegment> = {
@@ -242,16 +64,29 @@ fn push_listing(state: &Rc<RouterState>, sender: &relm4::Sender<FmPanelInput>) {
     let source = SourceInfo {
         is_local,
         display_name: root_fs.display_name(),
-        fs_label: Some(if is_local { "Local FileSystem" } else { "Remote FileSystem" }.to_string()),
+        fs_label: Some(
+            if is_local {
+                "Local FileSystem"
+            } else {
+                "Remote FileSystem"
+            }
+            .to_string(),
+        ),
         root_icon: root_fs.get_icon(&root_rel),
         root_icon_svg: root_fs.get_icon_svg(&root_rel),
         connection_id: root_fs.connection_id(),
         extra_columns,
+        columns_replace_defaults,
+        is_read_only: nav_read_only,
+        wants_quick_filter: wants_filter,
     };
     let select_name = {
         let nav = state.path.borrow();
         let abs = nav.absolute_path();
-        nav.active().selected.clone().or_else(|| state.get_last_selected(&abs))
+        nav.active()
+            .selected
+            .clone()
+            .or_else(|| state.get_last_selected(&abs))
     };
     let _ = sender.send(FmPanelInput::Listing {
         path,
@@ -359,7 +194,12 @@ impl PanelRouter {
     }
 
     pub async fn navigate_typed(&self, input: String) -> Result<bool, AppError> {
-        guarded_load(&self.state, self.fm.sender(), self.state.navigate_typed(input)).await
+        guarded_load(
+            &self.state,
+            self.fm.sender(),
+            self.state.navigate_typed(input),
+        )
+        .await
     }
 
     pub fn reset_to_base(&self) {
@@ -368,7 +208,11 @@ impl PanelRouter {
         self.relist_spawned();
     }
 
-    pub fn set_active_provider(&self, provider: Rc<dyn FileSystemRpc>, resource_id: impl Into<String>) {
+    pub fn set_active_provider(
+        &self,
+        provider: Rc<dyn FileSystemRpc>,
+        resource_id: impl Into<String>,
+    ) {
         *self.resource_id.borrow_mut() = resource_id.into();
         self.state.set_active_provider(provider, String::new());
         self.relist_spawned();
@@ -410,6 +254,8 @@ impl PanelRouter {
     async fn finish_mutation(&self, result: Result<(), AppError>, fail_title: &str) {
         match result {
             Ok(()) => {
+                // `refresh` stops trusting this folder and everything inside
+                // it, then reads it again.
                 let _ = self.refresh().await;
             }
             Err(e) => {
@@ -423,30 +269,47 @@ impl PanelRouter {
 
     pub async fn mkdir(&self, parent: String, name: String) {
         let rel = self.state.resolve_relative(&parent);
-        let r = self.state.active_provider().create_directory(rel, name, None).await;
+        let r = self
+            .state
+            .active_provider()
+            .create_directory(rel, name, None)
+            .await;
         self.finish_mutation(r, "Create Directory Failed").await;
     }
 
     pub async fn delete(&self, paths: Vec<String>) {
-        let rel: Vec<String> = paths.iter().map(|p| self.state.resolve_relative(p)).collect();
+        let rel: Vec<String> = paths
+            .iter()
+            .map(|p| self.state.resolve_relative(p))
+            .collect();
         let r = self.state.active_provider().delete_entries(rel).await;
         self.finish_mutation(r, "Delete Failed").await;
     }
 
     pub async fn rename(&self, old_path: String, new_path: String) {
-        let (o, n) = (self.state.resolve_relative(&old_path), self.state.resolve_relative(&new_path));
+        let (o, n) = (
+            self.state.resolve_relative(&old_path),
+            self.state.resolve_relative(&new_path),
+        );
         let r = self.state.active_provider().rename_entry(o, n).await;
         self.finish_mutation(r, "Rename Failed").await;
     }
 
     pub async fn chmod(&self, path: String, mode: u32) {
         let rel = self.state.resolve_relative(&path);
-        let r = self.state.active_provider().set_permissions(rel, mode).await;
+        let r = self
+            .state
+            .active_provider()
+            .set_permissions(rel, mode)
+            .await;
         self.finish_mutation(r, "Change Permissions Failed").await;
     }
 
     pub async fn duplicate(&self, src: String, dst: String) {
-        let (s, d) = (self.state.resolve_relative(&src), self.state.resolve_relative(&dst));
+        let (s, d) = (
+            self.state.resolve_relative(&src),
+            self.state.resolve_relative(&dst),
+        );
         let r = self.state.active_provider().duplicate_entry(s, d).await;
         self.finish_mutation(r, "Duplicate Failed").await;
     }
@@ -459,6 +322,20 @@ impl PanelRouter {
             }
             FmPanelOutput::NavigateUp => {
                 let _ = self.go_up().await;
+                None
+            }
+            FmPanelOutput::CellToggled {
+                dir,
+                name,
+                column,
+                ticked,
+            } => {
+                // Only the plugin knows what the cell reads as now, so list again.
+                let provider = self.state.active_provider();
+                let relative = self.state.resolve_relative(&dir);
+                if provider.toggle_cell(&relative, &name, &column, ticked) {
+                    let _ = self.refresh().await;
+                }
                 None
             }
             FmPanelOutput::NavigateLevel(idx) => {
@@ -503,7 +380,9 @@ impl PanelRouter {
                 self.duplicate(src, dst).await;
                 None
             }
-            FmPanelOutput::StateChanged { selected, cursor, .. } => {
+            FmPanelOutput::StateChanged {
+                selected, cursor, ..
+            } => {
                 *self.selection.borrow_mut() = selected;
                 self.state.set_selected(cursor);
                 None
@@ -551,7 +430,10 @@ impl PanelRouter {
 
     pub fn window(&self) -> Option<gtk::Window> {
         use gtk::prelude::{Cast, WidgetExt};
-        self.fm.widget().root().and_then(|r| r.downcast::<gtk::Window>().ok())
+        self.fm
+            .widget()
+            .root()
+            .and_then(|r| r.downcast::<gtk::Window>().ok())
     }
 
     pub fn config(&self) -> AppConfig {
@@ -596,7 +478,10 @@ impl PanelRouter {
     }
 
     pub fn set_sort(&self, column: String, descending: bool) {
-        let _ = self.fm.sender().send(FmPanelInput::SetSort { column, descending });
+        let _ = self
+            .fm
+            .sender()
+            .send(FmPanelInput::SetSort { column, descending });
     }
 
     pub fn current_resource_id(&self) -> String {
@@ -628,7 +513,7 @@ impl PanelRouter {
             .path
             .borrow()
             .active()
-            .entries
+            .entries()
             .iter()
             .map(|e| e.name.clone())
             .collect()
@@ -639,10 +524,15 @@ impl PanelRouter {
         let sel = self.selection.borrow();
         let nav = self.state.path.borrow();
         let dir = nav.absolute_path();
-        let entries = nav.active().entries.clone();
+        let entries = nav.active().entries();
         sel.iter()
             .map(|(name, is_dir)| {
                 let full = join_display(&dir, name);
+                let extra = entries
+                    .iter()
+                    .find(|e| &e.name == name)
+                    .map(|e| e.extra.clone())
+                    .unwrap_or_default();
                 let (size, date, perms) = entries
                     .iter()
                     .find(|e| &e.name == name)
@@ -656,7 +546,9 @@ impl PanelRouter {
                         (e.size, date, e.permissions)
                     })
                     .unwrap_or((0, String::new(), None));
-                FileEntry::new(name, &full, *is_dir, size, &date, perms)
+                let entry = FileEntry::new(name, &full, *is_dir, size, &date, perms);
+                entry.set_extra(extra);
+                entry
             })
             .collect()
     }
@@ -737,11 +629,11 @@ mod tests {
     impl FileSystemRpc for Dummy {}
 
     fn rp(display_prefix: &str, rel_prefix: &str) -> RoutingProvider {
-        RoutingProvider {
-            provider: Rc::new(Dummy),
-            display_prefix: display_prefix.to_string(),
-            rel_prefix: rel_prefix.to_string(),
-        }
+        RoutingProvider::from_parts(
+            Rc::new(Dummy),
+            display_prefix.to_string(),
+            rel_prefix.to_string(),
+        )
     }
 
     #[test]
@@ -756,13 +648,19 @@ mod tests {
     fn resolve_from_a_subdir_inside_the_archive() {
         let r = rp("/linux.txt.zip/sub", "/sub");
         assert_eq!(r.resolve("/linux.txt.zip/sub/a.txt"), "/sub/a.txt");
-        assert_eq!(r.resolve("/linux.txt.zip/sub/deep/b.txt"), "/sub/deep/b.txt");
+        assert_eq!(
+            r.resolve("/linux.txt.zip/sub/deep/b.txt"),
+            "/sub/deep/b.txt"
+        );
     }
 
     #[test]
     fn resolve_is_identity_on_a_plain_local_dir() {
         let r = rp("/home/me/docs", "/home/me/docs");
-        assert_eq!(r.resolve("/home/me/docs/file.txt"), "/home/me/docs/file.txt");
+        assert_eq!(
+            r.resolve("/home/me/docs/file.txt"),
+            "/home/me/docs/file.txt"
+        );
         let root = rp("/", "/");
         assert_eq!(root.resolve("/etc/hosts"), "/etc/hosts");
     }
@@ -770,7 +668,10 @@ mod tests {
     fn segments(names: &[&str]) -> Vec<panel_core::PathSegment> {
         names
             .iter()
-            .map(|n| panel_core::PathSegment { name: (*n).to_string(), path: String::new() })
+            .map(|n| panel_core::PathSegment {
+                name: (*n).to_string(),
+                path: String::new(),
+            })
             .collect()
     }
 
@@ -794,7 +695,10 @@ mod tests {
         let r = RoutingProvider::from_parts(base, display_prefix, rel_prefix);
         let mut expected = dir_names.to_vec();
         expected.push(file);
-        (r.resolve(&entry_path), panel_core::build_segments_to_path(&segments(&expected)))
+        (
+            r.resolve(&entry_path),
+            panel_core::build_segments_to_path(&segments(&expected)),
+        )
     }
 
     #[test]
@@ -822,7 +726,10 @@ mod tests {
         let r = RoutingProvider::from_parts(base, dir, rel_prefix);
         let mut expected = dir_names.to_vec();
         expected.push(file);
-        (r.resolve(&entry_path), panel_core::build_segments_to_path(&segments(&expected)))
+        (
+            r.resolve(&entry_path),
+            panel_core::build_segments_to_path(&segments(&expected)),
+        )
     }
 
     #[test]
@@ -845,7 +752,10 @@ mod tests {
         assert_eq!(r.resolve("/linux.txt.zip/"), "/");
 
         let deep = rp("/linux.txt.zip/sub", "/sub");
-        assert_eq!(deep.resolve("/linux.txt.zip/sub//deep//b.txt"), "/sub/deep/b.txt");
+        assert_eq!(
+            deep.resolve("/linux.txt.zip/sub//deep//b.txt"),
+            "/sub/deep/b.txt"
+        );
     }
 
     #[test]
@@ -891,17 +801,29 @@ mod tests {
     #[test]
     fn resolve_inside_nested_archives_strips_the_whole_display_prefix() {
         let r = rp("/docs/outer.zip/inner.tar.gz/deep", "/deep");
-        assert_eq!(r.resolve("/docs/outer.zip/inner.tar.gz/deep/f.txt"), "/deep/f.txt");
-        assert_eq!(r.resolve("/docs/outer.zip/inner.tar.gz/deep/d/f.txt"), "/deep/d/f.txt");
+        assert_eq!(
+            r.resolve("/docs/outer.zip/inner.tar.gz/deep/f.txt"),
+            "/deep/f.txt"
+        );
+        assert_eq!(
+            r.resolve("/docs/outer.zip/inner.tar.gz/deep/d/f.txt"),
+            "/deep/d/f.txt"
+        );
 
         let at_mount = rp("/docs/outer.zip/inner.tar.gz", "/");
-        assert_eq!(at_mount.resolve("/docs/outer.zip/inner.tar.gz/f.txt"), "/f.txt");
+        assert_eq!(
+            at_mount.resolve("/docs/outer.zip/inner.tar.gz/f.txt"),
+            "/f.txt"
+        );
     }
 
     #[test]
     fn resolve_preserves_unicode_and_spaces_in_names() {
         let r = rp("/архив.zip", "/");
-        assert_eq!(r.resolve("/архив.zip/документы/файл 1.txt"), "/документы/файл 1.txt");
+        assert_eq!(
+            r.resolve("/архив.zip/документы/файл 1.txt"),
+            "/документы/файл 1.txt"
+        );
         assert_eq!(r.resolve("/архив.zip/🙂 dir/🙂.bin"), "/🙂 dir/🙂.bin");
     }
 
@@ -909,7 +831,10 @@ mod tests {
     fn resolve_preserves_order_of_a_very_deep_path() {
         let deep: String = (0..100).map(|i| format!("/d{}", i)).collect();
         let r = rp("/mnt/big.zip", "/");
-        assert_eq!(r.resolve(&format!("/mnt/big.zip{}/f.txt", deep)), format!("{}/f.txt", deep));
+        assert_eq!(
+            r.resolve(&format!("/mnt/big.zip{}/f.txt", deep)),
+            format!("{}/f.txt", deep)
+        );
     }
 
     #[test]
@@ -932,7 +857,9 @@ mod tests {
 
     impl Recorder {
         fn new() -> Rc<Self> {
-            Rc::new(Self { calls: RefCell::new(Vec::new()) })
+            Rc::new(Self {
+                calls: RefCell::new(Vec::new()),
+            })
         }
         fn calls(&self) -> Vec<String> {
             self.calls.borrow().clone()
@@ -941,7 +868,10 @@ mod tests {
 
     #[async_trait::async_trait(?Send)]
     impl FileSystemRpc for Recorder {
-        async fn list_dir(&self, path: String) -> Result<Vec<fm_core::rpc::RemoteFileEntry>, AppError> {
+        async fn list_dir(
+            &self,
+            path: String,
+        ) -> Result<Vec<fm_core::rpc::RemoteFileEntry>, AppError> {
             self.calls.borrow_mut().push(format!("list_dir {}", path));
             Ok(Vec::new())
         }
@@ -951,22 +881,37 @@ mod tests {
             dir_name: String,
             _permissions: Option<u32>,
         ) -> Result<(), AppError> {
-            self.calls.borrow_mut().push(format!("mkdir {} | {}", parent_path, dir_name));
+            self.calls
+                .borrow_mut()
+                .push(format!("mkdir {} | {}", parent_path, dir_name));
             Ok(())
         }
         async fn delete_entries(&self, paths: Vec<String>) -> Result<(), AppError> {
-            self.calls.borrow_mut().push(format!("delete {}", paths.join(" ")));
+            self.calls
+                .borrow_mut()
+                .push(format!("delete {}", paths.join(" ")));
             Ok(())
         }
         async fn rename_entry(&self, path: String, new_path: String) -> Result<(), AppError> {
-            self.calls.borrow_mut().push(format!("rename {} -> {}", path, new_path));
+            self.calls
+                .borrow_mut()
+                .push(format!("rename {} -> {}", path, new_path));
             Ok(())
         }
         fn request_file_download(&self, file_path: String, _transfer_id: uuid::Uuid) {
-            self.calls.borrow_mut().push(format!("download {}", file_path));
+            self.calls
+                .borrow_mut()
+                .push(format!("download {}", file_path));
         }
-        async fn read_at(&self, path: String, offset: u64, len: usize) -> Result<Vec<u8>, AppError> {
-            self.calls.borrow_mut().push(format!("read_at {} @{} +{}", path, offset, len));
+        async fn read_at(
+            &self,
+            path: String,
+            offset: u64,
+            len: usize,
+        ) -> Result<Vec<u8>, AppError> {
+            self.calls
+                .borrow_mut()
+                .push(format!("read_at {} @{} +{}", path, offset, len));
             Ok(Vec::new())
         }
         async fn write_at(&self, path: String, offset: u64, data: Vec<u8>) -> Result<(), AppError> {
@@ -976,17 +921,31 @@ mod tests {
             Ok(())
         }
         async fn set_file_length(&self, path: String, len: u64) -> Result<(), AppError> {
-            self.calls.borrow_mut().push(format!("set_len {} = {}", path, len));
+            self.calls
+                .borrow_mut()
+                .push(format!("set_len {} = {}", path, len));
             Ok(())
         }
         fn supports_offset_io(&self) -> bool {
             true
         }
+        fn plugin_scope(&self) -> Option<String> {
+            Some(".zip".to_string())
+        }
+
+        fn toggle_cell(&self, dir: &str, name: &str, column: &str, ticked: bool) -> bool {
+            self.calls
+                .borrow_mut()
+                .push(format!("toggle_cell {dir} {name} {column} {ticked}"));
+            true
+        }
+
         fn extra_columns(&self) -> Vec<fm_core::rpc::ColumnSpec> {
             vec![fm_core::rpc::ColumnSpec {
                 key: "status".to_string(),
                 title: "Status".to_string(),
                 width: Some(120),
+                kind: fm_core::rpc::ColumnKind::Text,
             }]
         }
         fn is_local(&self) -> bool {
@@ -1034,16 +993,23 @@ mod tests {
             "/a.zip/sub/a.txt".to_string(),
             "/a.zip/sub//b.txt".to_string(),
         ]));
-        assert_eq!(rec.calls(), vec!["delete /sub/a.txt /sub/b.txt".to_string()]);
+        assert_eq!(
+            rec.calls(),
+            vec!["delete /sub/a.txt /sub/b.txt".to_string()]
+        );
     }
 
     #[test]
     fn rename_entry_resolves_both_sides() {
         let (rec, r) = recording("/a.zip/sub", "/sub");
-        let _ = futures::executor::block_on(
-            r.rename_entry("/a.zip/sub/old.txt".to_string(), "/a.zip/sub/new.txt".to_string()),
+        let _ = futures::executor::block_on(r.rename_entry(
+            "/a.zip/sub/old.txt".to_string(),
+            "/a.zip/sub/new.txt".to_string(),
+        ));
+        assert_eq!(
+            rec.calls(),
+            vec!["rename /sub/old.txt -> /sub/new.txt".to_string()]
         );
-        assert_eq!(rec.calls(), vec!["rename /sub/old.txt -> /sub/new.txt".to_string()]);
     }
 
     #[test]
@@ -1124,8 +1090,14 @@ mod tests {
         let state = state_with(vec![PathLevel::new("a.zip", "/", archive.clone())]);
         let snap = RoutingProvider::snapshot(&state);
 
-        state.path.borrow_mut().push(PathLevel::new("sub", "/sub", archive.clone()));
-        state.path.borrow_mut().push(PathLevel::new("deeper", "/sub/deeper", archive));
+        state
+            .path
+            .borrow_mut()
+            .push(PathLevel::new("sub", "/sub", archive.clone()));
+        state
+            .path
+            .borrow_mut()
+            .push(PathLevel::new("deeper", "/sub/deeper", archive));
 
         assert_eq!(snap.display_prefix(), "/a.zip");
         assert_eq!(snap.rel_prefix(), "/");
@@ -1154,7 +1126,8 @@ mod tests {
             32,
             vec![0u8; 8],
         ));
-        let _ = futures::executor::block_on(r.set_file_length("/docs/a.zip/sub/x.bin".to_string(), 64));
+        let _ =
+            futures::executor::block_on(r.set_file_length("/docs/a.zip/sub/x.bin".to_string(), 64));
         assert_eq!(
             rec.calls(),
             vec![
@@ -1174,6 +1147,30 @@ mod tests {
     }
 
     #[test]
+    fn a_cell_click_reaches_the_inner_provider_with_a_level_relative_path() {
+        let (rec, r) = recording("/docs/a.zip/sub", "/sub");
+        assert!(r.toggle_cell("/sub", "one.flac", "fetch", true));
+        assert_eq!(
+            rec.calls(),
+            vec!["toggle_cell /sub one.flac fetch true".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_plain_provider_takes_no_cell_clicks() {
+        let dummy = RoutingProvider::from_parts(Rc::new(Dummy), String::new(), String::new());
+        assert!(!dummy.toggle_cell("/", "a", "b", true));
+    }
+
+    #[test]
+    fn the_mounts_scope_is_forwarded_from_the_inner_provider() {
+        let (_rec, r) = recording("/a.zip", "/");
+        assert_eq!(r.plugin_scope().as_deref(), Some(".zip"));
+        let dummy = RoutingProvider::from_parts(Rc::new(Dummy), String::new(), String::new());
+        assert!(dummy.plugin_scope().is_none());
+    }
+
+    #[test]
     fn extra_columns_are_forwarded_from_the_inner_provider() {
         let (_rec, r) = recording("/a.zip", "/");
         let cols = r.extra_columns();
@@ -1183,5 +1180,4 @@ mod tests {
         let dummy = RoutingProvider::from_parts(Rc::new(Dummy), String::new(), String::new());
         assert!(dummy.extra_columns().is_empty());
     }
-
 }

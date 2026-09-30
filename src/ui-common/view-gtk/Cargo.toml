@@ -1,0 +1,18 @@
+[package]
+name = "ic-view-gtk"
+version = "0.1.0"
+edition = "2021"
+description = "Builds Adwaita controls from an ic-view document and exposes them by identifier"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+gtk = { package = "gtk4", version = "0.9", features = ["v4_12"] }
+adw = { package = "libadwaita", version = "0.7", features = ["v1_6"] }
+ic-view = { workspace = true }
+ic-view-session = { workspace = true }
+serde_json = { workspace = true }
+
+[[test]]
+name = "controls"
+harness = false

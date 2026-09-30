@@ -333,12 +333,18 @@ mod tests {
     #[test]
     fn registry_value_data_uses_externally_tagged_json() {
         let cases = vec![
-            (RegistryValueData::String("hello".into()), json!({"String": "hello"})),
+            (
+                RegistryValueData::String("hello".into()),
+                json!({"String": "hello"}),
+            ),
             (
                 RegistryValueData::MultiString(vec!["a".into(), "b".into()]),
                 json!({"MultiString": ["a", "b"]}),
             ),
-            (RegistryValueData::DWord(4_294_967_295), json!({"DWord": 4_294_967_295u32})),
+            (
+                RegistryValueData::DWord(4_294_967_295),
+                json!({"DWord": 4_294_967_295u32}),
+            ),
             (
                 RegistryValueData::QWord(18_446_744_073_709_551_615),
                 json!({"QWord": 18_446_744_073_709_551_615u64}),
