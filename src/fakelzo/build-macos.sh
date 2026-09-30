@@ -26,6 +26,8 @@ INSTALL_NAME=$(otool -D "$TARGET" | tail -1)
 COMPAT=$(otool -l "$TARGET" | awk '/cmd LC_ID_DYLIB/{f=1} f&&/compatibility version/{print $3; exit}')
 CURRENT=$(otool -l "$TARGET" | awk '/cmd LC_ID_DYLIB/{f=1} f&&/current version/{print $3; exit}')
 
+[ -n "$INSTALL_NAME" ] && [ -n "$COMPAT" ] || { echo "could not read install_name/version off $TARGET" >&2; exit 1; }
+
 clang -dynamiclib -O2 -o "$TARGET" "$SCRIPT_DIR/fakelzo.c" \
     -install_name "$INSTALL_NAME" \
     -compatibility_version "$COMPAT" \

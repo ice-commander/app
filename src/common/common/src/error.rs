@@ -82,7 +82,10 @@ mod tests {
 
     #[test]
     fn from_string_becomes_other() {
-        assert_eq!(AppError::from("oops".to_string()), AppError::Other("oops".into()));
+        assert_eq!(
+            AppError::from("oops".to_string()),
+            AppError::Other("oops".into())
+        );
     }
 
     #[test]

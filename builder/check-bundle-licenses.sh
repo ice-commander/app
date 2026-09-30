@@ -86,8 +86,8 @@ for path in sorted(glob.glob(os.path.join(sys.argv[1], "*.dll"))):
     while pos != -1:
         window = data[max(0, pos - 120): pos + 120]
         neighbours = {s for s in window.split(b"\x00") if s and s in KNOWN}
-        # A licence vocabulary (GStreamer's list of valid plugin licences) lists several names
-        # together; a declaration stands alone.
+        # A library embedding a vocabulary of licence names lists several together;
+        # a declaration stands alone.
         kind = "TABLE" if len(neighbours) >= 3 else "DECLARATION"
         # gdk-pixbuf's ICNS record: the string contradicts the file's own LGPL header.
         if kind == "DECLARATION" and b"icns" in window:

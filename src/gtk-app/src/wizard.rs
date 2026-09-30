@@ -1,5 +1,7 @@
 use adw::prelude::*;
-use gtk::{Align, Box, Button, DropDown, Label, ListBox, ListBoxRow, Orientation, SelectionMode, Switch};
+use gtk::{
+    Align, Box, Button, DropDown, Label, ListBox, ListBoxRow, Orientation, SelectionMode, Switch,
+};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -46,7 +48,9 @@ pub fn show_setup_wizard(
     let carousel = adw::Carousel::builder().hexpand(true).vexpand(true).build();
 
     let retrans: Retrans = Rc::new(RefCell::new(Vec::new()));
-    let original_lang = config.get::<String>("ui.language").unwrap_or_else(|| "en".to_string());
+    let original_lang = config
+        .get::<String>("ui.language")
+        .unwrap_or_else(|| "en".to_string());
 
     let restart_note = Label::new(None);
     restart_note.set_wrap(true);
@@ -54,19 +58,35 @@ pub fn show_setup_wizard(
     restart_note.add_css_class("dim-label");
     {
         let n = restart_note.clone();
-        reg(&retrans, Rc::new(move || {
-            n.set_text(&crate::i18n::tr("wizard.restart_note"));
-        }));
+        reg(
+            &retrans,
+            Rc::new(move || {
+                n.set_text(&crate::i18n::tr("wizard.restart_note"));
+            }),
+        );
     }
+
+    let plugins_changed = Rc::new(std::cell::Cell::new(false));
 
     let on_language_selected: Rc<dyn Fn(bool)> = {
         let note = restart_note.clone();
         let retrans = retrans.clone();
+        let plugins_changed = plugins_changed.clone();
         Rc::new(move |changed| {
-            note.set_visible(changed);
+            note.set_visible(changed || plugins_changed.get());
             for f in retrans.borrow().iter() {
                 f();
             }
+        })
+    };
+
+    let on_plugin_choice: Rc<dyn Fn()> = {
+        let note = restart_note.clone();
+        let plugins_changed = plugins_changed.clone();
+        Rc::new(move || {
+            plugins_changed.set(true);
+            note.set_text(&crate::i18n::tr("wizard.plugins_restart_note"));
+            note.set_visible(true);
         })
     };
 
@@ -83,6 +103,10 @@ pub fn show_setup_wizard(
     let page3 = build_page_toolbar(&config, &retrans);
     carousel.append(&page3);
     pages.push(page3.upcast());
+
+    let page4 = build_page_plugins(&config, &retrans, on_plugin_choice);
+    carousel.append(&page4);
+    pages.push(page4.upcast());
 
     let pages = Rc::new(pages);
 
@@ -101,15 +125,21 @@ pub fn show_setup_wizard(
     footer.append(&dots);
     footer.append(&restart_note);
 
-    let buttons = Box::builder().orientation(Orientation::Horizontal).spacing(10).build();
+    let buttons = Box::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(10)
+        .build();
 
     let later_btn = Button::new();
     later_btn.add_css_class("flat");
     {
         let b = later_btn.clone();
-        reg(&retrans, Rc::new(move || {
-            b.set_label(&crate::i18n::tr("wizard.later"));
-        }));
+        reg(
+            &retrans,
+            Rc::new(move || {
+                b.set_label(&crate::i18n::tr("wizard.later"));
+            }),
+        );
     }
 
     let spacer = Box::builder().hexpand(true).build();
@@ -119,7 +149,10 @@ pub fn show_setup_wizard(
     back_btn.set_visible(false);
     {
         let b = back_btn.clone();
-        reg(&retrans, Rc::new(move || b.set_label(&crate::i18n::tr("wizard.back"))));
+        reg(
+            &retrans,
+            Rc::new(move || b.set_label(&crate::i18n::tr("wizard.back"))),
+        );
     }
 
     let next_btn = Button::new();
@@ -153,7 +186,10 @@ pub fn show_setup_wizard(
     {
         let update_nav = update_nav.clone();
         let carousel = carousel.clone();
-        reg(&retrans, Rc::new(move || update_nav(carousel.position().round() as u32)));
+        reg(
+            &retrans,
+            Rc::new(move || update_nav(carousel.position().round() as u32)),
+        );
     }
     {
         let update_nav = update_nav.clone();
@@ -177,6 +213,7 @@ pub fn show_setup_wizard(
         let config = config.clone();
         let wizard = wizard.clone();
         let original_lang = original_lang.clone();
+        let plugins_changed = plugins_changed.clone();
         next_btn.connect_clicked(move |_| {
             let idx = carousel.position().round() as usize;
             if idx + 1 < pages.len() {
@@ -187,7 +224,9 @@ pub fn show_setup_wizard(
                 let lang_changed =
                     config.get::<String>("ui.language").unwrap_or_default() != original_lang;
                 wizard.close();
-                if lang_changed {
+                // Plugins are read once at start-up, so a choice made here only
+                // takes effect on the next one.
+                if lang_changed || plugins_changed.get() {
                     crate::utils::restart_app();
                 }
             }
@@ -279,13 +318,12 @@ fn build_page_appearance(
     let (scroll, content) = page_shell(
         retrans,
         || crate::i18n::tr("wizard.welcome_title").to_string(),
-        || {
-            crate::i18n::tr("wizard.welcome_sub")
-            .to_string()
-        },
+        || crate::i18n::tr("wizard.welcome_sub").to_string(),
     );
 
-    let list = ListBox::builder().selection_mode(SelectionMode::None).build();
+    let list = ListBox::builder()
+        .selection_mode(SelectionMode::None)
+        .build();
     list.add_css_class("boxed-list");
 
     let languages: &'static [(&str, &str)] = &[
@@ -307,9 +345,14 @@ fn build_page_appearance(
     ];
     let names: Vec<&str> = languages.iter().map(|(n, _)| *n).collect();
     let lang_dd = DropDown::from_strings(&names[..]);
-    let current_lang = config.get::<String>("ui.language").unwrap_or_else(|| "en".to_string());
+    let current_lang = config
+        .get::<String>("ui.language")
+        .unwrap_or_else(|| "en".to_string());
     let original_lang = current_lang.clone();
-    let lang_idx = languages.iter().position(|(_, c)| *c == current_lang).unwrap_or(0) as u32;
+    let lang_idx = languages
+        .iter()
+        .position(|(_, c)| *c == current_lang)
+        .unwrap_or(0) as u32;
     lang_dd.set_selected(lang_idx);
     let config_lang = config.clone();
     lang_dd.connect_selected_notify(move |dd| {
@@ -347,15 +390,19 @@ fn build_page_appearance(
         })
     };
 
-    let make_card = |retrans: &Retrans, label: fn() -> String, resource: &str| -> gtk::ToggleButton {
-        let v = Box::builder().orientation(Orientation::Vertical).spacing(6).build();
-        let pic = gtk::Picture::for_resource(resource);
-        pic.set_size_request(200, 125);
-        pic.set_content_fit(gtk::ContentFit::Cover);
-        v.append(&pic);
-        v.append(&tr_label(retrans, label));
-        gtk::ToggleButton::builder().child(&v).build()
-    };
+    let make_card =
+        |retrans: &Retrans, label: fn() -> String, resource: &str| -> gtk::ToggleButton {
+            let v = Box::builder()
+                .orientation(Orientation::Vertical)
+                .spacing(6)
+                .build();
+            let pic = gtk::Picture::for_resource(resource);
+            pic.set_size_request(200, 125);
+            pic.set_content_fit(gtk::ContentFit::Cover);
+            v.append(&pic);
+            v.append(&tr_label(retrans, label));
+            gtk::ToggleButton::builder().child(&v).build()
+        };
     let light_card = make_card(
         retrans,
         || crate::i18n::tr("settings.theme_light").to_string(),
@@ -375,7 +422,10 @@ fn build_page_appearance(
     light_card.set_sensitive(!is_auto);
     dark_card.set_sensitive(!is_auto);
 
-    let auto_sw = Switch::builder().valign(Align::Center).active(is_auto).build();
+    let auto_sw = Switch::builder()
+        .valign(Align::Center)
+        .active(is_auto)
+        .build();
     {
         let apply_theme = apply_theme.clone();
         let light_card = light_card.clone();
@@ -414,13 +464,13 @@ fn build_page_appearance(
         &list,
         retrans,
         || crate::i18n::tr("settings.theme_label").to_string(),
-        || {
-            crate::i18n::tr("wizard.theme_auto")
-            .to_string()
-        },
+        || crate::i18n::tr("wizard.theme_auto").to_string(),
         &auto_sw,
     );
-    let theme_box = Box::builder().orientation(Orientation::Horizontal).spacing(12).build();
+    let theme_box = Box::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(12)
+        .build();
     theme_box.append(&light_card);
     theme_box.append(&dark_card);
     setting_row(
@@ -435,17 +485,80 @@ fn build_page_appearance(
     scroll
 }
 
-fn build_page_toolbar(
+/// Which plugins to load. On a first run nothing is switched on, so this page
+/// is where the application gets its functionality at all.
+fn build_page_plugins(
     config: &client_config::AppConfig,
     retrans: &Retrans,
+    on_choice_changed: Rc<dyn Fn()>,
 ) -> gtk::ScrolledWindow {
+    let (scroll, content) = page_shell(
+        retrans,
+        || crate::i18n::tr("wizard.plugins_title").to_string(),
+        || crate::i18n::tr("wizard.plugins_subtitle").to_string(),
+    );
+
+    let found = ic_plugin_host::loader::installed_with_about();
+    if found.is_empty() {
+        let empty = tr_label(retrans, || {
+            crate::i18n::tr("wizard.plugins_none").to_string()
+        });
+        empty.set_halign(Align::Start);
+        empty.set_wrap(true);
+        empty.add_css_class("dim-label");
+        content.append(&empty);
+        return scroll;
+    }
+
+    let list = ListBox::builder()
+        .selection_mode(SelectionMode::None)
+        .build();
+    list.add_css_class("boxed-list");
+
+    for held in &found {
+        let about = held.about.clone().unwrap_or_default();
+        let title = if about.name.is_empty() {
+            held.library.clone()
+        } else {
+            about.name.clone()
+        };
+        let subtitle = match (about.description.as_str(), about.version.as_str()) {
+            ("", "") => String::new(),
+            ("", version) => version.to_string(),
+            (text, "") => text.to_string(),
+            (text, version) => format!("{text}  \u{00b7}  {version}"),
+        };
+        let row = adw::SwitchRow::builder()
+            .title(&title)
+            .subtitle(&subtitle)
+            .active(ic_plugin_host::loader::is_enabled(config, &held.library))
+            .build();
+        {
+            let config = config.clone();
+            let library = held.library.clone();
+            let on_choice_changed = on_choice_changed.clone();
+            row.connect_active_notify(move |row| {
+                ic_plugin_host::loader::set_enabled(&config, &library, row.is_active());
+                on_choice_changed();
+            });
+        }
+        list.append(&row);
+    }
+
+    content.append(&list);
+    scroll
+}
+
+fn build_page_toolbar(config: &client_config::AppConfig, retrans: &Retrans) -> gtk::ScrolledWindow {
     let (scroll, content) = page_shell(
         retrans,
         || crate::i18n::tr("wizard.toolbar_title").to_string(),
         || crate::i18n::tr("wizard.toolbar_sub").to_string(),
     );
 
-    let list = ListBox::builder().selection_mode(SelectionMode::None).build();
+    let list = ListBox::builder()
+        .selection_mode(SelectionMode::None)
+        .build();
     list.add_css_class("boxed-list");
 
     for (key, title_key, subtitle_key, default) in crate::settings::page_toolbar::BUTTONS {
@@ -484,13 +597,12 @@ fn build_page_panels(
     let (scroll, content) = page_shell(
         retrans,
         || crate::i18n::tr("wizard.panels_title").to_string(),
-        || {
-            crate::i18n::tr("wizard.panels_sub")
-            .to_string()
-        },
+        || crate::i18n::tr("wizard.panels_sub").to_string(),
     );
 
-    let list = ListBox::builder().selection_mode(SelectionMode::None).build();
+    let list = ListBox::builder()
+        .selection_mode(SelectionMode::None)
+        .build();
     list.add_css_class("boxed-list");
 
     let target_dd = DropDown::from_strings(&[
@@ -521,22 +633,25 @@ fn build_page_panels(
     });
     {
         let dd = target_dd.clone();
-        reg(retrans, Rc::new(move || {
-            let sel = dd.selected();
-            let a = crate::i18n::tr("settings.open_target_active").to_string();
-            let b = crate::i18n::tr("settings.open_target_opposite").to_string();
-            let c = crate::i18n::tr("settings.open_target_left").to_string();
-            let d = crate::i18n::tr("settings.open_target_right").to_string();
-            dd.block_signal(&target_handler);
-            dd.set_model(Some(&gtk::StringList::new(&[
-                a.as_str(),
-                b.as_str(),
-                c.as_str(),
-                d.as_str(),
-            ])));
-            dd.set_selected(sel);
-            dd.unblock_signal(&target_handler);
-        }));
+        reg(
+            retrans,
+            Rc::new(move || {
+                let sel = dd.selected();
+                let a = crate::i18n::tr("settings.open_target_active").to_string();
+                let b = crate::i18n::tr("settings.open_target_opposite").to_string();
+                let c = crate::i18n::tr("settings.open_target_left").to_string();
+                let d = crate::i18n::tr("settings.open_target_right").to_string();
+                dd.block_signal(&target_handler);
+                dd.set_model(Some(&gtk::StringList::new(&[
+                    a.as_str(),
+                    b.as_str(),
+                    c.as_str(),
+                    d.as_str(),
+                ])));
+                dd.set_selected(sel);
+                dd.unblock_signal(&target_handler);
+            }),
+        );
     }
     setting_row(
         &list,
@@ -550,7 +665,11 @@ fn build_page_panels(
         &*crate::i18n::tr("settings.drives_option_all"),
         &*crate::i18n::tr("settings.drives_option_fav"),
     ]);
-    fav_dd.set_selected(if crate::favorites::is_favorites_only(config) { 1 } else { 0 });
+    fav_dd.set_selected(if crate::favorites::is_favorites_only(config) {
+        1
+    } else {
+        0
+    });
     let config_fav = config.clone();
     let occ = on_connections_changed.clone();
     let fav_handler = fav_dd.connect_selected_notify(move |dd| {
@@ -559,15 +678,18 @@ fn build_page_panels(
     });
     {
         let dd = fav_dd.clone();
-        reg(retrans, Rc::new(move || {
-            let sel = dd.selected();
-            let a = crate::i18n::tr("settings.drives_option_all").to_string();
-            let b = crate::i18n::tr("settings.drives_option_fav").to_string();
-            dd.block_signal(&fav_handler);
-            dd.set_model(Some(&gtk::StringList::new(&[a.as_str(), b.as_str()])));
-            dd.set_selected(sel);
-            dd.unblock_signal(&fav_handler);
-        }));
+        reg(
+            retrans,
+            Rc::new(move || {
+                let sel = dd.selected();
+                let a = crate::i18n::tr("settings.drives_option_all").to_string();
+                let b = crate::i18n::tr("settings.drives_option_fav").to_string();
+                dd.block_signal(&fav_handler);
+                dd.set_model(Some(&gtk::StringList::new(&[a.as_str(), b.as_str()])));
+                dd.set_selected(sel);
+                dd.unblock_signal(&fav_handler);
+            }),
+        );
     }
     setting_row(
         &list,
@@ -623,16 +745,23 @@ fn build_page_panels(
     });
     {
         let dd = rowsize_dd.clone();
-        reg(retrans, Rc::new(move || {
-            let sel = dd.selected();
-            let a = crate::i18n::tr("settings.list_row_size_normal").to_string();
-            let b = crate::i18n::tr("settings.list_row_size_compact").to_string();
-            let c = crate::i18n::tr("settings.list_row_size_tiny").to_string();
-            dd.block_signal(&rowsize_handler);
-            dd.set_model(Some(&gtk::StringList::new(&[a.as_str(), b.as_str(), c.as_str()])));
-            dd.set_selected(sel);
-            dd.unblock_signal(&rowsize_handler);
-        }));
+        reg(
+            retrans,
+            Rc::new(move || {
+                let sel = dd.selected();
+                let a = crate::i18n::tr("settings.list_row_size_normal").to_string();
+                let b = crate::i18n::tr("settings.list_row_size_compact").to_string();
+                let c = crate::i18n::tr("settings.list_row_size_tiny").to_string();
+                dd.block_signal(&rowsize_handler);
+                dd.set_model(Some(&gtk::StringList::new(&[
+                    a.as_str(),
+                    b.as_str(),
+                    c.as_str(),
+                ])));
+                dd.set_selected(sel);
+                dd.unblock_signal(&rowsize_handler);
+            }),
+        );
     }
     setting_row(
         &list,

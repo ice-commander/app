@@ -7,10 +7,12 @@ mod pane;
 mod sources;
 mod term;
 mod util;
+mod view;
 mod viewer;
 
 use std::io::{self, Stdout};
 use std::rc::Rc;
+use std::time::Duration;
 
 use fm_core::rpc::FileSystemRpc;
 use panel_core::RouterState;
@@ -43,7 +45,11 @@ fn setup_terminal() -> io::Result<Tui> {
 
 fn restore_terminal(terminal: &mut Tui) -> io::Result<()> {
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )?;
     terminal.show_cursor()
 }
 
@@ -71,10 +77,24 @@ pub(crate) fn goto_local(core: &RouterState, path: &str) {
 async fn run() -> io::Result<()> {
     let config = client_config::AppConfig::new("ice-commander");
     secret_store::harden_file_permissions(&config.config_path());
+    ic_i18n::register_locales!("../../gtk-app/locales");
+    ic_i18n::set_lang(
+        &config
+            .get::<String>("ui.language")
+            .unwrap_or_else(|| "en".to_string()),
+    );
+    ic_plugin_host::set_settings_config(config.clone());
+    // After the application's own dictionaries, so a plugin's keys sit on top.
+    ic_plugin_host::set_host_kind(ic_plugin_api::IC_HOST_CONSOLE);
+    for attempt in ic_plugin_host::loader::load_for(&config) {
+        if attempt.went_wrong() {
+            eprintln!("installed plugin {} did not load", attempt.name);
+        }
+    }
 
     let make_core = || {
         let local: Rc<dyn FileSystemRpc> =
-            Rc::new(virtualfs::local_rpc::LocalFileSystemRpc::new(config.clone()));
+            Rc::new(localfs::local_rpc::LocalFileSystemRpc::new(config.clone()));
         Rc::new(RouterState::new(local.clone(), local, "/".to_string()))
     };
     let cwd = std::env::current_dir()
@@ -96,13 +116,22 @@ async fn run() -> io::Result<()> {
         term_expanded: false,
         list_rects: [Rect::default(); 2],
         term_rects: [Rect::default(); 2],
-        footer_rects: Vec::new(),
+        footer_hits: Vec::new(),
+        plugin_actions: ic_plugin_host::fs_actions(),
+        picked: Rc::new(std::cell::RefCell::new(Vec::new())),
         overlay: overlay::Overlay::None,
         should_quit: false,
     };
+    app.watch_selection();
+
+    // A plugin can ask for a view from its own thread; the loop below picks it up.
+    let (plugin_tx, plugin_rx) = tokio::sync::mpsc::unbounded_channel::<ic_plugin_host::Wanted>();
+    ic_plugin_host::set_waker(std::sync::Arc::new(move |wanted| {
+        let _ = plugin_tx.send(wanted);
+    }));
 
     let mut terminal = setup_terminal()?;
-    let result = event_loop(&mut terminal, &mut app).await;
+    let result = event_loop(&mut terminal, &mut app, plugin_rx).await;
     restore_terminal(&mut terminal)?;
     result
 }
@@ -111,11 +140,20 @@ enum Wake {
     Key(KeyEvent),
     Click(u16, u16),
     Term(usize, Option<Vec<u8>>),
+    Plugin(ic_plugin_host::Wanted),
+    Tick,
     Redraw,
     Quit,
 }
 
-async fn event_loop(terminal: &mut Tui, app: &mut App) -> io::Result<()> {
+/// Nothing is waiting on the clock, so wake up rarely rather than never.
+const IDLE: Duration = Duration::from_secs(3600);
+
+async fn event_loop(
+    terminal: &mut Tui,
+    app: &mut App,
+    mut plugin_rx: tokio::sync::mpsc::UnboundedReceiver<ic_plugin_host::Wanted>,
+) -> io::Result<()> {
     let mut events = EventStream::new();
     loop {
         terminal.draw(|f| ui(f, app))?;
@@ -123,6 +161,11 @@ async fn event_loop(terminal: &mut Tui, app: &mut App) -> io::Result<()> {
             break;
         }
 
+        let deadline = app
+            .overlay
+            .deadline()
+            .map(tokio::time::Instant::from_std)
+            .unwrap_or_else(|| tokio::time::Instant::now() + IDLE);
         let wake = {
             let [left, right] = &mut app.terms;
             tokio::select! {
@@ -138,6 +181,11 @@ async fn event_loop(terminal: &mut Tui, app: &mut App) -> io::Result<()> {
                 },
                 out = term_recv(left) => Wake::Term(0, out),
                 out = term_recv(right) => Wake::Term(1, out),
+                asked = plugin_rx.recv() => match asked {
+                    Some(wanted) => Wake::Plugin(wanted),
+                    None => Wake::Redraw,
+                },
+                _ = tokio::time::sleep_until(deadline) => Wake::Tick,
             }
         };
         match wake {
@@ -159,6 +207,8 @@ async fn event_loop(terminal: &mut Tui, app: &mut App) -> io::Result<()> {
                     app.focus = Focus::Panel;
                 }
             }
+            Wake::Plugin(wanted) => app.on_plugin_request(wanted).await,
+            Wake::Tick => app.on_timer(),
             Wake::Redraw => {}
             Wake::Quit => break,
         }

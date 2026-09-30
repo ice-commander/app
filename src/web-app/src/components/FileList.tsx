@@ -2,7 +2,6 @@ import { useEffect, useRef } from 'react'
 import { tr } from "../lib/i18n";
 import type { FileEntry } from '../api/types'
 import { formatSize } from '../lib/format'
-import { isArchive } from '../lib/archive'
 import { generatedFileIcon } from '../lib/fileIcon'
 import folderIcon from '../assets/folder.svg'
 import fileIcon from '../assets/file.svg'
@@ -27,6 +26,7 @@ interface Props {
 
 interface Row {
   name: string
+  enterable: boolean
   is_dir: boolean
   isUp: boolean
   modified: string | null
@@ -43,15 +43,22 @@ export function FileList({ entries, viewMode, selectedNames, showUp, onSelect, o
   }, [selectedNames])
 
   const rows: Row[] = []
-  if (showUp) rows.push({ name: '..', is_dir: true, isUp: true, modified: null, size: null })
+  if (showUp)
+    rows.push({ name: '..', is_dir: true, enterable: true, isUp: true, modified: null, size: null })
   for (const e of entries) {
-    rows.push({ name: e.name, is_dir: e.is_dir, isUp: false, modified: e.modified, size: e.size })
+    rows.push({
+      name: e.name,
+      is_dir: e.is_dir,
+      enterable: e.enterable ?? false,
+      isUp: false,
+      modified: e.modified,
+      size: e.size,
+    })
   }
 
   const open = (row: Row) => {
     if (row.isUp) onUp()
-    // archives are files on disk but the router enters them as folders (virtual paths)
-    else if (row.is_dir || isArchive(row.name)) onOpenDir(row.name)
+    else if (row.is_dir || row.enterable) onOpenDir(row.name)
     else onOpenFile(entries.find((e) => e.name === row.name)!)
   }
 

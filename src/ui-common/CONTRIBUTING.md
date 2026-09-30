@@ -58,10 +58,12 @@ same terms as the project — **MIT OR Apache-2.0**, at the user's option. See
 `fm-core` carries the `FileSystemRpc` trait every panel talks through, plus the
 entry and path types; `fm-ui` is the file-manager view built on it, and
 `client-archives` opens zip and tar archives as if they were folders.
-`terminal-ui`, `process-ui`, `registry-ui`, `sysinfo-ui`, `graph-ui`,
-`clipboard-ui`, `power-ui`, `os-services-ui`, `net-ui`, `sync-ui` and
-`rdesk-ui` are one view each. `node-auth` handles signing in, `updater-ui` the
-update prompt, and `i18n` holds the translation catalogue.
+`terminal-ui`, `registry-ui`, `graph-ui`, `clipboard-ui`, `power-ui`,
+`os-services-ui`, `net-ui`, `sync-ui` and `rdesk-ui` are one view each.
+`view-gtk` builds Adwaita controls from a declarative document, and
+`connection-form` is the host half of a connection plugin's dialog.
+`node-auth` handles signing in, `updater-ui` the update prompt, and `i18n`
+holds the translation catalogue.
 
 Not every consumer builds every crate — an application lists only the ones it
 uses as workspace members, so an unused view costs it nothing.

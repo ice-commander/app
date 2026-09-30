@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { tr } from "./lib/i18n";
+import { adopt, tr } from "./lib/i18n";
 import * as api from './api/client'
 import type { Connection, Drive, Side } from './api/types'
 import { Panel, type PanelHandle } from './components/Panel'
 import { ConnectionsDialog } from './components/ConnectionsDialog'
 import { FileViewer } from './components/FileViewer'
+import { PluginViewer } from './components/view/PluginViewer'
 
 // `?inline` forces a data-URI (the plain import is emitted as a separate /app-logo.svg
 // file because index.html also references it as a favicon, and that file isn't served by
@@ -44,7 +45,19 @@ export default function App({ captureKeys = true, embedded = false }: AppOptions
   const [connections, setConnections] = useState<Connection[]>([])
   const [modal, setModal] = useState<ModalState>({ type: 'none' })
   const [viewer, setViewer] = useState<{ side: Side; path: string; mode: 'view' | 'edit' } | null>(null)
+  // No plugin claimed the open file — the built-in viewer draws it instead.
+  const [plain, setPlain] = useState(false)
   const [favoritesOnly, setFavoritesOnly] = useState(false)
+
+  const showViewer = useCallback((side: Side, path: string, mode: 'view' | 'edit') => {
+    setPlain(false)
+    setViewer({ side, path, mode })
+  }, [])
+
+  const closeViewer = useCallback(() => {
+    setViewer(null)
+    api.closeViewerWindows().catch(() => {})
+  }, [])
 
   // Real per-panel terminals (xterm over WebSocket → the app's PTY). Each side is
   // independent; one can be expanded to span both panels.
@@ -83,6 +96,19 @@ export default function App({ captureKeys = true, embedded = false }: AppOptions
     api.getFavoritesOnly().then(setFavoritesOnly).catch(() => {})
   }, [])
 
+  // The host owns the language and holds whatever dictionaries plugins
+  // registered, so the built-in ones are only a fallback until this lands.
+  const [lang, setLang] = useState('en')
+  useEffect(() => {
+    api
+      .fetchTranslations()
+      .then(({ lang: served, keys }) => {
+        adopt(served, keys)
+        setLang(served)
+      })
+      .catch(() => {})
+  }, [])
+
   const handleToggleFavorite = useCallback(async (key: string) => {
     await api.toggleFavorite(key)
     refreshDrives()
@@ -94,12 +120,15 @@ export default function App({ captureKeys = true, embedded = false }: AppOptions
     refreshDrives()
   }, [refreshDrives])
 
-  // Persist a connection; optionally mount it in the panel that opened the form.
-  const handleSaveConnection = useCallback(async (side: Side, conn: Connection, connect: boolean) => {
-    await api.saveConnection(conn)
-    refreshDrives()
-    if (connect) await api.connectTo(side, conn)
-  }, [refreshDrives])
+  // The host committed and stored the record, and mounted it when asked; all
+  // that is left here is to reload the lists it appears in.
+  const handleConnectionSaved = useCallback(
+    (side: Side, _name: string, connected: boolean) => {
+      refreshDrives()
+      if (connected) void (side === 'left' ? leftRef : rightRef).current?.reload()
+    },
+    [refreshDrives],
+  )
 
   const handleConnectTo = useCallback(async (side: Side, conn: Connection) => {
     await api.connectTo(side, conn)
@@ -151,7 +180,7 @@ export default function App({ captureKeys = true, embedded = false }: AppOptions
       // mirror GTK terminal expand/collapse → web
       (side, expanded) => setExpandedSide(expanded ? (side as Side) : null),
       // remote F3/F4 — the app asks us to open the viewer
-      (side, path, mode) => setViewer({ side: side as Side, path, mode }),
+      (side, path, mode) => showViewer(side as Side, path, mode),
       // mirror GTK panel view-mode switch → web
       (side, mode) => refOf(side as Side)?.applyViewMode(mode),
       // GTK closed a native viewer window → close the web overlay (state only — no
@@ -162,7 +191,7 @@ export default function App({ captureKeys = true, embedded = false }: AppOptions
       (open) => setModal((m) => (open ? { type: 'connections' } : (m.type === 'connections' ? { type: 'none' } : m))),
     )
     return disconnect
-  }, [])
+  }, [showViewer])
 
   // ── file operations ─────────────────────────────────────────────────────────
   const handleNewFolder = useCallback(async () => {
@@ -214,7 +243,7 @@ export default function App({ captureKeys = true, embedded = false }: AppOptions
     const p = h.selectedPath()
     if (!p) { alert('Select a file first.'); return }
     if (h.selectedIsDir()) { alert('Cannot open a folder — pick a file.'); return }
-    setViewer({ side: activePanel, path: p, mode })
+    showViewer(activePanel, p, mode)
     // mirror into the GTK app: open the same file in a native viewer window
     api.openNative(activePanel, p).catch(() => {})
   }
@@ -275,7 +304,10 @@ export default function App({ captureKeys = true, embedded = false }: AppOptions
   }, [captureKeys, modal.type, viewer, activePanel, handleCopy, handleMove, toggleTerminal])
 
   return (
-    <div className={`app-window ${theme === 'light' ? 'light-theme' : ''} ${embedded ? 'embedded' : ''}`}>
+    <div
+      lang={lang}
+      className={`app-window ${theme === 'light' ? 'light-theme' : ''} ${embedded ? 'embedded' : ''}`}
+    >
       {/* Header */}
       <header className="window-header">
         <div className="header-left">
@@ -332,9 +364,9 @@ export default function App({ captureKeys = true, embedded = false }: AppOptions
           onToggleFavorite={handleToggleFavorite}
           favoritesOnly={favoritesOnly}
           onSetFavoritesOnly={handleSetFavoritesOnly}
-          onSaveConnection={(conn, connect) => handleSaveConnection('left', conn, connect)}
+          onConnectionSaved={(name, connected) => handleConnectionSaved('left', name, connected)}
           onDeleteConnection={handleDeleteConnection}
-          onOpenFile={(path) => setViewer({ side: 'left', path, mode: 'view' })}
+          onOpenFile={(path) => showViewer('left', path, 'view')}
           terminalOpen={termOpen.left}
           terminalExpanded={expandedSide === 'left'}
           onToggleTerminalExpand={() => toggleTerminalExpand('left')}
@@ -353,9 +385,9 @@ export default function App({ captureKeys = true, embedded = false }: AppOptions
           onToggleFavorite={handleToggleFavorite}
           favoritesOnly={favoritesOnly}
           onSetFavoritesOnly={handleSetFavoritesOnly}
-          onSaveConnection={(conn, connect) => handleSaveConnection('right', conn, connect)}
+          onConnectionSaved={(name, connected) => handleConnectionSaved('right', name, connected)}
           onDeleteConnection={handleDeleteConnection}
-          onOpenFile={(path) => setViewer({ side: 'right', path, mode: 'view' })}
+          onOpenFile={(path) => showViewer('right', path, 'view')}
           terminalOpen={termOpen.right}
           terminalExpanded={expandedSide === 'right'}
           onToggleTerminalExpand={() => toggleTerminalExpand('right')}
@@ -404,7 +436,8 @@ export default function App({ captureKeys = true, embedded = false }: AppOptions
             closeModal()
             void api.setConnectionsDialog(false).catch(() => {})
           }}
-          onSave={(conn, connect) => handleSaveConnection(activePanel, conn, connect)}
+          side={activePanel}
+          onSaved={(name, connected) => handleConnectionSaved(activePanel, name, connected)}
           onDelete={handleDeleteConnection}
           onConnect={(conn) => handleConnectTo(activePanel, conn)}
           onExport={handleExportConnections}
@@ -498,15 +531,23 @@ export default function App({ captureKeys = true, embedded = false }: AppOptions
         </div>
       )}
 
-      {viewer && (
-        <FileViewer
-          side={viewer.side}
-          path={viewer.path}
-          mode={viewer.mode}
-          onClose={() => { setViewer(null); api.closeViewerWindows().catch(() => {}) }}
-          onSaved={() => refOf(viewer.side)?.reload()}
-        />
-      )}
+      {viewer &&
+        (viewer.mode === 'view' && !plain ? (
+          <PluginViewer
+            side={viewer.side}
+            path={viewer.path}
+            onClose={closeViewer}
+            onUnclaimed={() => setPlain(true)}
+          />
+        ) : (
+          <FileViewer
+            side={viewer.side}
+            path={viewer.path}
+            mode={viewer.mode}
+            onClose={closeViewer}
+            onSaved={() => refOf(viewer.side)?.reload()}
+          />
+        ))}
     </div>
   )
 }

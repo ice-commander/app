@@ -148,7 +148,12 @@ impl FileEntry {
     }
 
     pub fn extra_at(&self, index: usize) -> String {
-        self.imp().extra.borrow().get(index).cloned().unwrap_or_default()
+        self.imp()
+            .extra
+            .borrow()
+            .get(index)
+            .cloned()
+            .unwrap_or_default()
     }
 
     pub fn set_extra(&self, values: Vec<String>) {
@@ -166,7 +171,14 @@ mod tests {
 
     #[test]
     fn every_field_survives_a_construction_round_trip() {
-        let entry = FileEntry::new("notes.txt", "/home/ice/notes.txt", false, 4096, "2026-08-29", Some(0o644));
+        let entry = FileEntry::new(
+            "notes.txt",
+            "/home/ice/notes.txt",
+            false,
+            4096,
+            "2026-08-29",
+            Some(0o644),
+        );
         assert_eq!(entry.name(), "notes.txt");
         assert_eq!(entry.path(), "/home/ice/notes.txt");
         assert!(!entry.is_dir());
@@ -198,7 +210,14 @@ mod tests {
 
     #[test]
     fn unicode_names_and_huge_sizes_are_stored_verbatim() {
-        let entry = FileEntry::new("отчёт 🎧.mp3", "/музыка/отчёт 🎧.mp3", false, u64::MAX, "", None);
+        let entry = FileEntry::new(
+            "отчёт 🎧.mp3",
+            "/музыка/отчёт 🎧.mp3",
+            false,
+            u64::MAX,
+            "",
+            None,
+        );
         assert_eq!(entry.name(), "отчёт 🎧.mp3");
         assert_eq!(entry.path(), "/музыка/отчёт 🎧.mp3");
         assert_eq!(entry.size(), u64::MAX);

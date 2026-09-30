@@ -4,6 +4,9 @@ export interface FileEntry {
   name: string
   path: string
   is_dir: boolean
+  /** A file some plugin filesystem can be entered as if it were a folder. Only
+      the server knows which extensions those are, so it says so per entry. */
+  enterable?: boolean
   size: number | null
   modified: string | null
 }
@@ -78,23 +81,16 @@ export interface Drive {
   is_online: boolean
 }
 
+/** A saved connection record.
+ *
+ *  The named fields below are the legacy columns the GTK app has always stored;
+ *  `settings` is the open bag a plugin-declared bind lands in. Nothing in the
+ *  web UI reads any particular one of them any more — the connection editor
+ *  renders the plugin's document instead — so this shape only has to survive
+ *  the round trip to the server. */
 export interface Connection {
   name: string
-  protocol: string
-  host: string
-  port: number
-  user: string
-  pass?: string
-  auth_type?: string
-  key_path?: string
-  passphrase?: string
-  remote_path?: string
-  use_tunnel?: boolean
-  tunnel_host?: string
-  tunnel_port?: number
-  tunnel_user?: string
-  tunnel_auth_type?: string
-  tunnel_pass?: string
-  tunnel_key_path?: string
-  tunnel_passphrase?: string
+  folder?: string
+  kind: string
+  settings?: Record<string, string>
 }

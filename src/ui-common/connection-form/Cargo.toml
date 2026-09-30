@@ -1,0 +1,23 @@
+[package]
+name = "connection-form"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+
+# The host half of a connection plugin's dialog: the stored record, which holds
+# whatever the kind's own form asked for, and the kind table the dropdown
+# offers. GTK-free, so the contract with the plugin documents can be tested
+# outside the gtk-app binary.
+[dependencies]
+ic-view = { workspace = true }
+ic-view-session = { workspace = true }
+ic-plugin-host = { workspace = true }
+ic-i18n = { workspace = true }
+client-config = { workspace = true }
+secret-store = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+ic-plugin-api = { workspace = true }

@@ -1,11 +1,21 @@
 import type { Backend, BackendEvents, TerminalCallbacks, TerminalSession } from './backend'
 import type { Connection, Drive, FileContent, Operation, PanelState, Side } from './types'
+import type {
+  ConnectionKinds,
+  Json,
+  ViewerAnswer,
+  ViewerClosed,
+  ViewerOpened,
+  ViewSnapshot,
+} from '../lib/view/types'
 
 /**
  * The real backend: REST + WebSocket to an ice-commander instance running with
  * `--webui`. This is the only file (besides the demo twin) that knows the
  * transport — URLs, fetch and WebSocket never leak past the Backend interface.
  */
+const CLIENT = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+
 export class HttpBackend implements Backend {
   private async json<T>(url: string, init?: RequestInit): Promise<T> {
     const res = await fetch(url, init)
@@ -97,6 +107,64 @@ export class HttpBackend implements Backend {
   }
   async connectTo(side: Side, connection: Connection): Promise<void> {
     await this.post('/api/connect', { side, connection })
+  }
+
+  // ── the declarative plugin surface ──────────────────────────────────────────
+  fetchConnectionKinds(): Promise<ConnectionKinds> {
+    return this.json('/api/connections/kinds')
+  }
+  submitConnectionForm(form: {
+    kind: string
+    values: Record<string, Json>
+    touched: string[]
+    editing?: string
+    connect?: Side
+  }): Promise<{ ok: boolean; name?: string; missing?: string[] }> {
+    return this.post('/api/connections/form', form) as Promise<{
+      ok: boolean
+      name?: string
+      missing?: string[]
+    }>
+  }
+  sendConnectionFormEvent(kind: string, event: Record<string, unknown>): Promise<ViewSnapshot> {
+    return this.post(
+      `/api/connections/kinds/${encodeURIComponent(kind)}/event`,
+      event,
+    ) as Promise<ViewSnapshot>
+  }
+  fetchPluginViews(): Promise<{ id: string; title: string }[]> {
+    return this.json('/api/views')
+  }
+  openPluginView(id: string, argument?: string): Promise<ViewSnapshot> {
+    const query = argument === undefined ? '' : `?arg=${encodeURIComponent(argument)}`
+    return this.json(`/api/views/${encodeURIComponent(id)}${query}`)
+  }
+  sendPluginViewEvent(id: string, event: Record<string, unknown>): Promise<ViewSnapshot> {
+    return this.post(`/api/views/${encodeURIComponent(id)}/event`, event) as Promise<ViewSnapshot>
+  }
+  async closePluginView(id: string): Promise<void> {
+    await this.post(`/api/views/${encodeURIComponent(id)}/close`)
+  }
+  async openViewer(side: Side, path: string): Promise<ViewerOpened | null> {
+    const res = await fetch('/api/viewer/open', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ side, path, client: CLIENT }),
+    })
+    if (!res.ok) return null
+    return res.json()
+  }
+  sendViewerEvent(instance: number, event: Record<string, unknown>): Promise<ViewerAnswer> {
+    return this.post(`/api/viewer/${instance}/event`, event) as Promise<ViewerAnswer>
+  }
+  viewerPartUrl(instance: number, name: string, drawn = 0): string {
+    return `/api/viewer/${instance}/part/${encodeURIComponent(name)}?drawn=${drawn}`
+  }
+  closeViewer(instance: number, force = false): Promise<ViewerClosed> {
+    return this.post(`/api/viewer/${instance}/close`, { force }) as Promise<ViewerClosed>
+  }
+  fetchTranslations(): Promise<{ lang: string; keys: Record<string, string> }> {
+    return this.json('/api/i18n')
   }
 
   // ── favorites ───────────────────────────────────────────────────────────────
@@ -199,7 +267,7 @@ export class HttpBackend implements Backend {
 
     const connect = () => {
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-      ws = new WebSocket(`${proto}//${location.host}/api/ws`)
+      ws = new WebSocket(`${proto}//${location.host}/api/ws?client=${CLIENT}`)
       ws.onmessage = (e) => {
         try {
           const msg = JSON.parse(e.data)

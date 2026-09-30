@@ -1,17 +1,29 @@
 use adw::prelude::*;
 use gtk::{Button, Label, Orientation};
 
+thread_local! {
+    static PLUGIN_LABELS: std::cell::RefCell<std::collections::HashMap<String, Label>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+    static PLUGIN_BUTTONS: std::cell::RefCell<std::collections::HashMap<String, Button>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+    static PLUGIN_ICONS: std::cell::RefCell<std::collections::HashMap<String, gtk::Image>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
 pub(super) struct HeaderResult {
     pub bar: adw::HeaderBar,
     pub settings_btn: Button,
-    pub on_open_sysinfo: std::rc::Rc<dyn Fn()>,
 }
 
 pub(super) fn build_header_bar(
     window: &adw::ApplicationWindow,
     config: &client_config::AppConfig,
     selector_updaters: std::rc::Rc<std::cell::RefCell<Vec<std::rc::Rc<dyn Fn()>>>>,
-    global_on_connect: std::rc::Rc<std::cell::RefCell<Option<std::rc::Rc<dyn Fn(crate::connection_manager::FtpConnection) + 'static>>>>,
+    global_on_connect: std::rc::Rc<
+        std::cell::RefCell<
+            Option<std::rc::Rc<dyn Fn(crate::connection_manager::Connection) + 'static>>,
+        >,
+    >,
 ) -> HeaderResult {
     let header_bar = adw::HeaderBar::new();
 
@@ -32,14 +44,6 @@ pub(super) fn build_header_bar(
         .build();
     settings_btn.set_cursor_from_name(Some("pointer"));
 
-    let sysinfo_img = gtk::Image::from_resource("/com/icecommander/gtk/sysinfo.svg");
-    sysinfo_img.set_pixel_size(20);
-    let sysinfo_btn = Button::builder()
-        .child(&sysinfo_img)
-        .tooltip_text("System Information")
-        .build();
-    sysinfo_btn.set_cursor_from_name(Some("pointer"));
-
     let theme_btn_img = gtk::Image::new();
     theme_btn_img.set_pixel_size(20);
 
@@ -56,79 +60,6 @@ pub(super) fn build_header_bar(
         } else {
             theme_btn_img_notify.set_resource(Some("/com/icecommander/gtk/night.svg"));
         }
-    });
-
-    let window_sysinfo = window.clone();
-    let on_open_sysinfo: std::rc::Rc<dyn Fn()> = std::rc::Rc::new(move || {
-        use gtk_sysinfo_ui::{SysInfoInit, SysInfoInput, SysInfoModel, SysInfoOutput};
-        use relm4::prelude::*;
-
-        let sysinfo_dialog = gtk::Window::builder()
-            .title("System Information")
-            .transient_for(&window_sysinfo)
-            .modal(true)
-            .default_width(700)
-            .default_height(600)
-            .resizable(false)
-            .build();
-
-        let (out_tx, out_rx) = relm4::channel::<SysInfoOutput>();
-        let sysinfo = SysInfoModel::builder()
-            .launch(SysInfoInit {
-                show_toolbar: false,
-                auto_update: true,
-                update_interval: std::time::Duration::from_secs(1),
-            })
-            .forward(&out_tx, |o| o);
-        sysinfo_dialog.set_child(Some(sysinfo.widget()));
-
-        let _ = sysinfo
-            .sender()
-            .send(SysInfoInput::Update(Box::new(
-                ic_platform::system_info::get_system_info(),
-            )));
-
-        let sysinfo = std::rc::Rc::new(sysinfo);
-        {
-            let sysinfo = sysinfo.clone();
-            let dialog = sysinfo_dialog.clone();
-            gtk::glib::spawn_future_local(async move {
-                while let Some(out) = out_rx.recv().await {
-                    match out {
-                        SysInfoOutput::RequestInfo => {
-                            let _ = sysinfo.sender().send(SysInfoInput::Update(Box::new(
-                                ic_platform::system_info::get_system_info(),
-                            )));
-                        }
-                        SysInfoOutput::Back => dialog.close(),
-                    }
-                }
-            });
-        }
-
-        let escape = gtk::EventControllerKey::new();
-        let closing = sysinfo_dialog.clone();
-        escape.connect_key_pressed(move |_, key, _, _| {
-            if key == gtk::gdk::Key::Escape {
-                closing.close();
-                return gtk::glib::Propagation::Stop;
-            }
-            gtk::glib::Propagation::Proceed
-        });
-        sysinfo_dialog.add_controller(escape);
-
-        let sysinfo_keepalive = sysinfo.clone();
-        sysinfo_dialog.connect_close_request(move |_| {
-            let _ = &sysinfo_keepalive;
-            gtk::glib::Propagation::Proceed
-        });
-
-        sysinfo_dialog.present();
-    });
-
-    let on_open_sysinfo_btn = on_open_sysinfo.clone();
-    sysinfo_btn.connect_clicked(move |_| {
-        on_open_sysinfo_btn();
     });
 
     let config_theme = config.clone();
@@ -151,7 +82,7 @@ pub(super) fn build_header_bar(
     }
 
     let conn_btn = Button::builder()
-        .tooltip_text("FTP/SFTP Connections")
+        .tooltip_text(&*crate::i18n::tr("conn_manager.title"))
         .build();
     conn_btn.set_cursor_from_name(Some("pointer"));
 
@@ -159,7 +90,7 @@ pub(super) fn build_header_bar(
         .orientation(Orientation::Horizontal)
         .spacing(6)
         .build();
-    let conn_btn_icon = gtk::Image::from_resource("/com/icecommander/gtk/ftp.svg");
+    let conn_btn_icon = gtk::Image::from_resource("/com/icecommander/gtk/connect.svg");
     conn_btn_icon.set_pixel_size(20);
     let conn_btn_label = Label::new(Some("Connections"));
     let conn_badge = Label::builder().css_classes(vec!["dim-label"]).build();
@@ -193,10 +124,7 @@ pub(super) fn build_header_bar(
     let update_conn_badge = {
         let conn_badge = conn_badge.clone();
         move || {
-            let count = config_badge
-                .get::<Vec<serde_json::Value>>("ui.ftp_connections")
-                .map(|v| v.len())
-                .unwrap_or(0);
+            let count = connection_form::stored_connections(&config_badge).len();
             conn_badge.set_text(&format!("({})", count));
         }
     };
@@ -233,26 +161,100 @@ pub(super) fn build_header_bar(
             #[cfg(target_os = "macos")]
             let _ = std::process::Command::new("open").arg(&url).spawn();
             #[cfg(target_os = "windows")]
-            let _ = std::process::Command::new("cmd").args(["/c", "start", "", &url]).spawn();
+            let _ = std::process::Command::new("cmd")
+                .args(["/c", "start", "", &url])
+                .spawn();
         });
         Some(btn)
     } else {
         None
     };
 
+    let plugin_header_buttons = |side: u32| -> Vec<Button> {
+        crate::plugin_host::header_entries(side)
+            .into_iter()
+            .filter_map(|entry| {
+                let content = gtk::Box::builder()
+                    .orientation(Orientation::Horizontal)
+                    .spacing(6)
+                    .build();
+                // Icon, label and visibility are kept: a plugin repaints them later.
+                let icon =
+                    crate::plugin_host::image_from_svg(&entry.svg).unwrap_or_else(gtk::Image::new);
+                icon.set_pixel_size(20);
+                content.append(&icon);
+                PLUGIN_ICONS.with(|held| held.borrow_mut().insert(entry.id.clone(), icon));
+                let label = Label::new(Some(&entry.label));
+                content.append(&label);
+                label.set_visible(!entry.label.is_empty());
+                PLUGIN_LABELS.with(|held| held.borrow_mut().insert(entry.id.clone(), label));
+                let btn = Button::builder().child(&content).build();
+                btn.set_visible(entry.shown);
+                PLUGIN_BUTTONS.with(|held| held.borrow_mut().insert(entry.id.clone(), btn.clone()));
+                if !entry.tooltip.is_empty() {
+                    let shown = crate::connection_manager::translate_optional(&entry.tooltip)
+                        .unwrap_or_else(|| entry.tooltip.clone());
+                    btn.set_tooltip_text(Some(&shown));
+                }
+                btn.set_cursor_from_name(Some("pointer"));
+                btn.connect_clicked(move |b| {
+                    let Some(window) = b.root().and_downcast::<gtk::Window>() else {
+                        return;
+                    };
+                    use gtk::glib::object::ObjectType;
+                    entry.fire(window.as_ptr() as *mut std::os::raw::c_void);
+                });
+                Some(btn)
+            })
+            .collect()
+    };
+
     #[cfg(not(target_os = "linux"))]
     header_bar.pack_start(&logo_img);
     header_bar.pack_start(&settings_btn);
-    header_bar.pack_start(&sysinfo_btn);
+    for btn in plugin_header_buttons(ic_plugin_api::IC_SIDE_LEFT) {
+        header_bar.pack_start(&btn);
+    }
     header_bar.pack_end(&theme_btn);
     header_bar.pack_end(&conn_btn);
     if let Some(ref web_btn) = web_btn {
         header_bar.pack_end(web_btn);
     }
+    for btn in plugin_header_buttons(ic_plugin_api::IC_SIDE_RIGHT) {
+        header_bar.pack_end(&btn);
+    }
+
+    ic_plugin_host::set_header_changed_handler(std::rc::Rc::new(|id: &str, text: &str| {
+        PLUGIN_LABELS.with(|held| {
+            if let Some(label) = held.borrow().get(id) {
+                label.set_text(text);
+                label.set_visible(!text.is_empty());
+            }
+        });
+    }));
+
+    ic_plugin_host::set_header_repainted_handler(std::rc::Rc::new(|id: &str, svg: &[u8]| {
+        PLUGIN_ICONS.with(|held| {
+            let Some(shown) = held.borrow().get(id).cloned() else {
+                return;
+            };
+            if let Some(drawn) = crate::plugin_host::texture_from_svg(svg, 20) {
+                shown.set_paintable(Some(&drawn));
+                shown.set_pixel_size(20);
+            }
+        });
+    }));
+
+    ic_plugin_host::set_header_shown_handler(std::rc::Rc::new(|id: &str, shown: bool| {
+        PLUGIN_BUTTONS.with(|held| {
+            if let Some(btn) = held.borrow().get(id) {
+                btn.set_visible(shown);
+            }
+        });
+    }));
 
     HeaderResult {
         bar: header_bar,
         settings_btn,
-        on_open_sysinfo,
     }
 }

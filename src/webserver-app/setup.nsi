@@ -2,7 +2,7 @@
 !include "x64.nsh"
 
 Name "Ice Commander Web Server"
-OutFile "..\\..\\distr\\ice-commander-webserver-0.7.124-1-win64.exe"
+OutFile "..\\..\\distr\\ice-commander-webserver-0.8.130-1-win64.exe"
 InstallDir "$PROGRAMFILES64\Ice Commander Web Server"
 Target amd64-unicode
 
@@ -64,7 +64,7 @@ Section "Ice Commander Web Server (Required)" SecMain
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\IceCommanderWebServer" "DisplayName" "Ice Commander Web Server"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\IceCommanderWebServer" "UninstallString" '"$INSTDIR\Uninstall.exe"'
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\IceCommanderWebServer" "DisplayIcon" '"$INSTDIR\ice-webserver.exe"'
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\IceCommanderWebServer" "DisplayVersion" "0.7.124"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\IceCommanderWebServer" "DisplayVersion" "0.8.130"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\IceCommanderWebServer" "Publisher" "Ice Commander Project"
 SectionEnd
 

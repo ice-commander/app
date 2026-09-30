@@ -8,24 +8,26 @@ members = [
     "src/panel-core",
     "src/panel-router",
     "src/panel-server",
-    "src/virtualfs",
-    "src/ui-common/client-archives",
+    "src/localfs",
     "src/common/client-config",
+    "src/common/connection-store",
     "src/common/logging",
     "src/common/ic-model",
+    "src/common/ic-plugin-host",
+    "src/common/ic-view",
+    "src/common/ic-view-session",
     "src/common/ic-platform",
     "src/common/common",
     "src/common/utils",
     "src/ui-common/i18n",
-    "src/ui-common/devtools-core",
-    "src/ui-common/devtools-ui",
+    "src/ui-common/connection-form",
     "src/ui-common/fm-core",
     "src/ui-common/fm-ui",
-    "src/ui-common/sysinfo-ui",
 	"src/ui-common/terminal-ui",
 	"src/ui-common/registry-ui",
 	"src/ui-common/viewer-ui",
-	"src/ui-common/process-ui",
+	"src/ui-common/view-gtk",
+	"src/ui-common/canvas-gtk",
 	"src/ui-common/updater-ui"
 ]
 resolver = "2"
@@ -53,10 +55,16 @@ ic-utils = { path = "src/common/utils" }
 client-config = { path = "src/common/client-config" }
 ic-logging = { path = "src/common/logging" }
 ic-model = { path = "src/common/ic-model" }
+connection-store = { path = "src/common/connection-store" }
+ic-plugin-api = { path = "../plugin-api/src/ic-plugin-api" }
+ic-plugin-host = { path = "src/common/ic-plugin-host" }
+ic-view = { path = "src/common/ic-view" }
+ic-view-session = { path = "src/common/ic-view-session" }
+ic-view-gtk = { path = "src/ui-common/view-gtk" }
+ic-canvas-gtk = { path = "src/ui-common/canvas-gtk" }
 ic-platform = { path = "src/common/ic-platform" }
 # The p2p protocol itself: commands, node model, signalling, crypto, BSON wire format.
 # Capability handlers served over p2p; installed by the app at startup.
-client-archives = { path = "src/ui-common/client-archives" }
 
 # panel-core (GTK-free routing core: NavPath, RouterState, path helpers)
 panel-core = { path = "src/panel-core" }
@@ -69,20 +77,23 @@ panel-server = { path = "src/panel-server" }
 secret-store = { path = "src/secret-store" }
 transfer-core = { path = "src/transfer-core" }
 
-# virtualfs (all FileSystemRpc providers: local, archive, drives-root, network)
-virtualfs = { path = "src/virtualfs" }
+# localfs (this machine's own disks: the local filesystem and the drives root)
+localfs = { path = "src/localfs" }
 
 # UI dependencies
 fm-core = { path = "src/ui-common/fm-core" }
+connection-form = { path = "src/ui-common/connection-form" }
 gtk-viewer-ui = { path = "src/ui-common/viewer-ui" }
-gtk-fm-ui = { path = "src/ui-common/fm-ui", features = ["support-archives"] }
+gtk-fm-ui = { path = "src/ui-common/fm-ui" }
 ic-i18n = { path = "src/ui-common/i18n" }
-devtools-core = { path = "src/ui-common/devtools-core" }
-gtk-devtools-ui = { path = "src/ui-common/devtools-ui" }
-gtk-sysinfo-ui = { path = "src/ui-common/sysinfo-ui" }
 gtk-terminal-ui = { path = "src/ui-common/terminal-ui" }
 gtk-registry-ui = { path = "src/ui-common/registry-ui" }
-gtk-process-ui = { path = "src/ui-common/process-ui" }
 gtk-updater-ui = { path = "src/ui-common/updater-ui" }
 
 
+
+# Debug symbols are of no use to anyone running a release, and they are a
+# quarter of the GTK binary. Stripping here rather than per packager keeps every
+# package type carrying the byte-identical binary the build produced.
+[profile.release]
+strip = true

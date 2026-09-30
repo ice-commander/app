@@ -300,7 +300,6 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
 
-
     #[test]
     fn sanitize_non_windows_path_is_identity() {
         #[cfg(not(target_os = "windows"))]
@@ -326,7 +325,6 @@ mod tests {
             assert_eq!(sanitize_windows_path(p), PathBuf::from("C:\\Users\\foo"));
         }
     }
-
 
     #[test]
     fn sandbox_normal_path_resolves() {
@@ -377,7 +375,6 @@ mod tests {
         assert!(resolve_and_sandbox_path(base, "\\Windows").is_none());
     }
 
-
     #[test]
     fn list_empty_dir_returns_empty() {
         let dir = tempdir().unwrap();
@@ -407,7 +404,6 @@ mod tests {
         assert!(files.is_empty());
     }
 
-
     #[test]
     fn metadata_of_file() {
         let dir = tempdir().unwrap();
@@ -436,7 +432,6 @@ mod tests {
         let info = get_local_metadata(Path::new("/no/such/file.txt"));
         assert!(info.is_none());
     }
-
 
     #[tokio::test]
     async fn create_directory_succeeds() {
@@ -557,7 +552,9 @@ mod tests {
     async fn write_chunk_then_read_chunk_roundtrip() {
         let dir = tempdir().unwrap();
         let file = dir.path().join("blob.bin");
-        write_local_file_chunk(&file, 0, b"hello world").await.unwrap();
+        write_local_file_chunk(&file, 0, b"hello world")
+            .await
+            .unwrap();
         let got = read_local_file_chunk(&file, 6, 5).await.unwrap();
         assert_eq!(got, b"world".to_vec());
     }
@@ -613,5 +610,4 @@ mod tests {
         let got = read_local_file_chunk(&file, 0, 8).await.unwrap();
         assert_eq!(got, b"xy".to_vec());
     }
-
 }

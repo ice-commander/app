@@ -9,9 +9,7 @@ publish = false
 gtk = { package = "gtk4", version = "0.9", features = ["v4_12"] }
 adw = { package = "libadwaita", version = "0.7", features = ["v1_6"] }
 relm4 = { workspace = true }
-serde = { version = "1.0", features = ["derive"] }
 client-config = { workspace = true }
-client-archives = { workspace = true, optional = true }
 chrono = "0.4"
 ic-i18n = { workspace = true }
 fm-core = { workspace = true }
@@ -22,7 +20,9 @@ resvg = "0.47"
 
 [features]
 default = []
-support-archives = ["dep:client-archives"]
 
 [build-dependencies]
 glib-build-tools = "0.20"
+
+[dev-dependencies]
+ic-plugin-api = { workspace = true }

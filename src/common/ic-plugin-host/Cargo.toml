@@ -1,0 +1,27 @@
+[package]
+name = "ic-plugin-host"
+version = "0.1.0"
+edition = "2021"
+description = "Registries and the host table that plugins are given, with no toolkit dependency"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+ic-plugin-api = { workspace = true }
+fm-core = { workspace = true }
+ic-view = { workspace = true }
+ic-view-session = { workspace = true }
+ic-i18n = { workspace = true }
+client-config = { workspace = true }
+secret-store = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+common = { workspace = true }
+ic-logging = { workspace = true }
+async-trait = "0.1"
+libloading = "0.8"
+dirs = "5.0"
+
+[dev-dependencies]
+libloading = "0.8"
+futures = "0.3"

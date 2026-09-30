@@ -41,7 +41,7 @@ fn build_timeouts(config: &client_config::AppConfig) -> adw::PreferencesGroup {
         config,
         "net.connect_timeout_secs",
         20,
-        virtualfs::set_connect_timeout_secs,
+        localfs::set_connect_timeout_secs,
     );
     let row_connect = adw::ActionRow::builder()
         .title(&*crate::i18n::tr("settings.connect_timeout"))
@@ -54,7 +54,7 @@ fn build_timeouts(config: &client_config::AppConfig) -> adw::PreferencesGroup {
         config,
         "net.request_timeout_secs",
         20,
-        virtualfs::set_request_timeout_secs,
+        localfs::set_request_timeout_secs,
     );
     let row_request = adw::ActionRow::builder()
         .title(&*crate::i18n::tr("settings.request_timeout"))

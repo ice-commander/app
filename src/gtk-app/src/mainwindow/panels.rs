@@ -27,8 +27,9 @@ pub(super) struct PanelResult {
     pub on_collapse: std::rc::Rc<dyn Fn()>,
     pub expanded_side: std::rc::Rc<std::cell::Cell<Option<super::ActivePanelSide>>>,
     #[allow(clippy::type_complexity)]
-    pub expanded_notifier:
-        std::rc::Rc<std::cell::RefCell<Option<std::rc::Rc<dyn Fn(Option<super::ActivePanelSide>)>>>>,
+    pub expanded_notifier: std::rc::Rc<
+        std::cell::RefCell<Option<std::rc::Rc<dyn Fn(Option<super::ActivePanelSide>)>>>,
+    >,
 }
 
 struct SideRefs {
@@ -73,7 +74,11 @@ fn expand_side(refs: &SideRefs) {
     refs.collapse_btn.set_visible(true);
 }
 
-fn collapse_side(refs: &SideRefs, saved_player_visible: bool, audio_player: &crate::player::AudioPlayer) {
+fn collapse_side(
+    refs: &SideRefs,
+    saved_player_visible: bool,
+    audio_player: &crate::player::AudioPlayer,
+) {
     refs.other_panel.set_visible(true);
     refs.collapse_btn.set_visible(false);
     refs.router
@@ -86,7 +91,8 @@ fn collapse_side(refs: &SideRefs, saved_player_visible: bool, audio_player: &cra
     for w in &refs.header_hide_widgets {
         w.set_visible(true);
     }
-    refs.expand_btn.set_visible(refs.term.container.is_visible());
+    refs.expand_btn
+        .set_visible(refs.term.container.is_visible());
 
     if refs.player_view.container.is_visible() || saved_player_visible {
         refs.vpaned.set_position(refs.vpaned.height() * 3 / 5);
@@ -105,7 +111,6 @@ pub(super) fn build_panels(
     my_info: &ic_model::DeviceInfo,
     clipboard: std::rc::Rc<fm_core::clipboard::Clipboard>,
     shift_held: std::rc::Rc<std::cell::Cell<bool>>,
-    on_open_sysinfo: std::rc::Rc<dyn Fn()>,
     selector_updaters: std::rc::Rc<std::cell::RefCell<Vec<std::rc::Rc<dyn Fn()>>>>,
     initial_width: i32,
     term_out_left: tokio::sync::broadcast::Sender<Vec<u8>>,
@@ -135,7 +140,8 @@ pub(super) fn build_panels(
     let left_path = config.get::<String>("ui.left_panel_path");
     let right_path = config.get::<String>("ui.right_panel_path");
 
-    let audio_player = crate::player::AudioPlayer::new();
+    // The application's one player: two would be two sounds at once.
+    let audio_player = crate::player::the_one();
 
     let left_info = build_panel(
         "Left Panel",
@@ -145,7 +151,6 @@ pub(super) fn build_panels(
         my_info.id.clone(),
         shift_held.clone(),
         audio_player.clone(),
-        on_open_sysinfo.clone(),
         config.clone(),
         term_out_left,
     );
@@ -166,7 +171,6 @@ pub(super) fn build_panels(
         my_info.id.clone(),
         shift_held.clone(),
         audio_player.clone(),
-        on_open_sysinfo.clone(),
         config.clone(),
         term_out_right,
     );
@@ -294,7 +298,9 @@ pub(super) fn build_panels(
             };
             let (refs, saved_player_visible) = match side {
                 super::ActivePanelSide::Left => (make_left_refs(), saved_player_visible_left.get()),
-                super::ActivePanelSide::Right => (make_right_refs(), saved_player_visible_right.get()),
+                super::ActivePanelSide::Right => {
+                    (make_right_refs(), saved_player_visible_right.get())
+                }
                 super::ActivePanelSide::None => return,
             };
             collapse_side(&refs, saved_player_visible, &audio_player);
