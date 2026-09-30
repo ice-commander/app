@@ -4,6 +4,18 @@ use panel_router::PanelRouter;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+/// An entry a plugin offered may bring its own icon; everything else is drawn
+/// from the application's resources.
+fn show_drive_icon(image: &gtk::Image, drive: &crate::drives::AppDrive) {
+    if !drive.svg.is_empty() {
+        if let Some(texture) = crate::plugin_host::texture_from_svg(&drive.svg, 20) {
+            image.set_paintable(Some(&texture));
+            return;
+        }
+    }
+    image.set_resource(Some(&drive.icon));
+}
+
 fn is_currently_active(
     router: &Rc<PanelRouter>,
     item: &crate::drives::AppDriveItem,
@@ -92,23 +104,13 @@ fn is_currently_active(
             }
             false
         }
-        crate::drives::AppDriveItem::NetConnection(conn) => {
-            if let Some(conn_id) = router.provider().connection_id() {
-                let target_id = if conn.protocol.to_uppercase() == "WEBDAV" {
-                    format!("webdav://{}@{}", conn.user, conn.host)
-                } else {
-                    format!(
-                        "{}://{}@{}:{}",
-                        conn.protocol.to_lowercase(),
-                        conn.user,
-                        conn.host,
-                        conn.port
-                    )
-                };
-                return conn_id == target_id;
-            }
-            false
-        }
+        crate::drives::AppDriveItem::Offered { .. } => false,
+        // The mount answers with the key favourites hang off, not with an address.
+        crate::drives::AppDriveItem::NetConnection(conn) => router
+            .provider()
+            .connection_id()
+            .map(|open| open == connection_form::connection_key(conn))
+            .unwrap_or(false),
     }
 }
 
@@ -127,7 +129,9 @@ pub fn create_drives_toolbar(
 
     let factory = gtk::SignalListItemFactory::new();
     factory.connect_setup(|_, obj| {
-        let list_item = obj.downcast_ref::<gtk::ListItem>().expect("factory always provides ListItem");
+        let list_item = obj
+            .downcast_ref::<gtk::ListItem>()
+            .expect("factory always provides ListItem");
         let hbox = Box::builder()
             .orientation(Orientation::Horizontal)
             .spacing(8)
@@ -157,7 +161,7 @@ pub fn create_drives_toolbar(
                         let item_opt = drive_items_bind.borrow().get(pos).cloned();
                         if let Some(item) = item_opt {
                             lbl.set_text(&item.name);
-                            img.set_resource(Some(&item.icon));
+                            show_drive_icon(&img, &item);
                             if let Some(star) = star {
                                 star.set_text(if item.is_favorite { "⭐" } else { "" });
                             }
@@ -172,7 +176,9 @@ pub fn create_drives_toolbar(
 
     let button_factory = gtk::SignalListItemFactory::new();
     button_factory.connect_setup(|_, obj| {
-        let list_item = obj.downcast_ref::<gtk::ListItem>().expect("factory always provides ListItem");
+        let list_item = obj
+            .downcast_ref::<gtk::ListItem>()
+            .expect("factory always provides ListItem");
         list_item.set_child(Some(&Label::new(None)));
     });
 
@@ -204,7 +210,7 @@ pub fn create_drives_toolbar(
             let sel = dd.selected();
             if let Some(item) = items.borrow().get(sel as usize) {
                 lbl.set_text(&item.name);
-                icon.set_resource(Some(&item.icon));
+                show_drive_icon(&icon, item);
             }
         })
     };
@@ -212,7 +218,6 @@ pub fn create_drives_toolbar(
         let update = update_switch.clone();
         move |_| update()
     });
-
 
     let update_volumes_ui = {
         let string_list = string_list.clone();
@@ -227,7 +232,8 @@ pub fn create_drives_toolbar(
             is_syncing_vol.set(true);
 
             let shift_active = shift_held.get();
-            let fav_only = config.get::<bool>("ui.drives_toolbar_favorites_only")
+            let fav_only = config
+                .get::<bool>("ui.drives_toolbar_favorites_only")
                 .unwrap_or(false)
                 && !shift_active;
 
@@ -270,7 +276,6 @@ pub fn create_drives_toolbar(
             string_list.splice(0, string_list.n_items(), &dropdown_refs);
             drive_dropdown_vol.set_selected(active_idx as u32);
             is_syncing_vol.set(false);
-
         })
     };
 
@@ -324,33 +329,71 @@ pub fn create_drives_toolbar(
                         let mut mount_success = true;
                         if vol_inner.get_mount().is_none() {
                             let root_opt = stack_inner.root();
-                            let parent_win = root_opt.clone().and_then(|r| r.downcast::<gtk::Window>().ok());
+                            let parent_win = root_opt
+                                .clone()
+                                .and_then(|r| r.downcast::<gtk::Window>().ok());
                             let mount_op = gtk::MountOperation::new(parent_win.as_ref());
-                            match vol_inner.mount_future(gtk::gio::MountMountFlags::NONE, Some(&mount_op)).await {
+                            match vol_inner
+                                .mount_future(gtk::gio::MountMountFlags::NONE, Some(&mount_op))
+                                .await
+                            {
                                 Ok(_) => {}
-                                 Err(e) => {
-                                     let msg = crate::i18n::trf("toolbar.mount_failed_body", &[("device", &*(vol_inner.name().to_string()).to_string()), ("error", &*(e.to_string()).to_string())]);
-                                     show_error(&dd_inner, &*crate::i18n::tr("toolbar.mount_failed_title"), &msg);
-                                     mount_success = false;
-                                 }
+                                Err(e) => {
+                                    let msg = crate::i18n::trf(
+                                        "toolbar.mount_failed_body",
+                                        &[
+                                            (
+                                                "device",
+                                                &*(vol_inner.name().to_string()).to_string(),
+                                            ),
+                                            ("error", &*(e.to_string()).to_string()),
+                                        ],
+                                    );
+                                    show_error(
+                                        &dd_inner,
+                                        &*crate::i18n::tr("toolbar.mount_failed_title"),
+                                        &msg,
+                                    );
+                                    mount_success = false;
+                                }
                             }
                         }
                         if mount_success {
                             if let Some(mount) = vol_inner.get_mount() {
                                 let root = mount.root();
                                 let path_opt = root.path();
-                                 if let Some(path) = path_opt {
-                                     let path_str = path.to_string_lossy().to_string();
-                                     router_inner.open_local_path(path_str);
-                                     stack_inner.set_visible_child_name("filemanager");
-                                 } else {
-                                      let msg = crate::i18n::trf("selector.path_resolution_failed_body", &[("device", &*(vol_inner.name().to_string()).to_string()), ("uri", &*(root.uri().to_string()).to_string())]);
-                                      show_error(&dd_inner, &*crate::i18n::tr("selector.path_resolution_failed_title"), &msg);
-                                  }
-                             } else {
-                                 let msg = crate::i18n::trf("selector.mount_details_unavailable_body", &[("device", &*(vol_inner.name().to_string()).to_string())]);
-                                 show_error(&dd_inner, &*crate::i18n::tr("selector.mount_details_unavailable_title"), &msg);
-                             }
+                                if let Some(path) = path_opt {
+                                    let path_str = path.to_string_lossy().to_string();
+                                    router_inner.open_local_path(path_str);
+                                    stack_inner.set_visible_child_name("filemanager");
+                                } else {
+                                    let msg = crate::i18n::trf(
+                                        "selector.path_resolution_failed_body",
+                                        &[
+                                            (
+                                                "device",
+                                                &*(vol_inner.name().to_string()).to_string(),
+                                            ),
+                                            ("uri", &*(root.uri().to_string()).to_string()),
+                                        ],
+                                    );
+                                    show_error(
+                                        &dd_inner,
+                                        &*crate::i18n::tr("selector.path_resolution_failed_title"),
+                                        &msg,
+                                    );
+                                }
+                            } else {
+                                let msg = crate::i18n::trf(
+                                    "selector.mount_details_unavailable_body",
+                                    &[("device", &*(vol_inner.name().to_string()).to_string())],
+                                );
+                                show_error(
+                                    &dd_inner,
+                                    &*crate::i18n::tr("selector.mount_details_unavailable_title"),
+                                    &msg,
+                                );
+                            }
                         }
                     });
                 }
@@ -412,7 +455,10 @@ pub fn create_drives_toolbar(
         let nav_hook = nav_hook.clone();
         move |st| {
             sync();
-            let on_selector = st.visible_child_name().map(|n| n == "selector").unwrap_or(false);
+            let on_selector = st
+                .visible_child_name()
+                .map(|n| n == "selector")
+                .unwrap_or(false);
             if on_selector {
                 if let Some(f) = nav_hook.borrow().as_ref() {
                     f();
@@ -425,10 +471,7 @@ pub fn create_drives_toolbar(
 }
 
 fn show_error(parent: &impl IsA<gtk::Widget>, title: &str, msg: &str) {
-    let dialog = adw::AlertDialog::builder()
-        .heading(title)
-        .body(msg)
-        .build();
+    let dialog = adw::AlertDialog::builder().heading(title).body(msg).build();
     dialog.add_response("ok", &*crate::i18n::tr("common.ok"));
     dialog.present(Some(parent));
 }

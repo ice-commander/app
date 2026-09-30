@@ -68,7 +68,10 @@ pub(crate) async fn query_file_metadata(
     if let Some(p) = provider {
         let (parent, filename) = split_parent_child(&path);
         match p.list_dir(parent).await {
-            Ok(entries) => entries.into_iter().find(|e| e.name == filename).map(|e| (e.size, e.modified)),
+            Ok(entries) => entries
+                .into_iter()
+                .find(|e| e.name == filename)
+                .map(|e| (e.size, e.modified)),
             Err(_) => None,
         }
     } else {

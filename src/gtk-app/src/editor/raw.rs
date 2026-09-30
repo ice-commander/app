@@ -9,25 +9,31 @@ pub(super) fn extract_raw_thumbnail_from_bytes(data: &[u8]) -> Option<Vec<u8>> {
 
     for field in &fields {
         let tag_num = field.tag.number();
-        if tag_num == 0x0201 { // JPEGInterchangeFormat
+        if tag_num == 0x0201 {
+            // JPEGInterchangeFormat
             if let Some(offset) = field.value.get_uint(0) {
-                let length = fields.iter()
+                let length = fields
+                    .iter()
                     .find(|f| f.tag.number() == 0x0202 && f.ifd_num == field.ifd_num)
                     .and_then(|f| f.value.get_uint(0));
                 candidates.push((offset, length));
             }
         }
-        if tag_num == 0x0111 { // StripOffsets
+        if tag_num == 0x0111 {
+            // StripOffsets
             if let Some(offset) = field.value.get_uint(0) {
-                let length = fields.iter()
+                let length = fields
+                    .iter()
                     .find(|f| f.tag.number() == 0x0117 && f.ifd_num == field.ifd_num)
                     .and_then(|f| f.value.get_uint(0));
                 candidates.push((offset, length));
             }
         }
-        if tag_num == 0x0144 { // TileOffsets
+        if tag_num == 0x0144 {
+            // TileOffsets
             if let Some(offset) = field.value.get_uint(0) {
-                let length = fields.iter()
+                let length = fields
+                    .iter()
                     .find(|f| f.tag.number() == 0x0145 && f.ifd_num == field.ifd_num)
                     .and_then(|f| f.value.get_uint(0));
                 candidates.push((offset, length));

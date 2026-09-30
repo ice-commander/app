@@ -8,7 +8,11 @@ publish = false
 [dependencies]
 common = { workspace = true }
 async-trait = "0.1"
+ic-plugin-api = { workspace = true }
 uuid = { version = "1.7", features = ["v4", "fast-rng"] }
+tokio = { version = "1.36", features = ["rt", "sync"] }
+ic-platform = { workspace = true }
 
 [dev-dependencies]
 futures = "0.3"
+tokio = { version = "1.36", features = ["rt", "macros"] }

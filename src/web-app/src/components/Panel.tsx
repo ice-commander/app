@@ -97,7 +97,8 @@ interface PanelProps {
   favoritesOnly: boolean
   onSetFavoritesOnly: (value: boolean) => void
   /** Persist a connection from the panel's form; `connect` = also mount it here. */
-  onSaveConnection: (conn: Connection, connect: boolean) => void
+  /** A record was stored; refresh the list (and this panel when it connected). */
+  onConnectionSaved: (name: string, connected: boolean) => void
   onDeleteConnection: (name: string) => void
   onOpenFile: (path: string) => void
   terminalOpen: boolean
@@ -109,7 +110,7 @@ interface PanelProps {
 
 const isLocal = (d: Drive) => d.kind === 'root' || d.kind === 'home' || d.kind === 'drive'
 
-export function Panel({ side, active, drives, connections, onActivate, onNewFolder, onRename, onDelete, onToggleFavorite, favoritesOnly, onSetFavoritesOnly, onSaveConnection, onDeleteConnection, onOpenFile, terminalOpen, terminalExpanded, onToggleTerminalExpand, onCloseTerminal, ref }: PanelProps) {
+export function Panel({ side, active, drives, connections, onActivate, onNewFolder, onRename, onDelete, onToggleFavorite, favoritesOnly, onSetFavoritesOnly, onConnectionSaved, onDeleteConnection, onOpenFile, terminalOpen, terminalExpanded, onToggleTerminalExpand, onCloseTerminal, ref }: PanelProps) {
   const [data, dispatch] = useReducer(reducer, {
     levels: [],
     path: '/',
@@ -490,7 +491,8 @@ export function Panel({ side, active, drives, connections, onActivate, onNewFold
             onActivate={(key) => fire(() => api.activateSource(side, key))}
             onToggleFavorite={onToggleFavorite}
             onSetFavoritesOnly={onSetFavoritesOnly}
-            onSaveConnection={onSaveConnection}
+            side={side}
+            onConnectionSaved={onConnectionSaved}
             onDeleteConnection={onDeleteConnection}
           />
         ) : (

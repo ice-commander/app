@@ -1,4 +1,3 @@
-
 mod content;
 mod encoding;
 mod hex_view;
@@ -12,16 +11,19 @@ use std::cell::Cell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-
 pub enum Needs {
     Bytes,
     LocalPath,
+    /// The filesystem the file lives on, for a plugin that reads what it wants
+    /// itself rather than being handed the whole of it.
+    Source,
     Nothing,
 }
 
 pub enum Payload {
     Bytes(Vec<u8>),
     LocalPath(LocalCopy),
+    Source(fm_core::host_fs::Staged),
     Nothing,
 }
 
@@ -32,7 +34,10 @@ pub struct LocalCopy {
 
 impl LocalCopy {
     pub fn borrowed(path: PathBuf) -> Self {
-        Self { path, temporary: false }
+        Self {
+            path,
+            temporary: false,
+        }
     }
 }
 
@@ -57,6 +62,9 @@ pub struct HostServices {
     pub on_saved: Rc<dyn Fn()>,
     pub observer: Option<Rc<dyn ViewerObserver>>,
     pub raw_thumbnail: Option<Rc<dyn Fn(&[u8]) -> Option<Vec<u8>>>>,
+    /// A question, not a key name: this crate sits below the settings, which spell a key as
+    /// the user's keyboard reports it.
+    pub fullscreen_key: Rc<dyn Fn(gtk::gdk::Key, gtk::gdk::ModifierType) -> bool>,
 }
 
 impl Default for HostServices {
@@ -68,6 +76,7 @@ impl Default for HostServices {
             on_saved: Rc::new(|| {}),
             observer: None,
             raw_thumbnail: None,
+            fullscreen_key: Rc::new(|key, _| key == gtk::gdk::Key::F11),
         }
     }
 }
@@ -151,7 +160,9 @@ impl ViewerPlugin for NewFilePlugin {
 
 pub fn read_blocking(path: &str) -> bool {
     const MAX: u64 = 8 * 1024 * 1024;
-    std::fs::metadata(path).map(|m| m.len() <= MAX).unwrap_or(false)
+    std::fs::metadata(path)
+        .map(|m| m.len() <= MAX)
+        .unwrap_or(false)
 }
 
 pub async fn local_copy(
@@ -170,7 +181,10 @@ pub async fn local_copy(
 
     let path = temp_path(display_path);
     std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
-    Ok(LocalCopy { path, temporary: true })
+    Ok(LocalCopy {
+        path,
+        temporary: true,
+    })
 }
 
 fn temp_path(display_path: &str) -> PathBuf {
@@ -198,12 +212,22 @@ struct Host {
     cancelled: Rc<Cell<bool>>,
 }
 
+/// Fills the screen with a viewer window, or gives it back.
+fn full_screen(window: &gtk::Window, wanted: bool) {
+    if wanted {
+        window.fullscreen();
+    } else {
+        window.unfullscreen();
+    }
+}
+
 impl Host {
     fn build_window(
         parent: &impl IsA<gtk::Window>,
         title: &str,
         size: (i32, i32),
         observer: Option<Rc<dyn ViewerObserver>>,
+        fullscreen_key: Rc<dyn Fn(gtk::gdk::Key, gtk::gdk::ModifierType) -> bool>,
     ) -> Self {
         let window = gtk::Window::builder()
             .default_width(size.0)
@@ -224,7 +248,10 @@ impl Host {
             .halign(gtk::Align::Center)
             .spacing(12)
             .build();
-        let spinner = gtk::Spinner::builder().width_request(40).height_request(40).build();
+        let spinner = gtk::Spinner::builder()
+            .width_request(40)
+            .height_request(40)
+            .build();
         spinner.start();
         let status = gtk::Label::new(Some(&i18n::tr("editor.loading_file")));
         let cancel = gtk::Button::with_label(&i18n::tr("editor.cancel"));
@@ -257,13 +284,22 @@ impl Host {
         let cancelled = Rc::new(Cell::new(false));
         let key_controller = gtk::EventControllerKey::new();
         let win_key = window.clone();
-        key_controller.connect_key_pressed(move |_, keyval, _, _| {
-            if keyval == gtk::gdk::Key::Escape {
-                win_key.close();
-                gtk::glib::Propagation::Stop
-            } else {
-                gtk::glib::Propagation::Proceed
+        key_controller.connect_key_pressed(move |_, keyval, _, state| {
+            // F11 as well as the key from Settings, because the rest of the desktop uses it.
+            if keyval == gtk::gdk::Key::F11 || fullscreen_key(keyval, state) {
+                full_screen(&win_key, !win_key.is_fullscreen());
+                return gtk::glib::Propagation::Stop;
             }
+            // Escape leaves full screen first and closes only when there is none to leave.
+            if keyval == gtk::gdk::Key::Escape {
+                if win_key.is_fullscreen() {
+                    full_screen(&win_key, false);
+                } else {
+                    win_key.close();
+                }
+                return gtk::glib::Propagation::Stop;
+            }
+            gtk::glib::Propagation::Proceed
         });
         window.add_controller(key_controller);
 
@@ -278,7 +314,13 @@ impl Host {
             }
         });
 
-        Self { window, stack, error_label, status, cancelled }
+        Self {
+            window,
+            stack,
+            error_label,
+            status,
+            cancelled,
+        }
     }
 
     fn fail(&self, message: String) {
@@ -297,7 +339,13 @@ pub fn open(
     start_in_edit_mode: bool,
 ) {
     style::ensure_loaded();
-    let host = Host::build_window(parent, &name, plugin.window_size(), services.observer.clone());
+    let host = Host::build_window(
+        parent,
+        &name,
+        plugin.window_size(),
+        services.observer.clone(),
+        services.fullscreen_key.clone(),
+    );
     plugin.configure_window(&host.window);
     host.window.present();
 
@@ -329,6 +377,18 @@ pub fn open(
                     }
                 }
             }
+            Needs::Source => match fm_core::host_fs::stage(&provider, &path).await {
+                Ok(staged) => Payload::Source(staged),
+                Err(e) => {
+                    if !host.cancelled.get() {
+                        host.fail(i18n::trf(
+                            "editor.failed_read",
+                            &[("error", &e.to_string())],
+                        ));
+                    }
+                    return;
+                }
+            },
             Needs::LocalPath => {
                 let status = host.status.clone();
                 match local_copy(&provider, &path, move |done| {

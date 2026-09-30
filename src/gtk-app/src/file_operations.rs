@@ -1,19 +1,16 @@
 use adw::prelude::*;
 
+use fm_core::rpc::FileSystemRpc;
+use gtk::glib;
 use transfer_core::{
     execute_transfer, execute_transfer_offthread, format_size, mode_of, scan_items, CopyMessage,
     ErrorAction, ErrorRequest, TransferItem,
 };
-use gtk::glib;
-use fm_core::rpc::FileSystemRpc;
 
 use common::AppError;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-
-
-
 
 pub struct TransferSource {
     pub items: Vec<(String, bool, u64, Option<u32>)>,
@@ -42,7 +39,13 @@ pub fn trigger_copy(
     active_fm: &Rc<panel_router::PanelRouter>,
     inactive_fm: &Rc<panel_router::PanelRouter>,
 ) {
-    show_transfer_dialog(window, TransferSource::from_panel(active_fm), inactive_fm, false, None);
+    show_transfer_dialog(
+        window,
+        TransferSource::from_panel(active_fm),
+        inactive_fm,
+        false,
+        None,
+    );
 }
 
 pub fn trigger_move(
@@ -50,7 +53,13 @@ pub fn trigger_move(
     active_fm: &Rc<panel_router::PanelRouter>,
     inactive_fm: &Rc<panel_router::PanelRouter>,
 ) {
-    show_transfer_dialog(window, TransferSource::from_panel(active_fm), inactive_fm, true, None);
+    show_transfer_dialog(
+        window,
+        TransferSource::from_panel(active_fm),
+        inactive_fm,
+        true,
+        None,
+    );
 }
 
 fn show_error_dialog(window: &adw::ApplicationWindow, title: &str, message: &str) {
@@ -65,12 +74,20 @@ fn show_error_dialog(window: &adw::ApplicationWindow, title: &str, message: &str
     dialog.present(Some(window));
 }
 
-
-fn get_selected_items_info(fm: &Rc<panel_router::PanelRouter>) -> Vec<(String, bool, u64, Option<u32>)> {
+fn get_selected_items_info(
+    fm: &Rc<panel_router::PanelRouter>,
+) -> Vec<(String, bool, u64, Option<u32>)> {
     fm.selected_entries()
         .into_iter()
         .filter(|entry| entry.name() != "..")
-        .map(|entry| (entry.name(), entry.is_dir(), entry.size(), entry.permissions()))
+        .map(|entry| {
+            (
+                entry.name(),
+                entry.is_dir(),
+                entry.size(),
+                entry.permissions(),
+            )
+        })
         .collect()
 }
 
@@ -202,7 +219,14 @@ pub fn show_transfer_dialog(
         .build();
 
     dialog.add_response("cancel", &*crate::i18n::tr("fm.cancel"));
-    dialog.add_response(action_name, &*crate::i18n::tr(if is_move { "fm.action_move" } else { "fm.action_copy" }));
+    dialog.add_response(
+        action_name,
+        &*crate::i18n::tr(if is_move {
+            "fm.action_move"
+        } else {
+            "fm.action_copy"
+        }),
+    );
     dialog.set_default_response(Some(action_name));
     dialog.set_response_appearance(action_name, adw::ResponseAppearance::Suggested);
     dialog.set_response_enabled(action_name, false);
@@ -228,7 +252,14 @@ pub fn show_transfer_dialog(
         src_parent.clone(),
         move |files, dirs, bytes| {
             let size_str = format_size(bytes);
-            scan_label_c.set_text(&crate::i18n::trf("fm.scale_status", &[("files", &*(files.to_string()).to_string()), ("dirs", &*(dirs.to_string()).to_string()), ("size", &*(size_str).to_string())]));
+            scan_label_c.set_text(&crate::i18n::trf(
+                "fm.scale_status",
+                &[
+                    ("files", &*(files.to_string()).to_string()),
+                    ("dirs", &*(dirs.to_string()).to_string()),
+                    ("size", &*(size_str).to_string()),
+                ],
+            ));
         },
         cancellation_flag_c.clone(),
     );
@@ -243,7 +274,7 @@ pub fn show_transfer_dialog(
                     Ok(scanned_items) => {
                         spinner_c.stop();
                         spinner_c.set_visible(false);
-                        
+
                         let mut files = 0;
                         let mut dirs = 0;
                         let mut bytes = 0;
@@ -316,10 +347,11 @@ async fn resolve_conflicts(
     dest_parent: &str,
     items: Vec<TransferItem>,
 ) -> Option<Vec<TransferItem>> {
-    let existing: std::collections::HashSet<String> = match dest_provider.list_dir(dest_parent.to_string()).await {
-        Ok(entries) => entries.into_iter().map(|e| e.name).collect(),
-        Err(_) => return Some(items),
-    };
+    let existing: std::collections::HashSet<String> =
+        match dest_provider.list_dir(dest_parent.to_string()).await {
+            Ok(entries) => entries.into_iter().map(|e| e.name).collect(),
+            Err(_) => return Some(items),
+        };
 
     let top_level = |rel: &str| rel.split('/').next().unwrap_or(rel).to_string();
 
@@ -378,7 +410,9 @@ async fn ask_overwrite_each(
 ) -> OverwriteDecision {
     let dialog = adw::AlertDialog::builder()
         .heading("File exists")
-        .body(&format!("\"{name}\" already exists at the destination.\nOverwrite it?"))
+        .body(&format!(
+            "\"{name}\" already exists at the destination.\nOverwrite it?"
+        ))
         .build();
     dialog.add_response("cancel", "Cancel");
     dialog.add_response("skip", "Skip");
@@ -422,13 +456,29 @@ fn run_transfer_with_progress(
     let window = window.clone();
 
     gtk::glib::spawn_future_local(async move {
-        let remaining_items = match resolve_conflicts(&window, &dest_provider, &dest_parent, remaining_items).await {
-            Some(items) => items,
-            None => {
-                on_finish();
-                return;
-            }
-        };
+        // A destination a plugin claims is that file's inside, made if absent: packing.
+        let (dest_provider, dest_parent) =
+            match fm_core::plugin_fs::destination_inside(&dest_provider, &dest_parent).await {
+                Some(Ok(inside)) => (inside, "/".to_string()),
+                Some(Err(why)) => {
+                    show_error_dialog(
+                        &window,
+                        &crate::i18n::tr("fm.transfer_error"),
+                        &why.to_string(),
+                    );
+                    on_finish();
+                    return;
+                }
+                None => (dest_provider, dest_parent),
+            };
+        let remaining_items =
+            match resolve_conflicts(&window, &dest_provider, &dest_parent, remaining_items).await {
+                Some(items) => items,
+                None => {
+                    on_finish();
+                    return;
+                }
+            };
         if remaining_items.is_empty() {
             on_finish();
             return;
@@ -440,9 +490,7 @@ fn run_transfer_with_progress(
             crate::i18n::tr("fm.copying_files")
         };
 
-        let progress_dialog = adw::AlertDialog::builder()
-            .heading(action_title)
-            .build();
+        let progress_dialog = adw::AlertDialog::builder().heading(action_title).build();
 
         let progress_box = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
@@ -530,7 +578,10 @@ fn run_transfer_with_progress(
                                 current_file_size = size;
                                 current_file_copied = 0;
                             }
-                            CopyMessage::Progress { file_bytes, total_bytes_copied } => {
+                            CopyMessage::Progress {
+                                file_bytes,
+                                total_bytes_copied,
+                            } => {
                                 current_file_copied = file_bytes;
                                 overall_copied_bytes = total_bytes_copied;
                             }
@@ -553,25 +604,44 @@ fn run_transfer_with_progress(
 
             if state_changed && !disconnected {
                 api_op.update(&current_file_name, overall_copied_bytes, files_copied);
-                current_file_label_c.set_text(&crate::i18n::trf("fm.transferring_file", &[("file", &*(current_file_name).to_string())]));
+                current_file_label_c.set_text(&crate::i18n::trf(
+                    "fm.transferring_file",
+                    &[("file", &*(current_file_name).to_string())],
+                ));
                 if current_file_size > 0 {
-                    let frac = (current_file_copied as f64 / current_file_size as f64).clamp(0.0, 1.0);
+                    let frac =
+                        (current_file_copied as f64 / current_file_size as f64).clamp(0.0, 1.0);
                     current_file_progress_c.set_fraction(frac);
                 } else {
                     current_file_progress_c.set_fraction(1.0);
                 }
 
                 if total_bytes > 0 {
-                    let overall_frac = (overall_copied_bytes as f64 / total_bytes as f64).clamp(0.0, 1.0);
+                    let overall_frac =
+                        (overall_copied_bytes as f64 / total_bytes as f64).clamp(0.0, 1.0);
                     overall_progress_c.set_fraction(overall_frac);
 
                     let copied_size_str = format_size(overall_copied_bytes);
                     let total_size_str = format_size(total_bytes);
 
-                    overall_label_c.set_text(&crate::i18n::trf("fm.overall_progress_stats", &[("copied_size", &*(copied_size_str).to_string()), ("total_size", &*(total_size_str).to_string()), ("files_copied", &*(files_copied.to_string()).to_string()), ("total_files", &*(total_files.to_string()).to_string())]));
+                    overall_label_c.set_text(&crate::i18n::trf(
+                        "fm.overall_progress_stats",
+                        &[
+                            ("copied_size", &*(copied_size_str).to_string()),
+                            ("total_size", &*(total_size_str).to_string()),
+                            ("files_copied", &*(files_copied.to_string()).to_string()),
+                            ("total_files", &*(total_files.to_string()).to_string()),
+                        ],
+                    ));
                 } else {
                     overall_progress_c.set_fraction(1.0);
-                    overall_label_c.set_text(&crate::i18n::trf("fm.overall_progress_files", &[("files_copied", &*(files_copied.to_string()).to_string()), ("total_files", &*(total_files.to_string()).to_string())]));
+                    overall_label_c.set_text(&crate::i18n::trf(
+                        "fm.overall_progress_files",
+                        &[
+                            ("files_copied", &*(files_copied.to_string()).to_string()),
+                            ("total_files", &*(total_files.to_string()).to_string()),
+                        ],
+                    ));
                 }
                 state_changed = false;
             }
@@ -649,7 +719,11 @@ fn run_transfer_with_progress(
 
         if let Err(e) = &res {
             if *e != AppError::Cancelled {
-                show_error_dialog(&window, &crate::i18n::tr("fm.transfer_error"), &e.to_string());
+                show_error_dialog(
+                    &window,
+                    &crate::i18n::tr("fm.transfer_error"),
+                    &e.to_string(),
+                );
             }
         }
         on_finish();
@@ -698,8 +772,12 @@ fn show_progress_dialog(
         }
 
         if failed_top_levels.is_empty() {
-            if let Some(r) = &source.refresh { r.refresh_spawned(); }
-            if let Some(f) = &source.on_done { f(); }
+            if let Some(r) = &source.refresh {
+                r.refresh_spawned();
+            }
+            if let Some(f) = &source.on_done {
+                f();
+            }
             inactive_fm.refresh_spawned();
             return;
         } else {
@@ -713,8 +791,12 @@ fn show_progress_dialog(
     }
 
     if remaining_items.is_empty() {
-        if let Some(r) = &source.refresh { r.refresh_spawned(); }
-        if let Some(f) = &source.on_done { f(); }
+        if let Some(r) = &source.refresh {
+            r.refresh_spawned();
+        }
+        if let Some(f) = &source.on_done {
+            f();
+        }
         inactive_fm.refresh_spawned();
         return;
     }
@@ -729,8 +811,12 @@ fn show_progress_dialog(
         dest_parent,
         is_move,
         move || {
-            if let Some(r) = &source_r.refresh { r.refresh_spawned(); }
-            if let Some(f) = &source_r.on_done { f(); }
+            if let Some(r) = &source_r.refresh {
+                r.refresh_spawned();
+            }
+            if let Some(f) = &source_r.on_done {
+                f();
+            }
             inactive_fm_c.refresh_spawned();
         },
     );
@@ -754,7 +840,11 @@ fn show_external_drop_transfer_dialog(
     let selected_items: Vec<(String, bool, u64, Option<u32>)> = src_paths
         .iter()
         .map(|path| {
-            let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+            let name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
             let meta = std::fs::metadata(path).ok();
             let is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
             let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
@@ -890,7 +980,9 @@ fn show_external_drop_transfer_dialog(
     let spinner_c = spinner.clone();
     let dialog_c = dialog.clone();
 
-    let src_provider = std::rc::Rc::new(virtualfs::local_rpc::LocalFileSystemRpc::new(dest_fm.config()));
+    let src_provider = std::rc::Rc::new(localfs::local_rpc::LocalFileSystemRpc::new(
+        dest_fm.config(),
+    ));
 
     let scan_future = scan_items(
         src_provider,
@@ -898,7 +990,14 @@ fn show_external_drop_transfer_dialog(
         src_parent.clone(),
         move |files, dirs, bytes| {
             let size_str = format_size(bytes);
-            scan_label_c.set_text(&crate::i18n::trf("fm.scale_status", &[("files", &*(files.to_string()).to_string()), ("dirs", &*(dirs.to_string()).to_string()), ("size", &*(size_str).to_string())]));
+            scan_label_c.set_text(&crate::i18n::trf(
+                "fm.scale_status",
+                &[
+                    ("files", &*(files.to_string()).to_string()),
+                    ("dirs", &*(dirs.to_string()).to_string()),
+                    ("size", &*(size_str).to_string()),
+                ],
+            ));
         },
         cancellation_flag_c.clone(),
     );
@@ -913,7 +1012,7 @@ fn show_external_drop_transfer_dialog(
                     Ok(scanned_items) => {
                         spinner_c.stop();
                         spinner_c.set_visible(false);
-                        
+
                         let mut files = 0;
                         let mut dirs = 0;
                         let mut bytes = 0;
@@ -980,7 +1079,9 @@ fn show_external_drop_progress_dialog(
     dest_parent: String,
     _selected_items_info: Vec<(String, bool, u64, Option<u32>)>,
 ) {
-    let src_provider = std::rc::Rc::new(virtualfs::local_rpc::LocalFileSystemRpc::new(dest_fm.config()));
+    let src_provider = std::rc::Rc::new(localfs::local_rpc::LocalFileSystemRpc::new(
+        dest_fm.config(),
+    ));
     let dest_provider = dest_fm.provider();
 
     let remaining_items = items;

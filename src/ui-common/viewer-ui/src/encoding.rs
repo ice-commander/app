@@ -125,8 +125,8 @@ pub(super) fn decode_windows_1251(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::Format;
+    use super::*;
 
     #[test]
     fn hex_dump_empty_bytes_returns_empty_string() {
@@ -155,10 +155,6 @@ mod tests {
         assert_eq!(pipe_section.chars().next().unwrap(), '.');
     }
 
-
-
-
-
     #[test]
     fn windows_1251_ascii_passthrough() {
         assert_eq!(decode_windows_1251(b"Hello, world!"), "Hello, world!");
@@ -173,7 +169,11 @@ mod tests {
     fn windows_1251_decodes_full_cyrillic_range() {
         let bytes: Vec<u8> = (0xC0..=0xFF).collect();
         let s = decode_windows_1251(&bytes);
-        assert!(s.starts_with('А'), "should start with А, got: {}", &s[..s.char_indices().nth(1).map(|(i,_)|i).unwrap_or(s.len())]);
+        assert!(
+            s.starts_with('А'),
+            "should start with А, got: {}",
+            &s[..s.char_indices().nth(1).map(|(i, _)| i).unwrap_or(s.len())]
+        );
         assert!(s.ends_with('я'));
     }
 

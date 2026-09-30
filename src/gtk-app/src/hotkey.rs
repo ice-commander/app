@@ -67,7 +67,7 @@ pub fn get_default_hotkeys() -> Vec<HotKey> {
         },
         HotKey {
             id: "manage_connections".to_string(),
-            description: "Manage FTP/SFTP/WebDAV connections".to_string(),
+            description: "Manage connections".to_string(),
             keys: "Ctrl+N".to_string(),
         },
         HotKey {
@@ -115,9 +115,7 @@ fn conflict_in(hotkeys: &[HotKey], id: &str, keys: &str) -> Option<String> {
     hotkeys
         .iter()
         .find(|h| {
-            h.id != id
-                && !shares_combo_by_design(&h.id, id)
-                && h.keys.eq_ignore_ascii_case(keys)
+            h.id != id && !shares_combo_by_design(&h.id, id) && h.keys.eq_ignore_ascii_case(keys)
         })
         .map(|h| h.id.clone())
 }
@@ -164,6 +162,21 @@ pub fn get_hotkeys(config: &client_config::AppConfig) -> Vec<HotKey> {
 pub fn save_hotkeys(config: &client_config::AppConfig, hotkeys: &[HotKey]) {
     config.set("ui.hotkeys", hotkeys);
     config.save();
+}
+
+/// Asked by action name, not "what does this key do": two actions may share a combination
+/// on purpose — see `shares_combo_by_design`.
+pub fn is_bound_to(
+    config: &client_config::AppConfig,
+    id: &str,
+    keyval: gtk::gdk::Key,
+    state: gtk::gdk::ModifierType,
+) -> bool {
+    let pressed = keyval_to_string(keyval, state);
+    !pressed.is_empty()
+        && get_hotkeys(config)
+            .iter()
+            .any(|hotkey| hotkey.id == id && hotkey.keys.eq_ignore_ascii_case(&pressed))
 }
 
 pub fn keyval_to_string(keyval: gtk::gdk::Key, state: gtk::gdk::ModifierType) -> String {
@@ -266,7 +279,10 @@ mod tests {
     #[test]
     fn default_hotkeys_contains_refresh() {
         let hotkeys = get_default_hotkeys();
-        assert!(hotkeys.iter().any(|h| h.id == "refresh"), "missing 'refresh' hotkey");
+        assert!(
+            hotkeys.iter().any(|h| h.id == "refresh"),
+            "missing 'refresh' hotkey"
+        );
     }
 
     #[test]
@@ -287,8 +303,15 @@ mod tests {
 
     #[test]
     fn default_hotkeys_contains_the_clipboard_actions() {
-        let ids: Vec<_> = get_default_hotkeys().into_iter().map(|h| (h.id, h.keys)).collect();
-        for (id, keys) in [("clip_cut", "Ctrl+X"), ("clip_copy", "Ctrl+C"), ("clip_paste", "Ctrl+V")] {
+        let ids: Vec<_> = get_default_hotkeys()
+            .into_iter()
+            .map(|h| (h.id, h.keys))
+            .collect();
+        for (id, keys) in [
+            ("clip_cut", "Ctrl+X"),
+            ("clip_copy", "Ctrl+C"),
+            ("clip_paste", "Ctrl+V"),
+        ] {
             assert!(
                 ids.iter().any(|(i, k)| i == id && k == keys),
                 "missing default '{id}' bound to {keys}"
@@ -299,7 +322,10 @@ mod tests {
     #[test]
     fn clipboard_defaults_do_not_collide_with_other_defaults() {
         let hotkeys = get_default_hotkeys();
-        let clip: Vec<_> = hotkeys.iter().filter(|h| h.id.starts_with("clip_")).collect();
+        let clip: Vec<_> = hotkeys
+            .iter()
+            .filter(|h| h.id.starts_with("clip_"))
+            .collect();
         assert_eq!(clip.len(), 3);
         for c in &clip {
             for other in hotkeys.iter().filter(|h| !h.id.starts_with("clip_")) {
@@ -335,19 +361,24 @@ mod tests {
         ];
         let ids: Vec<String> = get_default_hotkeys().into_iter().map(|h| h.id).collect();
         for (lang, raw) in locales {
-            let map: std::collections::HashMap<String, String> =
-                serde_json::from_str(raw).unwrap_or_else(|e| panic!("{lang}.json is not valid: {e}"));
+            let map: std::collections::HashMap<String, String> = serde_json::from_str(raw)
+                .unwrap_or_else(|e| panic!("{lang}.json is not valid: {e}"));
             let keys: Vec<String> = ids
                 .iter()
                 .map(|id| format!("hotkey.{id}"))
                 .chain(["settings.hotkey_conflict".to_string()])
                 .collect();
             for key in keys {
-                let text = map.get(&key).unwrap_or_else(|| panic!("{lang}.json is missing {key}"));
+                let text = map
+                    .get(&key)
+                    .unwrap_or_else(|| panic!("{lang}.json is missing {key}"));
                 assert!(!text.trim().is_empty(), "{lang}.json has an empty {key}");
                 if key == "settings.hotkey_conflict" {
                     for ph in ["%{key}", "%{action}"] {
-                        assert!(text.contains(ph), "{lang}.json {key} lost the {ph} placeholder");
+                        assert!(
+                            text.contains(ph),
+                            "{lang}.json {key} lost the {ph} placeholder"
+                        );
                     }
                 }
             }
@@ -355,7 +386,11 @@ mod tests {
     }
 
     fn hk(id: &str, keys: &str) -> HotKey {
-        HotKey { id: id.to_string(), description: String::new(), keys: keys.to_string() }
+        HotKey {
+            id: id.to_string(),
+            description: String::new(),
+            keys: keys.to_string(),
+        }
     }
 
     #[test]
@@ -412,19 +447,31 @@ mod tests {
         let defaults = get_default_hotkeys();
         for id in ["clip_cut", "clip_copy", "clip_paste"] {
             let keys = defaults.iter().find(|h| h.id == id).unwrap().keys.clone();
-            assert_eq!(conflict_in(&defaults, id, &keys), None, "{id} ships shadowed");
+            assert_eq!(
+                conflict_in(&defaults, id, &keys),
+                None,
+                "{id} ships shadowed"
+            );
         }
     }
 
     #[test]
     fn hotkey_equality_works() {
-        let a = HotKey { id: "x".to_string(), description: "d".to_string(), keys: "Ctrl+X".to_string() };
+        let a = HotKey {
+            id: "x".to_string(),
+            description: "d".to_string(),
+            keys: "Ctrl+X".to_string(),
+        };
         let b = a.clone();
         assert_eq!(a, b);
     }
 }
 
-pub fn resolve_action(config: &client_config::AppConfig, keyval: gtk::gdk::Key, state: gtk::gdk::ModifierType) -> Option<String> {
+pub fn resolve_action(
+    config: &client_config::AppConfig,
+    keyval: gtk::gdk::Key,
+    state: gtk::gdk::ModifierType,
+) -> Option<String> {
     let pressed_str = keyval_to_string(keyval, state);
     if pressed_str.is_empty() {
         return None;

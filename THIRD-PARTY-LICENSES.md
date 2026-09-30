@@ -18,33 +18,42 @@ they are not covered by the generated section — this list is maintained by han
 | Library | License | Where | Linking |
 | --- | --- | --- | --- |
 | GTK 4, libadwaita, GLib, Pango, Cairo, gdk-pixbuf, librsvg | LGPL-2.1-or-later | all platforms | dynamic |
-| GStreamer (video playback) | LGPL-2.1-or-later | Linux | dynamic |
-| libmpv, FFmpeg (video playback, decode-only) | LGPL-2.1-or-later | Windows, macOS | dynamic |
-| dav1d (AV1 decoder) | BSD-2-Clause | macOS | dynamic |
 | fakelzo (our stand-in for lzo2) | MIT | Windows, macOS | dynamic |
 | fakejbig (our stand-in for libjbig) | MIT | Windows, macOS | dynamic |
 | FreeType | FTL (used under FTL, not the GPL-2.0 alternative) | Windows, macOS | dynamic |
 | PDFium | BSD-3-Clause | all platforms | dynamic |
-| libssh2 | BSD-3-Clause | all platforms | static |
-| OpenSSL 3.x | Apache-2.0 | where system TLS is used | dynamic |
+| libssh2 | BSD-3-Clause | Windows bundle, arriving with curl in the MSYS2 GTK tree | dynamic |
+| OpenSSL 3.x | Apache-2.0 | Windows bundle, same tree | dynamic |
+
+Nothing here links libssh2 or OpenSSL any more: the application speaks TLS through
+`rustls`, and SSH left with the SFTP transport when it became a plugin. Both libraries are
+still in the Windows bundle because the MSYS2 GTK tree brings them.
+
+**Plugins carry their own dependencies and their own licence file.** A plugin is a separate
+library from a separate repository — what it links is listed there, not here.
 
 **LGPL components** are linked dynamically and shipped as separate shared
 libraries, so they may be replaced by the user. Their license texts are
 included in the release packages.
 
-**The media stack is LGPL.** The video viewer
-([`src/gtk-app/src/viewer/video.rs`](src/gtk-app/src/viewer/video.rs)) uses libmpv on
-Windows and macOS, and both bundles ship an LGPL build of it: mpv is configured with
-`-Dgpl=false` and its FFmpeg carries no `--enable-gpl`, so the GPL parts — the x264 and
-x265 encoders, libpostproc, the DVD/CD readers — are simply not built. The viewer only
-ever decodes; the macOS build contains zero encoders and zero muxers. On Linux video
-plays through GStreamer, which is not bundled.
+**Video is not decoded here.** The application plays no video at all; the video plugin
+does, from its own repository (`plugin-video`), through the LGPL libmpv it carries — one and
+the same component on Linux, macOS and Windows. What the plugin links is listed with the
+plugin.
+
+mpv is built with `-Dgpl=false` and its FFmpeg without `--enable-gpl`, so the GPL parts —
+the x264 and x265 encoders, libpostproc, the DVD/CD readers — are not built. The builds are
+`docker-libmpv-multibuild` for Linux and
+[`builder/build_libmpv_ffmpeg_lgpl.sh`](builder/build_libmpv_ffmpeg_lgpl.sh) for macOS;
+Windows uses a prebuilt LGPL `libmpv-2.dll`.
+
+**Sound is the application's own.** Audio plays through the `rodio` crate, listed with the
+rest of the Rust dependencies below. Nothing here uses the toolkit's media stack.
 
 **No GPL code ships in any bundle.** Two GPL libraries used to arrive, neither of them asked
-for. `liblzo2`
-(GPL-2.0-or-later), and it was never something the application asked for — GTK links it
-through the cairo script interpreter (`libgtk-4 → libcairo-script-interpreter → liblzo2`),
-a debugging facility nothing here drives.
+for. The first is `liblzo2` (GPL-2.0-or-later): GTK links it through the cairo script
+interpreter (`libgtk-4 → libcairo-script-interpreter → liblzo2`), a debugging facility
+nothing here drives.
 
 It is replaced on both desktop platforms by [`src/fakelzo/`](src/fakelzo/), our own
 MIT-licensed stand-in exporting the only two symbols the interpreter imports
@@ -91,95 +100,73 @@ product name are the project's own and are not covered by the above.
 
 ## Rust dependencies
 
-- **Apache License 2.0** (`Apache-2.0`) — 329 crates
-- **MIT License** (`MIT`) — 132 crates
+- **Apache License 2.0** (`Apache-2.0`) — 273 crates
+- **MIT License** (`MIT`) — 98 crates
+- **ISC License** (`ISC`) — 21 crates
 - **Unicode License v3** (`Unicode-3.0`) — 19 crates
-- **BSD 3-Clause "New" or "Revised" License** (`BSD-3-Clause`) — 11 crates
+- **BSD 3-Clause "New" or "Revised" License** (`BSD-3-Clause`) — 12 crates
 - **Mozilla Public License 2.0** (`MPL-2.0`) — 9 crates
-- **ISC License** (`ISC`) — 4 crates
-- **BSD 2-Clause "Simplified" License** (`BSD-2-Clause`) — 3 crates
-- **zlib License** (`Zlib`) — 3 crates
-- **GNU Lesser General Public License v2.1 only** (`LGPL-2.1`) — 2 crates
-- **Creative Commons Zero v1.0 Universal** (`CC0-1.0`) — 1 crate
+- **BSD 2-Clause "Simplified" License** (`BSD-2-Clause`) — 5 crates
+- **zlib License** (`Zlib`) — 5 crates
 
 ### Crates
 
 | Crate | Version | License |
 | --- | --- | --- |
-| actix-codec | 0.5.2 | MIT OR Apache-2.0 |
-| actix-http | 3.12.1 | MIT OR Apache-2.0 |
+| actix-codec | 0.5.3 | MIT OR Apache-2.0 |
+| actix-http | 3.13.3 | MIT OR Apache-2.0 |
 | actix-macros | 0.2.4 | MIT OR Apache-2.0 |
 | actix-router | 0.5.4 | MIT OR Apache-2.0 |
-| actix-rt | 2.11.0 | MIT OR Apache-2.0 |
-| actix-server | 2.6.0 | MIT OR Apache-2.0 |
+| actix-rt | 2.13.0 | MIT OR Apache-2.0 |
+| actix-server | 2.9.1 | MIT OR Apache-2.0 |
 | actix-service | 2.0.3 | MIT OR Apache-2.0 |
 | actix-utils | 3.0.1 | MIT OR Apache-2.0 |
-| actix-web | 4.13.0 | MIT OR Apache-2.0 |
+| actix-web | 4.15.0 | MIT OR Apache-2.0 |
 | actix-web-codegen | 4.3.0 | MIT OR Apache-2.0 |
 | actix-ws | 0.3.1 | MIT OR Apache-2.0 |
 | adler2 | 2.0.1 | 0BSD OR MIT OR Apache-2.0 |
 | aead | 0.5.2 | MIT OR Apache-2.0 |
-| aes | 0.8.4 | MIT OR Apache-2.0 |
-| aho-corasick | 1.1.4 | Unlicense OR MIT |
+| aho-corasick | 1.1.5 | Unlicense OR MIT |
 | alloc-no-stdlib | 2.0.4 | BSD-3-Clause |
-| alloc-stdlib | 0.2.2 | BSD-3-Clause |
+| alloc-stdlib | 0.2.4 | BSD-3-Clause |
 | allocator-api2 | 0.2.21 | MIT OR Apache-2.0 |
 | alsa | 0.9.1 | Apache-2.0 OR MIT |
 | alsa-sys | 0.3.1 | MIT |
-| anyhow | 1.0.102 | MIT OR Apache-2.0 |
+| anyhow | 1.0.104 | MIT OR Apache-2.0 |
 | argon2 | 0.5.3 | MIT OR Apache-2.0 |
 | arrayref | 0.3.9 | BSD-2-Clause |
-| arrayvec | 0.7.6 | MIT OR Apache-2.0 |
-| ashpd | 0.11.1 | MIT |
-| async-broadcast | 0.7.2 | MIT OR Apache-2.0 |
-| async-channel | 2.5.0 | Apache-2.0 OR MIT |
-| async-executor | 1.14.0 | Apache-2.0 OR MIT |
-| async-fs | 2.2.0 | Apache-2.0 OR MIT |
-| async-io | 2.6.0 | Apache-2.0 OR MIT |
-| async-lock | 3.4.2 | Apache-2.0 OR MIT |
-| async-net | 2.0.0 | Apache-2.0 OR MIT |
-| async-process | 2.5.0 | Apache-2.0 OR MIT |
-| async-recursion | 1.1.1 | MIT OR Apache-2.0 |
-| async-signal | 0.2.14 | Apache-2.0 OR MIT |
-| async-task | 4.7.1 | Apache-2.0 OR MIT |
-| async-trait | 0.1.89 | MIT OR Apache-2.0 |
-| atomic-waker | 1.1.2 | Apache-2.0 OR MIT |
+| arrayvec | 0.7.8 | MIT OR Apache-2.0 |
+| async-trait | 0.1.92 | MIT OR Apache-2.0 |
 | base64 | 0.21.7 | MIT OR Apache-2.0 |
 | base64 | 0.22.1 | MIT OR Apache-2.0 |
 | base64ct | 1.8.3 | Apache-2.0 OR MIT |
 | bit_field | 0.10.3 | Apache-2.0 OR MIT |
 | bitflags | 1.3.2 | MIT OR Apache-2.0 |
-| bitflags | 2.11.1 | MIT OR Apache-2.0 |
+| bitflags | 2.13.1 | MIT OR Apache-2.0 |
 | blake2 | 0.10.6 | MIT OR Apache-2.0 |
 | block-buffer | 0.10.4 | MIT OR Apache-2.0 |
-| block-buffer | 0.12.0 | MIT OR Apache-2.0 |
-| block2 | 0.6.2 | MIT |
-| blocking | 1.6.2 | Apache-2.0 OR MIT |
-| brotli | 8.0.2 | BSD-3-Clause AND MIT |
-| brotli-decompressor | 5.0.0 | BSD-3-Clause OR MIT |
-| bytemuck | 1.25.0 | Zlib OR Apache-2.0 OR MIT |
+| block-buffer | 0.12.1 | MIT OR Apache-2.0 |
+| brotli | 8.0.4 | BSD-3-Clause AND MIT |
+| brotli-decompressor | 5.0.3 | BSD-3-Clause OR MIT |
+| bytemuck | 1.25.2 | Zlib OR Apache-2.0 OR MIT |
 | byteorder | 1.5.0 | Unlicense OR MIT |
 | byteorder-lite | 0.1.0 | Unlicense OR MIT |
-| bytes | 1.11.1 | MIT |
+| bytes | 1.12.1 | MIT |
 | bytestring | 1.5.1 | MIT OR Apache-2.0 |
-| bzip2 | 0.4.4 | MIT OR Apache-2.0 |
-| bzip2-sys | 0.1.13+1.0.8 | MIT OR Apache-2.0 |
 | cairo-rs | 0.20.12 | MIT |
 | cairo-sys-rs | 0.20.10 | MIT |
 | cassowary | 0.3.0 | MIT  OR  Apache-2.0 |
 | castaway | 0.2.4 | MIT |
 | cfg-if | 1.0.4 | MIT OR Apache-2.0 |
 | chacha20 | 0.9.1 | Apache-2.0 OR MIT |
-| chacha20 | 0.10.0 | MIT OR Apache-2.0 |
+| chacha20 | 0.10.2 | MIT OR Apache-2.0 |
 | chacha20poly1305 | 0.10.1 | Apache-2.0 OR MIT |
-| chrono | 0.4.44 | MIT OR Apache-2.0 |
+| chrono | 0.4.45 | MIT OR Apache-2.0 |
 | cipher | 0.4.4 | MIT OR Apache-2.0 |
 | claxon | 0.4.3 | Apache-2.0 |
 | color_quant | 1.1.0 | MIT |
 | compact_str | 0.8.2 | MIT |
-| concurrent-queue | 2.5.0 | Apache-2.0 OR MIT |
 | const-oid | 0.10.2 | Apache-2.0 OR MIT |
-| constant_time_eq | 0.1.5 | CC0-1.0 |
 | convert_case | 0.10.0 | MIT |
 | cookie | 0.16.2 | MIT OR Apache-2.0 |
 | core-foundation | 0.9.4 | MIT OR Apache-2.0 |
@@ -189,18 +176,18 @@ product name are the project's own and are not covered by the above.
 | coreaudio-sys | 0.2.18 | MIT |
 | cpal | 0.15.3 | Apache-2.0 |
 | cpufeatures | 0.2.17 | MIT OR Apache-2.0 |
-| cpufeatures | 0.3.0 | MIT OR Apache-2.0 |
-| crc32fast | 1.5.0 | MIT OR Apache-2.0 |
-| crossbeam-deque | 0.8.6 | MIT OR Apache-2.0 |
-| crossbeam-epoch | 0.9.18 | MIT OR Apache-2.0 |
-| crossbeam-utils | 0.8.21 | MIT OR Apache-2.0 |
+| cpufeatures | 0.3.1 | MIT OR Apache-2.0 |
+| crc32fast | 1.5.1 | MIT OR Apache-2.0 |
+| crossbeam-deque | 0.8.7 | MIT OR Apache-2.0 |
+| crossbeam-epoch | 0.9.20 | MIT OR Apache-2.0 |
+| crossbeam-utils | 0.8.22 | MIT OR Apache-2.0 |
 | crossterm | 0.28.1 | MIT |
 | crossterm_winapi | 0.9.1 | MIT |
 | crypto-common | 0.1.7 | MIT OR Apache-2.0 |
 | crypto-common | 0.2.2 | MIT OR Apache-2.0 |
-| darling | 0.23.0 | MIT |
-| darling_core | 0.23.0 | MIT |
-| darling_macro | 0.23.0 | MIT |
+| darling | 0.24.1 | MIT |
+| darling_core | 0.24.1 | MIT |
+| darling_macro | 0.24.1 | MIT |
 | dasp_sample | 0.11.0 | MIT OR Apache-2.0 |
 | data-url | 0.3.2 | MIT OR Apache-2.0 |
 | deranged | 0.5.8 | MIT OR Apache-2.0 |
@@ -212,44 +199,35 @@ product name are the project's own and are not covered by the above.
 | dirs | 6.0.0 | MIT OR Apache-2.0 |
 | dirs-sys | 0.4.1 | MIT OR Apache-2.0 |
 | dirs-sys | 0.5.0 | MIT OR Apache-2.0 |
-| dispatch2 | 0.3.1 | Zlib OR Apache-2.0 OR MIT |
-| displaydoc | 0.2.5 | MIT OR Apache-2.0 |
-| dlib | 0.5.3 | MIT |
+| displaydoc | 0.2.7 | MIT OR Apache-2.0 |
 | downcast-rs | 1.2.1 | MIT OR Apache-2.0 |
-| either | 1.16.0 | MIT OR Apache-2.0 |
+| either | 1.18.0 | MIT OR Apache-2.0 |
 | encoding_rs | 0.8.35 | (Apache-2.0 OR MIT) AND BSD-3-Clause |
-| endi | 1.1.1 | MIT |
-| enumflags2 | 0.7.12 | MIT OR Apache-2.0 |
-| enumflags2_derive | 0.7.12 | MIT OR Apache-2.0 |
 | equivalent | 1.0.2 | Apache-2.0 OR MIT |
 | errno | 0.3.14 | MIT OR Apache-2.0 |
-| event-listener | 5.4.1 | Apache-2.0 OR MIT |
-| event-listener-strategy | 0.5.4 | Apache-2.0 OR MIT |
-| exr | 1.74.0 | BSD-3-Clause |
-| fastrand | 2.4.1 | Apache-2.0 OR MIT |
+| exr | 1.74.2 | BSD-3-Clause |
 | fdeflate | 0.3.7 | MIT OR Apache-2.0 |
 | field-offset | 0.3.6 | MIT OR Apache-2.0 |
 | filedescriptor | 0.8.3 | MIT |
-| filetime | 0.2.29 | MIT OR Apache-2.0 |
-| flate2 | 1.1.9 | MIT OR Apache-2.0 |
+| flate2 | 1.1.10 | MIT OR Apache-2.0 |
 | float-cmp | 0.9.0 | MIT |
 | flume | 0.11.1 | Apache-2.0 OR MIT |
 | fnv | 1.0.7 | Apache-2.0  OR  MIT |
 | foldhash | 0.1.5 | Zlib |
+| foldhash | 0.2.0 | Zlib |
 | fontconfig-parser | 0.5.8 | MIT |
 | fontdb | 0.23.0 | MIT |
 | form_urlencoded | 1.2.2 | MIT OR Apache-2.0 |
 | fragile | 2.1.0 | Apache-2.0 |
-| futures | 0.3.32 | MIT OR Apache-2.0 |
-| futures-channel | 0.3.32 | MIT OR Apache-2.0 |
-| futures-core | 0.3.32 | MIT OR Apache-2.0 |
-| futures-executor | 0.3.32 | MIT OR Apache-2.0 |
-| futures-io | 0.3.32 | MIT OR Apache-2.0 |
-| futures-lite | 2.6.1 | Apache-2.0 OR MIT |
-| futures-macro | 0.3.32 | MIT OR Apache-2.0 |
-| futures-sink | 0.3.32 | MIT OR Apache-2.0 |
-| futures-task | 0.3.32 | MIT OR Apache-2.0 |
-| futures-util | 0.3.32 | MIT OR Apache-2.0 |
+| futures | 0.3.34 | MIT OR Apache-2.0 |
+| futures-channel | 0.3.34 | MIT OR Apache-2.0 |
+| futures-core | 0.3.34 | MIT OR Apache-2.0 |
+| futures-executor | 0.3.34 | MIT OR Apache-2.0 |
+| futures-io | 0.3.34 | MIT OR Apache-2.0 |
+| futures-macro | 0.3.34 | MIT OR Apache-2.0 |
+| futures-sink | 0.3.34 | MIT OR Apache-2.0 |
+| futures-task | 0.3.34 | MIT OR Apache-2.0 |
+| futures-util | 0.3.34 | MIT OR Apache-2.0 |
 | gdk-pixbuf | 0.20.10 | MIT |
 | gdk-pixbuf-sys | 0.20.10 | MIT |
 | gdk4 | 0.9.6 | MIT |
@@ -257,26 +235,19 @@ product name are the project's own and are not covered by the above.
 | generic-array | 0.14.7 | MIT |
 | getrandom | 0.2.17 | MIT OR Apache-2.0 |
 | getrandom | 0.3.4 | MIT OR Apache-2.0 |
-| getrandom | 0.4.2 | MIT OR Apache-2.0 |
+| getrandom | 0.4.3 | MIT OR Apache-2.0 |
 | gif | 0.13.3 | MIT OR Apache-2.0 |
 | gif | 0.14.2 | MIT OR Apache-2.0 |
 | gio | 0.20.12 | MIT |
-| gio-sys | 0.19.8 | MIT |
 | gio-sys | 0.20.10 | MIT |
-| glib | 0.19.9 | MIT |
 | glib | 0.20.12 | MIT |
-| glib-macros | 0.19.9 | MIT |
 | glib-macros | 0.20.12 | MIT |
-| glib-sys | 0.19.8 | MIT |
 | glib-sys | 0.20.10 | MIT |
-| gobject-sys | 0.19.8 | MIT |
 | gobject-sys | 0.20.10 | MIT |
 | graphene-rs | 0.20.10 | MIT |
 | graphene-sys | 0.20.10 | MIT |
 | gsk4 | 0.9.6 | MIT |
 | gsk4-sys | 0.9.6 | MIT |
-| gstreamer | 0.22.8 | MIT OR Apache-2.0 |
-| gstreamer-sys | 0.22.6 | MIT |
 | gtk4 | 0.9.7 | MIT |
 | gtk4-macros | 0.9.5 | MIT |
 | gtk4-sys | 0.9.6 | MIT |
@@ -285,7 +256,6 @@ product name are the project's own and are not covered by the above.
 | hashbrown | 0.15.5 | MIT OR Apache-2.0 |
 | hashbrown | 0.17.1 | MIT OR Apache-2.0 |
 | heck | 0.5.0 | MIT OR Apache-2.0 |
-| hex | 0.4.3 | MIT OR Apache-2.0 |
 | hkdf | 0.12.4 | MIT OR Apache-2.0 |
 | hmac | 0.12.1 | MIT OR Apache-2.0 |
 | hostname | 0.4.2 | MIT |
@@ -294,133 +264,106 @@ product name are the project's own and are not covered by the above.
 | http-body | 0.4.6 | MIT |
 | httparse | 1.10.1 | MIT OR Apache-2.0 |
 | httpdate | 1.0.3 | MIT OR Apache-2.0 |
-| hybrid-array | 0.4.12 | MIT OR Apache-2.0 |
+| hybrid-array | 0.4.14 | MIT OR Apache-2.0 |
 | hyper | 0.14.32 | MIT |
 | hyper-rustls | 0.24.2 | Apache-2.0 OR ISC OR MIT |
 | iana-time-zone | 0.1.65 | MIT OR Apache-2.0 |
-| icu_collections | 2.2.0 | Unicode-3.0 |
-| icu_locale_core | 2.2.0 | Unicode-3.0 |
-| icu_normalizer | 2.2.0 | Unicode-3.0 |
-| icu_normalizer_data | 2.2.0 | Unicode-3.0 |
-| icu_properties | 2.2.0 | Unicode-3.0 |
-| icu_properties_data | 2.2.0 | Unicode-3.0 |
-| icu_provider | 2.2.0 | Unicode-3.0 |
+| ic-plugin-api | 0.1.0 | MIT OR Apache-2.0 |
+| icu_collections | 2.3.0 | Unicode-3.0 |
+| icu_locale_core | 2.3.0 | Unicode-3.0 |
+| icu_normalizer | 2.3.0 | Unicode-3.0 |
+| icu_normalizer_data | 2.3.0 | Unicode-3.0 |
+| icu_properties | 2.3.0 | Unicode-3.0 |
+| icu_properties_data | 2.3.0 | Unicode-3.0 |
+| icu_provider | 2.3.1 | Unicode-3.0 |
 | ident_case | 1.0.1 | MIT OR Apache-2.0 |
 | idna | 1.1.0 | MIT OR Apache-2.0 |
 | idna_adapter | 1.2.2 | Apache-2.0 OR MIT |
 | image | 0.24.9 | MIT OR Apache-2.0 |
-| image | 0.25.10 | MIT OR Apache-2.0 |
 | image-webp | 0.2.4 | MIT OR Apache-2.0 |
 | imagesize | 0.14.0 | MIT |
-| impl-more | 0.1.9 | MIT OR Apache-2.0 |
-| indexmap | 2.14.0 | Apache-2.0 OR MIT |
+| impl-more | 0.3.5 | MIT OR Apache-2.0 |
+| indexmap | 2.14.1 | Apache-2.0 OR MIT |
 | indoc | 2.0.7 | MIT OR Apache-2.0 |
 | inout | 0.1.4 | MIT OR Apache-2.0 |
-| instability | 0.3.12 | MIT |
-| ipnet | 2.12.0 | MIT OR Apache-2.0 |
+| instability | 0.3.13 | MIT |
+| ipnet | 2.12.1 | MIT OR Apache-2.0 |
 | itertools | 0.13.0 | MIT OR Apache-2.0 |
 | itoa | 1.0.18 | MIT OR Apache-2.0 |
 | jpeg-decoder | 0.3.2 | MIT OR Apache-2.0 |
 | kamadak-exif | 0.5.5 | BSD-2-Clause |
 | kurbo | 0.13.1 | Apache-2.0 OR MIT |
 | language-tags | 0.3.2 | MIT OR Apache-2.0 |
-| lazy-regex | 3.6.1 | MIT |
-| lazy-regex-proc_macros | 3.6.1 | MIT |
 | lazy_static | 1.5.0 | MIT OR Apache-2.0 |
 | lebe | 0.5.3 | BSD-3-Clause |
 | lewton | 0.10.2 | MIT OR Apache-2.0 |
 | libadwaita | 0.7.2 | MIT |
 | libadwaita-sys | 0.7.2 | MIT |
-| libc | 0.2.186 | MIT OR Apache-2.0 |
+| libc | 0.2.189 | MIT OR Apache-2.0 |
 | libloading | 0.8.9 | ISC |
 | libm | 0.2.16 | MIT |
-| libmpv2 | 6.0.0 | LGPL-2.1 |
-| libmpv2-sys | 4.0.1 | LGPL-2.1 |
-| libssh2-sys | 0.3.1 | MIT OR Apache-2.0 |
-| libz-sys | 1.1.28 | MIT OR Apache-2.0 |
 | linux-raw-sys | 0.4.15 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
-| linux-raw-sys | 0.12.1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
-| litemap | 0.8.2 | Unicode-3.0 |
+| litemap | 0.8.3 | Unicode-3.0 |
 | local-channel | 0.1.5 | MIT OR Apache-2.0 |
 | local-waker | 0.1.4 | MIT OR Apache-2.0 |
 | lock_api | 0.4.14 | MIT OR Apache-2.0 |
-| log | 0.4.29 | MIT OR Apache-2.0 |
+| log | 0.4.34 | MIT OR Apache-2.0 |
 | lru | 0.12.5 | MIT |
 | mach2 | 0.4.3 | BSD-2-Clause OR MIT OR Apache-2.0 |
 | machine-uid | 0.5.4 | MIT |
-| maybe-owned | 0.3.4 | MIT OR Apache-2.0 |
-| md5 | 0.8.0 | Apache-2.0 OR MIT |
-| memchr | 2.8.0 | Unlicense OR MIT |
+| md5 | 0.8.1 | Apache-2.0 OR MIT |
+| memchr | 2.8.3 | Unlicense OR MIT |
 | memmap2 | 0.9.11 | MIT OR Apache-2.0 |
 | memoffset | 0.9.1 | MIT |
 | mime | 0.3.17 | MIT OR Apache-2.0 |
 | miniz_oxide | 0.8.9 | MIT OR Zlib OR Apache-2.0 |
-| mio | 1.2.0 | MIT |
-| moxcms | 0.8.1 | BSD-3-Clause OR Apache-2.0 |
-| muldiv | 1.0.1 | MIT |
+| miniz_oxide | 0.9.1 | MIT OR Zlib OR Apache-2.0 |
+| mio | 1.2.2 | MIT |
 | mutate_once | 0.1.2 | BSD-2-Clause |
 | nanorand | 0.7.0 | Zlib |
-| network-interface | 1.1.4 | MIT OR Apache-2.0 |
 | nix | 0.28.0 | MIT |
-| ntapi | 0.4.3 | Apache-2.0 OR MIT |
+| num-complex | 0.4.6 | MIT OR Apache-2.0 |
 | num-conv | 0.2.2 | MIT OR Apache-2.0 |
-| num-integer | 0.1.46 | MIT OR Apache-2.0 |
-| num-rational | 0.4.2 | MIT OR Apache-2.0 |
 | num-traits | 0.2.19 | MIT OR Apache-2.0 |
-| objc2 | 0.6.4 | MIT |
-| objc2-app-kit | 0.3.2 | Zlib OR Apache-2.0 OR MIT |
-| objc2-core-foundation | 0.3.2 | Zlib OR Apache-2.0 OR MIT |
-| objc2-encode | 4.1.0 | MIT |
-| objc2-foundation | 0.3.2 | MIT |
 | ogg | 0.8.0 | BSD-3-Clause |
 | once_cell | 1.21.4 | MIT OR Apache-2.0 |
 | opaque-debug | 0.3.1 | MIT OR Apache-2.0 |
-| openssl-sys | 0.9.116 | MIT |
 | option-ext | 0.2.0 | MPL-2.0 |
-| option-operations | 0.5.0 | MIT OR Apache-2.0 |
-| ordered-stream | 0.2.0 | MIT OR Apache-2.0 |
 | pango | 0.20.12 | MIT |
 | pango-sys | 0.20.10 | MIT |
-| parking | 2.2.1 | Apache-2.0 OR MIT |
 | parking_lot | 0.12.5 | MIT OR Apache-2.0 |
 | parking_lot_core | 0.9.12 | MIT OR Apache-2.0 |
-| password-hash | 0.4.2 | MIT OR Apache-2.0 |
 | password-hash | 0.5.0 | MIT OR Apache-2.0 |
 | paste | 1.0.15 | MIT OR Apache-2.0 |
-| pbkdf2 | 0.11.0 | MIT OR Apache-2.0 |
-| pdfium-render | 0.9.2 | MIT OR Apache-2.0 |
 | percent-encoding | 2.3.2 | MIT OR Apache-2.0 |
 | pico-args | 0.5.0 | MIT |
 | pin-project-lite | 0.2.17 | Apache-2.0 OR MIT |
-| piper | 0.2.5 | MIT OR Apache-2.0 |
-| piston-float | 1.0.1 | MIT |
 | png | 0.17.16 | MIT OR Apache-2.0 |
 | png | 0.18.1 | MIT OR Apache-2.0 |
-| polling | 3.11.0 | Apache-2.0 OR MIT |
-| pollster | 0.4.0 | Apache-2.0 OR MIT |
 | poly1305 | 0.8.0 | Apache-2.0 OR MIT |
 | polycool | 0.4.0 | MIT OR Apache-2.0 |
 | portable-pty | 0.9.0 | MIT |
-| potential_utf | 0.1.5 | Unicode-3.0 |
+| potential_utf | 0.1.6 | Unicode-3.0 |
 | powerfmt | 0.2.0 | MIT OR Apache-2.0 |
 | ppv-lite86 | 0.2.21 | MIT OR Apache-2.0 |
 | proc-macro-crate | 3.5.0 | MIT OR Apache-2.0 |
-| proc-macro2 | 1.0.106 | MIT OR Apache-2.0 |
-| pxfm | 0.1.29 | BSD-3-Clause OR Apache-2.0 |
+| proc-macro2 | 1.0.107 | MIT OR Apache-2.0 |
+| pulp | 0.22.3 | MIT |
+| pulp-wasm-simd-flag | 0.1.1 | MIT |
 | qoi | 0.4.1 | MIT OR Apache-2.0 |
 | quick-error | 2.0.1 | MIT OR Apache-2.0 |
-| quick-xml | 0.39.4 | MIT |
-| quote | 1.0.45 | MIT OR Apache-2.0 |
-| rand | 0.9.4 | MIT OR Apache-2.0 |
-| rand | 0.10.1 | MIT OR Apache-2.0 |
+| quote | 1.0.47 | MIT OR Apache-2.0 |
+| rand | 0.9.5 | MIT OR Apache-2.0 |
+| rand | 0.10.2 | MIT OR Apache-2.0 |
 | rand_chacha | 0.9.0 | MIT OR Apache-2.0 |
 | rand_core | 0.6.4 | MIT OR Apache-2.0 |
 | rand_core | 0.9.5 | MIT OR Apache-2.0 |
 | rand_core | 0.10.1 | MIT OR Apache-2.0 |
 | ratatui | 0.29.0 | MIT |
-| raw-window-handle | 0.6.2 | MIT OR Apache-2.0 OR Zlib |
+| raw-cpuid | 11.6.0 | MIT |
 | rayon | 1.12.0 | MIT OR Apache-2.0 |
 | rayon-core | 1.13.0 | MIT OR Apache-2.0 |
+| reborrow | 0.5.5 | MIT |
 | regex | 1.13.1 | MIT OR Apache-2.0 |
 | regex-automata | 0.4.18 | MIT OR Apache-2.0 |
 | regex-lite | 0.1.9 | MIT OR Apache-2.0 |
@@ -430,33 +373,27 @@ product name are the project's own and are not covered by the above.
 | relm4-macros | 0.9.1 | Apache-2.0 OR MIT |
 | reqwest | 0.11.27 | MIT OR Apache-2.0 |
 | resvg | 0.47.0 | Apache-2.0 OR MIT |
-| rfd | 0.15.4 | MIT |
 | rgb | 0.8.53 | MIT |
 | ring | 0.17.14 | Apache-2.0 AND ISC |
 | rodio | 0.19.0 | MIT OR Apache-2.0 |
 | roxmltree | 0.20.0 | MIT OR Apache-2.0 |
 | roxmltree | 0.21.1 | MIT OR Apache-2.0 |
 | rustix | 0.38.44 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
-| rustix | 1.1.4 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
 | rustls | 0.21.12 | Apache-2.0 OR ISC OR MIT |
 | rustls-pemfile | 1.0.4 | Apache-2.0 OR ISC OR MIT |
 | rustls-webpki | 0.101.7 | ISC |
-| rustversion | 1.0.22 | MIT OR Apache-2.0 |
+| rustversion | 1.0.23 | MIT OR Apache-2.0 |
 | rustybuzz | 0.20.1 | MIT |
 | ryu | 1.0.23 | Apache-2.0 OR BSL-1.0 |
-| same-file | 1.0.6 | Unlicense OR MIT |
-| scoped-tls | 1.0.1 | MIT OR Apache-2.0 |
 | scopeguard | 1.2.0 | MIT OR Apache-2.0 |
 | sct | 0.7.1 | Apache-2.0 OR ISC OR MIT |
-| serde | 1.0.228 | MIT OR Apache-2.0 |
+| serde | 1.0.229 | MIT OR Apache-2.0 |
 | serde_bytes | 0.11.19 | MIT OR Apache-2.0 |
-| serde_core | 1.0.228 | MIT OR Apache-2.0 |
-| serde_derive | 1.0.228 | MIT OR Apache-2.0 |
-| serde_json | 1.0.150 | MIT OR Apache-2.0 |
-| serde_repr | 0.1.20 | MIT OR Apache-2.0 |
+| serde_core | 1.0.229 | MIT OR Apache-2.0 |
+| serde_derive | 1.0.229 | MIT OR Apache-2.0 |
+| serde_json | 1.0.151 | MIT OR Apache-2.0 |
 | serde_urlencoded | 0.7.1 | MIT OR Apache-2.0 |
-| serial2 | 0.2.37 | BSD-2-Clause OR Apache-2.0 |
-| sha1 | 0.10.6 | MIT OR Apache-2.0 |
+| serial2 | 0.2.38 | BSD-2-Clause OR Apache-2.0 |
 | sha1 | 0.11.0 | MIT OR Apache-2.0 |
 | sha1_smol | 1.0.1 | BSD-3-Clause |
 | sha2 | 0.10.9 | MIT OR Apache-2.0 |
@@ -465,24 +402,22 @@ product name are the project's own and are not covered by the above.
 | signal-hook | 0.3.18 | Apache-2.0 OR MIT |
 | signal-hook-mio | 0.2.5 | MIT OR Apache-2.0 |
 | signal-hook-registry | 1.4.8 | MIT OR Apache-2.0 |
-| simd-adler32 | 0.3.9 | MIT |
+| simd-adler32 | 0.3.10 | MIT |
 | simplecss | 0.2.2 | Apache-2.0 OR MIT |
 | siphasher | 1.0.3 | MIT OR Apache-2.0 |
 | slab | 0.4.12 | MIT |
 | slotmap | 1.1.1 | Zlib |
-| smallvec | 1.15.1 | MIT OR Apache-2.0 |
+| smallvec | 1.15.2 | MIT OR Apache-2.0 |
 | socket2 | 0.5.10 | MIT OR Apache-2.0 |
-| socket2 | 0.6.3 | MIT OR Apache-2.0 |
-| spin | 0.9.8 | MIT |
-| ssh2 | 0.9.5 | MIT OR Apache-2.0 |
+| socket2 | 0.6.5 | MIT OR Apache-2.0 |
+| spin | 0.9.9 | MIT |
 | stable_deref_trait | 1.2.1 | MIT OR Apache-2.0 |
 | static_assertions | 1.1.0 | MIT OR Apache-2.0 |
 | strict-num | 0.1.1 | MIT |
 | strsim | 0.11.1 | MIT |
 | strum | 0.26.3 | MIT |
 | strum_macros | 0.26.4 | MIT |
-| subtle | 2.4.1 | BSD-3-Clause |
-| suppaftp | 8.0.5 | MIT OR Apache-2.0 |
+| subtle | 2.6.1 | BSD-3-Clause |
 | svgtypes | 0.16.1 | Apache-2.0 OR MIT |
 | symphonia | 0.5.5 | MPL-2.0 |
 | symphonia-bundle-mp3 | 0.5.5 | MPL-2.0 |
@@ -491,49 +426,44 @@ product name are the project's own and are not covered by the above.
 | symphonia-format-isomp4 | 0.5.5 | MPL-2.0 |
 | symphonia-metadata | 0.5.5 | MPL-2.0 |
 | symphonia-utils-xiph | 0.5.5 | MPL-2.0 |
-| syn | 2.0.117 | MIT OR Apache-2.0 |
+| syn | 2.0.119 | MIT OR Apache-2.0 |
+| syn | 3.0.4 | MIT OR Apache-2.0 |
 | sync_wrapper | 0.1.2 | Apache-2.0 |
 | synstructure | 0.13.2 | MIT |
-| sysinfo | 0.29.11 | MIT |
 | system-configuration | 0.5.1 | MIT OR Apache-2.0 |
 | system-configuration-sys | 0.5.0 | MIT OR Apache-2.0 |
-| tar | 0.4.46 | MIT OR Apache-2.0 |
-| tempfile | 3.27.0 | MIT OR Apache-2.0 |
 | thiserror | 1.0.69 | MIT OR Apache-2.0 |
-| thiserror | 2.0.18 | MIT OR Apache-2.0 |
 | thiserror-impl | 1.0.69 | MIT OR Apache-2.0 |
-| thiserror-impl | 2.0.18 | MIT OR Apache-2.0 |
 | tiff | 0.9.1 | MIT |
-| time | 0.3.47 | MIT OR Apache-2.0 |
-| time-core | 0.1.8 | MIT OR Apache-2.0 |
-| time-macros | 0.2.27 | MIT OR Apache-2.0 |
+| time | 0.3.55 | MIT OR Apache-2.0 |
+| time-core | 0.1.9 | MIT OR Apache-2.0 |
+| time-macros | 0.2.32 | MIT OR Apache-2.0 |
 | tiny-skia | 0.12.0 | BSD-3-Clause |
 | tiny-skia-path | 0.12.0 | BSD-3-Clause |
-| tinystr | 0.8.3 | Unicode-3.0 |
-| tinyvec | 1.11.0 | Zlib OR Apache-2.0 OR MIT |
+| tinystr | 0.8.4 | Unicode-3.0 |
+| tinyvec | 1.12.0 | Zlib OR Apache-2.0 OR MIT |
 | tinyvec_macros | 0.1.1 | MIT OR Apache-2.0 OR Zlib |
-| tokio | 1.52.3 | MIT |
-| tokio-macros | 2.7.0 | MIT |
+| tokio | 1.53.1 | MIT |
+| tokio-macros | 2.7.2 | MIT |
 | tokio-rustls | 0.24.1 | MIT OR Apache-2.0 |
-| tokio-util | 0.7.18 | MIT |
+| tokio-util | 0.7.19 | MIT |
 | toml_datetime | 1.1.1+spec-1.1.0 | MIT OR Apache-2.0 |
-| toml_edit | 0.25.11+spec-1.1.0 | MIT OR Apache-2.0 |
-| toml_parser | 1.1.2+spec-1.1.0 | MIT OR Apache-2.0 |
+| toml_edit | 0.25.13+spec-1.1.0 | MIT OR Apache-2.0 |
+| toml_parser | 1.1.3+spec-1.1.0 | MIT OR Apache-2.0 |
 | tower-service | 0.3.3 | MIT |
 | tracing | 0.1.44 | MIT |
 | tracing-attributes | 0.1.31 | MIT |
 | tracing-core | 0.1.36 | MIT |
 | try-lock | 0.2.5 | MIT |
 | ttf-parser | 0.25.1 | MIT OR Apache-2.0 |
-| typenum | 1.20.0 | MIT OR Apache-2.0 |
-| uds_windows | 1.2.1 | MIT |
+| typenum | 1.20.1 | MIT OR Apache-2.0 |
 | unicode-bidi | 0.3.18 | MIT OR Apache-2.0 |
 | unicode-bidi-mirroring | 0.4.0 | MIT OR Apache-2.0 |
 | unicode-ccc | 0.4.0 | MIT OR Apache-2.0 |
 | unicode-ident | 1.0.24 | (MIT OR Apache-2.0) AND Unicode-3.0 |
 | unicode-properties | 0.1.4 | MIT OR Apache-2.0 |
 | unicode-script | 0.5.8 | MIT OR Apache-2.0 |
-| unicode-segmentation | 1.13.2 | MIT OR Apache-2.0 |
+| unicode-segmentation | 1.13.3 | MIT OR Apache-2.0 |
 | unicode-truncate | 1.1.0 | MIT OR Apache-2.0 |
 | unicode-vo | 0.1.0 | MIT OR Apache-2.0 |
 | unicode-width | 0.1.14 | MIT OR Apache-2.0 |
@@ -542,27 +472,17 @@ product name are the project's own and are not covered by the above.
 | universal-hash | 0.5.1 | MIT OR Apache-2.0 |
 | untrusted | 0.9.0 | ISC |
 | url | 2.5.8 | MIT OR Apache-2.0 |
-| urlencoding | 2.1.3 | MIT |
 | usvg | 0.47.0 | Apache-2.0 OR MIT |
-| utf16string | 0.2.0 | MIT OR Apache-2.0 |
 | utf8_iter | 1.0.4 | Apache-2.0 OR MIT |
 | utf8parse | 0.2.2 | Apache-2.0 OR MIT |
-| uuid | 1.23.1 | Apache-2.0 OR MIT |
-| vecmath | 1.0.0 | MIT |
+| uuid | 1.26.0 | Apache-2.0 OR MIT |
 | vt100 | 0.15.2 | MIT |
 | vte | 0.11.1 | Apache-2.0 OR MIT |
 | vte_generate_state_changes | 0.1.2 | Apache-2.0 OR MIT |
-| walkdir | 2.5.0 | Unlicense OR MIT |
 | want | 0.3.1 | MIT |
-| wayland-backend | 0.3.15 | MIT |
-| wayland-client | 0.31.14 | MIT |
-| wayland-protocols | 0.32.12 | MIT |
-| wayland-scanner | 0.31.10 | MIT |
-| wayland-sys | 0.31.11 | MIT |
 | webpki-roots | 0.25.4 | MPL-2.0 |
 | weezl | 0.1.12 | MIT OR Apache-2.0 |
 | winapi | 0.3.9 | MIT OR Apache-2.0 |
-| winapi-util | 0.1.11 | Unlicense OR MIT |
 | winapi-x86_64-pc-windows-gnu | 0.4.0 | MIT OR Apache-2.0 |
 | windows | 0.54.0 | MIT OR Apache-2.0 |
 | windows-core | 0.54.0 | MIT OR Apache-2.0 |
@@ -582,39 +502,29 @@ product name are the project's own and are not covered by the above.
 | windows-targets | 0.52.6 | MIT OR Apache-2.0 |
 | windows_x86_64_gnu | 0.48.5 | MIT OR Apache-2.0 |
 | windows_x86_64_gnu | 0.52.6 | MIT OR Apache-2.0 |
-| winnow | 1.0.3 | MIT |
+| winnow | 1.0.4 | MIT |
 | winreg | 0.10.1 | MIT |
 | winreg | 0.50.0 | MIT |
 | winreg | 0.52.0 | MIT |
-| writeable | 0.6.3 | Unicode-3.0 |
-| xattr | 1.6.1 | MIT OR Apache-2.0 |
+| writeable | 0.6.4 | Unicode-3.0 |
 | xmlwriter | 0.1.0 | MIT |
-| yoke | 0.8.2 | Unicode-3.0 |
+| yoke | 0.8.3 | Unicode-3.0 |
 | yoke-derive | 0.8.2 | Unicode-3.0 |
-| zbus | 5.16.0 | MIT |
-| zbus_macros | 5.16.0 | MIT |
-| zbus_names | 4.3.2 | MIT |
-| zerocopy | 0.8.48 | BSD-2-Clause OR Apache-2.0 OR MIT |
-| zerocopy-derive | 0.8.48 | BSD-2-Clause OR Apache-2.0 OR MIT |
+| zerocopy | 0.8.56 | BSD-2-Clause OR Apache-2.0 OR MIT |
+| zerocopy-derive | 0.8.56 | BSD-2-Clause OR Apache-2.0 OR MIT |
 | zerofrom | 0.1.8 | Unicode-3.0 |
 | zerofrom-derive | 0.1.7 | Unicode-3.0 |
-| zeroize | 1.8.2 | Apache-2.0 OR MIT |
-| zerotrie | 0.2.4 | Unicode-3.0 |
-| zerovec | 0.11.6 | Unicode-3.0 |
-| zerovec-derive | 0.11.3 | Unicode-3.0 |
-| zip | 0.6.6 | MIT |
-| zmij | 1.0.21 | MIT |
-| zstd | 0.11.2+zstd.1.5.2 | MIT |
+| zeroize | 1.9.0 | Apache-2.0 OR MIT |
+| zerotrie | 0.2.5 | Unicode-3.0 |
+| zerovec | 0.11.8 | Unicode-3.0 |
+| zerovec-derive | 0.11.6 | Unicode-3.0 |
+| zmij | 1.0.23 | MIT |
 | zstd | 0.13.3 | MIT |
-| zstd-safe | 5.0.2+zstd.1.5.2 | MIT OR Apache-2.0 |
 | zstd-safe | 7.2.4 | MIT OR Apache-2.0 |
 | zstd-sys | 2.0.16+zstd.1.5.7 | MIT OR Apache-2.0 |
-| zune-core | 0.5.1 | MIT OR Apache-2.0 OR Zlib |
+| zune-core | 0.5.3 | MIT OR Apache-2.0 OR Zlib |
 | zune-inflate | 0.2.54 | MIT OR Apache-2.0 OR Zlib |
 | zune-jpeg | 0.5.15 | MIT OR Apache-2.0 OR Zlib |
-| zvariant | 5.12.0 | MIT |
-| zvariant_derive | 5.12.0 | MIT |
-| zvariant_utils | 3.4.0 | MIT |
 
 `Unknown` in the table means the crate declares no SPDX expression in its
 `Cargo.toml` — its terms come from the license file it ships, which is
@@ -859,6 +769,46 @@ Each license appears once below; the table above says which crates it covers.
 
 ```
 
+#### ISC License (`ISC`)
+
+```
+/* Copyright (c) 2014, Intel Corporation.
+ *
+ * Permission to use, copy, modify, and/or distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
+ * SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION
+ * OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
+ * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE. */
+
+#ifndef OPENSSL_HEADER_EC_ECP_NISTZ384_H
+#define OPENSSL_HEADER_EC_ECP_NISTZ384_H
+
+#include "../../limbs/limbs.h"
+
+#define P384_LIMBS (384u / LIMB_BITS)
+
+typedef struct {
+  Limb X[P384_LIMBS];
+  Limb Y[P384_LIMBS];
+  Limb Z[P384_LIMBS];
+} P384_POINT;
+
+typedef struct {
+  Limb X[P384_LIMBS];
+  Limb Y[P384_LIMBS];
+} P384_POINT_AFFINE;
+
+
+#endif // OPENSSL_HEADER_EC_ECP_NISTZ384_H
+
+```
+
 #### Unicode License v3 (`Unicode-3.0`)
 
 ```
@@ -907,36 +857,60 @@ authorization of the copyright holder.
 #### BSD 3-Clause "New" or "Revised" License (`BSD-3-Clause`)
 
 ```
-Copyright (c) 2011 Google Inc. All rights reserved.
-Copyright (c) 2020 Yevhenii Reizner All rights reserved.
+// Copyright © WHATWG (Apple, Google, Mozilla, Microsoft).
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+// 1. Redistributions of source code must retain the above copyright notice, this
+//    list of conditions and the following disclaimer.
+//
+// 2. Redistributions in binary form must reproduce the above copyright notice,
+//    this list of conditions and the following disclaimer in the documentation
+//    and/or other materials provided with the distribution.
+//
+// 3. Neither the name of the copyright holder nor the names of its
+//    contributors may be used to endorse or promote products derived from
+//    this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+// CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+// OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are
-met:
+/// The PUA code points special-cased in the GB18030 encoder.
+pub(crate) static GB18030_2022_OVERRIDE_PUA: [u16; 18] = [
+    0xE78D, 0xE78E, 0xE78F, 0xE790, 0xE791, 0xE792, 0xE793, 0xE794, 0xE795, 0xE796, 0xE81E, 0xE826,
+    0xE82B, 0xE82C, 0xE832, 0xE843, 0xE854, 0xE864,
+];
 
-  * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-
-  * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in
-    the documentation and/or other materials provided with the
-    distribution.
-
-  * Neither the name of the copyright holder nor the names of its
-    contributors may be used to endorse or promote products derived
-    from this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+/// The bytes corresponding to the PUA code points special-cased in the GB18030 encoder.
+pub(crate) static GB18030_2022_OVERRIDE_BYTES: [[u8; 2]; 18] = [
+    [0xA6, 0xD9],
+    [0xA6, 0xDA],
+    [0xA6, 0xDB],
+    [0xA6, 0xDC],
+    [0xA6, 0xDD],
+    [0xA6, 0xDE],
+    [0xA6, 0xDF],
+    [0xA6, 0xEC],
+    [0xA6, 0xED],
+    [0xA6, 0xF3],
+    [0xFE, 0x59],
+    [0xFE, 0x61],
+    [0xFE, 0x66],
+    [0xFE, 0x67],
+    [0xFE, 0x6D],
+    [0xFE, 0x7E],
+    [0xFE, 0x90],
+    [0xFE, 0xA0],
+];
 
 ```
 
@@ -1319,25 +1293,6 @@ Exhibit B - "Incompatible With Secondary Licenses" Notice
 
 ```
 
-#### ISC License (`ISC`)
-
-```
-// Copyright 2015-2016 Brian Smith.
-//
-// Permission to use, copy, modify, and/or distribute this software for any
-// purpose with or without fee is hereby granted, provided that the above
-// copyright notice and this permission notice appear in all copies.
-//
-// THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHORS DISCLAIM ALL WARRANTIES
-// WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
-// MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR
-// ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
-// WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
-// ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
-// OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
-
-```
-
 #### BSD 2-Clause "Simplified" License (`BSD-2-Clause`)
 
 ```
@@ -1367,12 +1322,44 @@ Exhibit B - "Incompatible With Secondary Licenses" Notice
 // SUCH DAMAGE.
 //
 
-use std::mem;
+// Macros for testing.
 
-// This library assumes that usize is not smaller than u32.
-#[test]
-fn size_of_usize() {
-    assert!(mem::size_of::<usize>() >= mem::size_of::<u32>());
+macro_rules! assert_ok {
+    ($expr:expr, $value:expr) => (
+        match $expr {
+            Ok(v) => assert_eq!(v, $value),
+            r => panic!("assertion failed: unexpected {:?}", r),
+        }
+    )
+}
+
+macro_rules! assert_pat {
+    ($expr:expr, $pat:pat) => (
+        match $expr {
+            $pat => {},
+            ref r => panic!("assertion failed: unexpected {:?}", r),
+        }
+    )
+}
+
+macro_rules! assert_err_pat {
+    ($expr:expr, $variant:pat) => (
+        match $expr {
+            Err($variant) => {},
+            r => panic!("assertion failed: unexpected {:?}", r),
+        }
+    )
+}
+
+// This macro is intended to be used with std::io::Error, but other
+// types with kind() will also work.
+macro_rules! assert_err_kind {
+    ($expr:expr, $kind:expr) => (
+        match $expr {
+            Err(e) => assert_eq!(e.kind(), $kind),
+            r => panic!("assertion failed: unexpected {:?}", r),
+        }
+    )
 }
 
 ```
@@ -1399,315 +1386,6 @@ the following restrictions:
     misrepresented as being the original software.
 
  3. This notice may not be removed or altered from any source distribution.
-
-```
-
-#### GNU Lesser General Public License v2.1 only (`LGPL-2.1`)
-
-```
-GNU LESSER GENERAL PUBLIC LICENSE
-
-Version 2.1, February 1999
-
-Copyright (C) 1991, 1999 Free Software Foundation, Inc.
-51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
-
-Everyone is permitted to copy and distribute verbatim copies of this license document, but changing it is not allowed.
-
-[This is the first released version of the Lesser GPL.  It also counts as the successor of the GNU Library Public License, version 2, hence the version number 2.1.]
-
-Preamble
-
-The licenses for most software are designed to take away your freedom to share and change it. By contrast, the GNU General Public Licenses are intended to guarantee your freedom to share and change free software--to make sure the software is free for all its users.
-
-This license, the Lesser General Public License, applies to some specially designated software packages--typically libraries--of the Free Software Foundation and other authors who decide to use it. You can use it too, but we suggest you first think carefully about whether this license or the ordinary General Public License is the better strategy to use in any particular case, based on the explanations below.
-
-When we speak of free software, we are referring to freedom of use, not price. Our General Public Licenses are designed to make sure that you have the freedom to distribute copies of free software (and charge for this service if you wish); that you receive source code or can get it if you want it; that you can change the software and use pieces of it in new free programs; and that you are informed that you can do these things.
-
-To protect your rights, we need to make restrictions that forbid distributors to deny you these rights or to ask you to surrender these rights. These restrictions translate to certain responsibilities for you if you distribute copies of the library or if you modify it.
-
-For example, if you distribute copies of the library, whether gratis or for a fee, you must give the recipients all the rights that we gave you. You must make sure that they, too, receive or can get the source code. If you link other code with the library, you must provide complete object files to the recipients, so that they can relink them with the library after making changes to the library and recompiling it. And you must show them these terms so they know their rights.
-
-We protect your rights with a two-step method: (1) we copyright the library, and (2) we offer you this license, which gives you legal permission to copy, distribute and/or modify the library.
-
-To protect each distributor, we want to make it very clear that there is no warranty for the free library. Also, if the library is modified by someone else and passed on, the recipients should know that what they have is not the original version, so that the original author's reputation will not be affected by problems that might be introduced by others.
-
-Finally, software patents pose a constant threat to the existence of any free program. We wish to make sure that a company cannot effectively restrict the users of a free program by obtaining a restrictive license from a patent holder. Therefore, we insist that any patent license obtained for a version of the library must be consistent with the full freedom of use specified in this license.
-
-Most GNU software, including some libraries, is covered by the ordinary GNU General Public License. This license, the GNU Lesser General Public License, applies to certain designated libraries, and is quite different from the ordinary General Public License. We use this license for certain libraries in order to permit linking those libraries into non-free programs.
-
-When a program is linked with a library, whether statically or using a shared library, the combination of the two is legally speaking a combined work, a derivative of the original library. The ordinary General Public License therefore permits such linking only if the entire combination fits its criteria of freedom. The Lesser General Public License permits more lax criteria for linking other code with the library.
-
-We call this license the "Lesser" General Public License because it does Less to protect the user's freedom than the ordinary General Public License. It also provides other free software developers Less of an advantage over competing non-free programs. These disadvantages are the reason we use the ordinary General Public License for many libraries. However, the Lesser license provides advantages in certain special circumstances.
-
-For example, on rare occasions, there may be a special need to encourage the widest possible use of a certain library, so that it becomes a de-facto standard. To achieve this, non-free programs must be allowed to use the library. A more frequent case is that a free library does the same job as widely used non-free libraries. In this case, there is little to gain by limiting the free library to free software only, so we use the Lesser General Public License.
-
-In other cases, permission to use a particular library in non-free programs enables a greater number of people to use a large body of free software. For example, permission to use the GNU C Library in non-free programs enables many more people to use the whole GNU operating system, as well as its variant, the GNU/Linux operating system.
-
-Although the Lesser General Public License is Less protective of the users' freedom, it does ensure that the user of a program that is linked with the Library has the freedom and the wherewithal to run that program using a modified version of the Library.
-
-The precise terms and conditions for copying, distribution and modification follow. Pay close attention to the difference between a "work based on the library" and a "work that uses the library". The former contains code derived from the library, whereas the latter must be combined with the library in order to run.
-
-GNU LESSER GENERAL PUBLIC LICENSE
-TERMS AND CONDITIONS FOR COPYING, DISTRIBUTION AND MODIFICATION
-
-0. This License Agreement applies to any software library or other program which contains a notice placed by the copyright holder or other authorized party saying it may be distributed under the terms of this Lesser General Public License (also called "this License"). Each licensee is addressed as "you".
-
-A "library" means a collection of software functions and/or data prepared so as to be conveniently linked with application programs (which use some of those functions and data) to form executables.
-
-The "Library", below, refers to any such software library or work which has been distributed under these terms. A "work based on the Library" means either the Library or any derivative work under copyright law: that is to say, a work containing the Library or a portion of it, either verbatim or with modifications and/or translated straightforwardly into another language. (Hereinafter, translation is included without limitation in the term "modification".)
-
-"Source code" for a work means the preferred form of the work for making modifications to it. For a library, complete source code means all the source code for all modules it contains, plus any associated interface definition files, plus the scripts used to control compilation and installation of the library.
-
-Activities other than copying, distribution and modification are not covered by this License; they are outside its scope. The act of running a program using the Library is not restricted, and output from such a program is covered only if its contents constitute a work based on the Library (independent of the use of the Library in a tool for writing it). Whether that is true depends on what the Library does and what the program that uses the Library does.
-
-1. You may copy and distribute verbatim copies of the Library's complete source code as you receive it, in any medium, provided that you conspicuously and appropriately publish on each copy an appropriate copyright notice and disclaimer of warranty; keep intact all the notices that refer to this License and to the absence of any warranty; and distribute a copy of this License along with the Library.
-
-You may charge a fee for the physical act of transferring a copy, and you may at your option offer warranty protection in exchange for a fee.
-
-2. You may modify your copy or copies of the Library or any portion of it, thus forming a work based on the Library, and copy and distribute such modifications or work under the terms of Section 1 above, provided that you also meet all of these conditions:
-
-     a) The modified work must itself be a software library.
-
-     b) You must cause the files modified to carry prominent notices stating that you changed the files and the date of any change.
-
-     c) You must cause the whole of the work to be licensed at no charge to all third parties under the terms of this License.
-
-     d) If a facility in the modified Library refers to a function or a table of data to be supplied by an application program that uses the facility, other than as an argument passed when the facility is invoked, then you must make a good faith effort to ensure that, in the event an application does not supply such function or table, the facility still operates, and performs whatever part of its purpose remains meaningful.
-
-(For example, a function in a library to compute square roots has a purpose that is entirely well-defined independent of the application. Therefore, Subsection 2d requires that any application-supplied function or table used by this function must be optional: if the application does not supply it, the square root function must still compute square roots.)
-
-These requirements apply to the modified work as a whole. If identifiable sections of that work are not derived from the Library, and can be reasonably considered independent and separate works in themselves, then this License, and its terms, do not apply to those sections when you distribute them as separate works. But when you distribute the same sections as part of a whole which is a work based on the Library, the distribution of the whole must be on the terms of this License, whose permissions for other licensees extend to the entire whole, and thus to each and every part regardless of who wrote it.
-
-Thus, it is not the intent of this section to claim rights or contest your rights to work written entirely by you; rather, the intent is to exercise the right to control the distribution of derivative or collective works based on the Library.
-
-In addition, mere aggregation of another work not based on the Library with the Library (or with a work based on the Library) on a volume of a storage or distribution medium does not bring the other work under the scope of this License.
-
-3. You may opt to apply the terms of the ordinary GNU General Public License instead of this License to a given copy of the Library. To do this, you must alter all the notices that refer to this License, so that they refer to the ordinary GNU General Public License, version 2, instead of to this License. (If a newer version than version 2 of the ordinary GNU General Public License has appeared, then you can specify that version instead if you wish.) Do not make any other change in these notices.
-
-Once this change is made in a given copy, it is irreversible for that copy, so the ordinary GNU General Public License applies to all subsequent copies and derivative works made from that copy.
-
-This option is useful when you wish to copy part of the code of the Library into a program that is not a library.
-
-4. You may copy and distribute the Library (or a portion or derivative of it, under Section 2) in object code or executable form under the terms of Sections 1 and 2 above provided that you accompany it with the complete corresponding machine-readable source code, which must be distributed under the terms of Sections 1 and 2 above on a medium customarily used for software interchange.
-
-If distribution of object code is made by offering access to copy from a designated place, then offering equivalent access to copy the source code from the same place satisfies the requirement to distribute the source code, even though third parties are not compelled to copy the source along with the object code.
-
-5. A program that contains no derivative of any portion of the Library, but is designed to work with the Library by being compiled or linked with it, is called a "work that uses the Library". Such a work, in isolation, is not a derivative work of the Library, and therefore falls outside the scope of this License.
-
-However, linking a "work that uses the Library" with the Library creates an executable that is a derivative of the Library (because it contains portions of the Library), rather than a "work that uses the library". The executable is therefore covered by this License. Section 6 states terms for distribution of such executables.
-
-When a "work that uses the Library" uses material from a header file that is part of the Library, the object code for the work may be a derivative work of the Library even though the source code is not. Whether this is true is especially significant if the work can be linked without the Library, or if the work is itself a library. The threshold for this to be true is not precisely defined by law.
-
-If such an object file uses only numerical parameters, data structure layouts and accessors, and small macros and small inline functions (ten lines or less in length), then the use of the object file is unrestricted, regardless of whether it is legally a derivative work. (Executables containing this object code plus portions of the Library will still fall under Section 6.)
-
-Otherwise, if the work is a derivative of the Library, you may distribute the object code for the work under the terms of Section 6. Any executables containing that work also fall under Section 6, whether or not they are linked directly with the Library itself.
-
-6. As an exception to the Sections above, you may also combine or link a "work that uses the Library" with the Library to produce a work containing portions of the Library, and distribute that work under terms of your choice, provided that the terms permit modification of the work for the customer's own use and reverse engineering for debugging such modifications.
-
-You must give prominent notice with each copy of the work that the Library is used in it and that the Library and its use are covered by this License. You must supply a copy of this License. If the work during execution displays copyright notices, you must include the copyright notice for the Library among them, as well as a reference directing the user to the copy of this License. Also, you must do one of these things:
-
-     a) Accompany the work with the complete corresponding machine-readable source code for the Library including whatever changes were used in the work (which must be distributed under Sections 1 and 2 above); and, if the work is an executable linked with the Library, with the complete machine-readable "work that uses the Library", as object code and/or source code, so that the user can modify the Library and then relink to produce a modified executable containing the modified Library. (It is understood that the user who changes the contents of definitions files in the Library will not necessarily be able to recompile the application to use the modified definitions.)
-
-     b) Use a suitable shared library mechanism for linking with the Library. A suitable mechanism is one that (1) uses at run time a copy of the library already present on the user's computer system, rather than copying library functions into the executable, and (2) will operate properly with a modified version of the library, if the user installs one, as long as the modified version is interface-compatible with the version that the work was made with.
-
-     c) Accompany the work with a written offer, valid for at least three years, to give the same user the materials specified in Subsection 6a, above, for a charge no more than the cost of performing this distribution.
-
-     d) If distribution of the work is made by offering access to copy from a designated place, offer equivalent access to copy the above specified materials from the same place.
-
-     e) Verify that the user has already received a copy of these materials or that you have already sent this user a copy.
-
-For an executable, the required form of the "work that uses the Library" must include any data and utility programs needed for reproducing the executable from it. However, as a special exception, the materials to be distributed need not include anything that is normally distributed (in either source or binary form) with the major components (compiler, kernel, and so on) of the operating system on which the executable runs, unless that component itself accompanies the executable.
-
-It may happen that this requirement contradicts the license restrictions of other proprietary libraries that do not normally accompany the operating system. Such a contradiction means you cannot use both them and the Library together in an executable that you distribute.
-
-7. You may place library facilities that are a work based on the Library side-by-side in a single library together with other library facilities not covered by this License, and distribute such a combined library, provided that the separate distribution of the work based on the Library and of the other library facilities is otherwise permitted, and provided that you do these two things:
-
-     a) Accompany the combined library with a copy of the same work based on the Library, uncombined with any other library facilities. This must be distributed under the terms of the Sections above.
-
-     b) Give prominent notice with the combined library of the fact that part of it is a work based on the Library, and explaining where to find the accompanying uncombined form of the same work.
-
-8. You may not copy, modify, sublicense, link with, or distribute the Library except as expressly provided under this License. Any attempt otherwise to copy, modify, sublicense, link with, or distribute the Library is void, and will automatically terminate your rights under this License. However, parties who have received copies, or rights, from you under this License will not have their licenses terminated so long as such parties remain in full compliance.
-
-9. You are not required to accept this License, since you have not signed it. However, nothing else grants you permission to modify or distribute the Library or its derivative works. These actions are prohibited by law if you do not accept this License. Therefore, by modifying or distributing the Library (or any work based on the Library), you indicate your acceptance of this License to do so, and all its terms and conditions for copying, distributing or modifying the Library or works based on it.
-
-10. Each time you redistribute the Library (or any work based on the Library), the recipient automatically receives a license from the original licensor to copy, distribute, link with or modify the Library subject to these terms and conditions. You may not impose any further restrictions on the recipients' exercise of the rights granted herein. You are not responsible for enforcing compliance by third parties with this License.
-
-11. If, as a consequence of a court judgment or allegation of patent infringement or for any other reason (not limited to patent issues), conditions are imposed on you (whether by court order, agreement or otherwise) that contradict the conditions of this License, they do not excuse you from the conditions of this License. If you cannot distribute so as to satisfy simultaneously your obligations under this License and any other pertinent obligations, then as a consequence you may not distribute the Library at all. For example, if a patent license would not permit royalty-free redistribution of the Library by all those who receive copies directly or indirectly through you, then the only way you could satisfy both it and this License would be to refrain entirely from distribution of the Library.
-
-If any portion of this section is held invalid or unenforceable under any particular circumstance, the balance of the section is intended to apply, and the section as a whole is intended to apply in other circumstances.
-
-It is not the purpose of this section to induce you to infringe any patents or other property right claims or to contest validity of any such claims; this section has the sole purpose of protecting the integrity of the free software distribution system which is implemented by public license practices. Many people have made generous contributions to the wide range of software distributed through that system in reliance on consistent application of that system; it is up to the author/donor to decide if he or she is willing to distribute software through any other system and a licensee cannot impose that choice.
-
-This section is intended to make thoroughly clear what is believed to be a consequence of the rest of this License.
-
-12. If the distribution and/or use of the Library is restricted in certain countries either by patents or by copyrighted interfaces, the original copyright holder who places the Library under this License may add an explicit geographical distribution limitation excluding those countries, so that distribution is permitted only in or among countries not thus excluded. In such case, this License incorporates the limitation as if written in the body of this License.
-
-13. The Free Software Foundation may publish revised and/or new versions of the Lesser General Public License from time to time. Such new versions will be similar in spirit to the present version, but may differ in detail to address new problems or concerns.
-
-Each version is given a distinguishing version number. If the Library specifies a version number of this License which applies to it and "any later version", you have the option of following the terms and conditions either of that version or of any later version published by the Free Software Foundation. If the Library does not specify a license version number, you may choose any version ever published by the Free Software Foundation.
-
-14. If you wish to incorporate parts of the Library into other free programs whose distribution conditions are incompatible with these, write to the author to ask for permission. For software which is copyrighted by the Free Software Foundation, write to the Free Software Foundation; we sometimes make exceptions for this. Our decision will be guided by the two goals of preserving the free status of all derivatives of our free software and of promoting the sharing and reuse of software generally.
-
-NO WARRANTY
-
-15. BECAUSE THE LIBRARY IS LICENSED FREE OF CHARGE, THERE IS NO WARRANTY FOR THE LIBRARY, TO THE EXTENT PERMITTED BY APPLICABLE LAW. EXCEPT WHEN OTHERWISE STATED IN WRITING THE COPYRIGHT HOLDERS AND/OR OTHER PARTIES PROVIDE THE LIBRARY "AS IS" WITHOUT WARRANTY OF ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE. THE ENTIRE RISK AS TO THE QUALITY AND PERFORMANCE OF THE LIBRARY IS WITH YOU. SHOULD THE LIBRARY PROVE DEFECTIVE, YOU ASSUME THE COST OF ALL NECESSARY SERVICING, REPAIR OR CORRECTION.
-
-16. IN NO EVENT UNLESS REQUIRED BY APPLICABLE LAW OR AGREED TO IN WRITING WILL ANY COPYRIGHT HOLDER, OR ANY OTHER PARTY WHO MAY MODIFY AND/OR REDISTRIBUTE THE LIBRARY AS PERMITTED ABOVE, BE LIABLE TO YOU FOR DAMAGES, INCLUDING ANY GENERAL, SPECIAL, INCIDENTAL OR CONSEQUENTIAL DAMAGES ARISING OUT OF THE USE OR INABILITY TO USE THE LIBRARY (INCLUDING BUT NOT LIMITED TO LOSS OF DATA OR DATA BEING RENDERED INACCURATE OR LOSSES SUSTAINED BY YOU OR THIRD PARTIES OR A FAILURE OF THE LIBRARY TO OPERATE WITH ANY OTHER SOFTWARE), EVEN IF SUCH HOLDER OR OTHER PARTY HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
-
-END OF TERMS AND CONDITIONS
-
-How to Apply These Terms to Your New Libraries
-
-If you develop a new library, and you want it to be of the greatest possible use to the public, we recommend making it free software that everyone can redistribute and change. You can do so by permitting redistribution under these terms (or, alternatively, under the terms of the ordinary General Public License).
-
-To apply these terms, attach the following notices to the library. It is safest to attach them to the start of each source file to most effectively convey the exclusion of warranty; and each file should have at least the "copyright" line and a pointer to where the full notice is found.
-
-     one line to give the library's name and an idea of what it does.
-     Copyright (C) year  name of author
-
-     This library is free software; you can redistribute it and/or modify it under the terms of the GNU Lesser General Public License as published by the Free Software Foundation; either version 2.1 of the License, or (at your option) any later version.
-
-     This library is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Lesser General Public License for more details.
-
-     You should have received a copy of the GNU Lesser General Public License along with this library; if not, write to the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA Also add information on how to contact you by electronic and paper mail.
-
-You should also get your employer (if you work as a programmer) or your school, if any, to sign a "copyright disclaimer" for the library, if necessary. Here is a sample; alter the names:
-
-Yoyodyne, Inc., hereby disclaims all copyright interest in
-the library `Frob' (a library for tweaking knobs) written
-by James Random Hacker.
-
-signature of Ty Coon, 1 April 1990
-Ty Coon, President of Vice
-That's all there is to it!
-
-```
-
-#### Creative Commons Zero v1.0 Universal (`CC0-1.0`)
-
-```
-Creative Commons Legal Code
-
-CC0 1.0 Universal
-
-    CREATIVE COMMONS CORPORATION IS NOT A LAW FIRM AND DOES NOT PROVIDE
-    LEGAL SERVICES. DISTRIBUTION OF THIS DOCUMENT DOES NOT CREATE AN
-    ATTORNEY-CLIENT RELATIONSHIP. CREATIVE COMMONS PROVIDES THIS
-    INFORMATION ON AN "AS-IS" BASIS. CREATIVE COMMONS MAKES NO WARRANTIES
-    REGARDING THE USE OF THIS DOCUMENT OR THE INFORMATION OR WORKS
-    PROVIDED HEREUNDER, AND DISCLAIMS LIABILITY FOR DAMAGES RESULTING FROM
-    THE USE OF THIS DOCUMENT OR THE INFORMATION OR WORKS PROVIDED
-    HEREUNDER.
-
-Statement of Purpose
-
-The laws of most jurisdictions throughout the world automatically confer
-exclusive Copyright and Related Rights (defined below) upon the creator
-and subsequent owner(s) (each and all, an "owner") of an original work of
-authorship and/or a database (each, a "Work").
-
-Certain owners wish to permanently relinquish those rights to a Work for
-the purpose of contributing to a commons of creative, cultural and
-scientific works ("Commons") that the public can reliably and without fear
-of later claims of infringement build upon, modify, incorporate in other
-works, reuse and redistribute as freely as possible in any form whatsoever
-and for any purposes, including without limitation commercial purposes.
-These owners may contribute to the Commons to promote the ideal of a free
-culture and the further production of creative, cultural and scientific
-works, or to gain reputation or greater distribution for their Work in
-part through the use and efforts of others.
-
-For these and/or other purposes and motivations, and without any
-expectation of additional consideration or compensation, the person
-associating CC0 with a Work (the "Affirmer"), to the extent that he or she
-is an owner of Copyright and Related Rights in the Work, voluntarily
-elects to apply CC0 to the Work and publicly distribute the Work under its
-terms, with knowledge of his or her Copyright and Related Rights in the
-Work and the meaning and intended legal effect of CC0 on those rights.
-
-1. Copyright and Related Rights. A Work made available under CC0 may be
-protected by copyright and related or neighboring rights ("Copyright and
-Related Rights"). Copyright and Related Rights include, but are not
-limited to, the following:
-
-  i. the right to reproduce, adapt, distribute, perform, display,
-     communicate, and translate a Work;
- ii. moral rights retained by the original author(s) and/or performer(s);
-iii. publicity and privacy rights pertaining to a person's image or
-     likeness depicted in a Work;
- iv. rights protecting against unfair competition in regards to a Work,
-     subject to the limitations in paragraph 4(a), below;
-  v. rights protecting the extraction, dissemination, use and reuse of data
-     in a Work;
- vi. database rights (such as those arising under Directive 96/9/EC of the
-     European Parliament and of the Council of 11 March 1996 on the legal
-     protection of databases, and under any national implementation
-     thereof, including any amended or successor version of such
-     directive); and
-vii. other similar, equivalent or corresponding rights throughout the
-     world based on applicable law or treaty, and any national
-     implementations thereof.
-
-2. Waiver. To the greatest extent permitted by, but not in contravention
-of, applicable law, Affirmer hereby overtly, fully, permanently,
-irrevocably and unconditionally waives, abandons, and surrenders all of
-Affirmer's Copyright and Related Rights and associated claims and causes
-of action, whether now known or unknown (including existing as well as
-future claims and causes of action), in the Work (i) in all territories
-worldwide, (ii) for the maximum duration provided by applicable law or
-treaty (including future time extensions), (iii) in any current or future
-medium and for any number of copies, and (iv) for any purpose whatsoever,
-including without limitation commercial, advertising or promotional
-purposes (the "Waiver"). Affirmer makes the Waiver for the benefit of each
-member of the public at large and to the detriment of Affirmer's heirs and
-successors, fully intending that such Waiver shall not be subject to
-revocation, rescission, cancellation, termination, or any other legal or
-equitable action to disrupt the quiet enjoyment of the Work by the public
-as contemplated by Affirmer's express Statement of Purpose.
-
-3. Public License Fallback. Should any part of the Waiver for any reason
-be judged legally invalid or ineffective under applicable law, then the
-Waiver shall be preserved to the maximum extent permitted taking into
-account Affirmer's express Statement of Purpose. In addition, to the
-extent the Waiver is so judged Affirmer hereby grants to each affected
-person a royalty-free, non transferable, non sublicensable, non exclusive,
-irrevocable and unconditional license to exercise Affirmer's Copyright and
-Related Rights in the Work (i) in all territories worldwide, (ii) for the
-maximum duration provided by applicable law or treaty (including future
-time extensions), (iii) in any current or future medium and for any number
-of copies, and (iv) for any purpose whatsoever, including without
-limitation commercial, advertising or promotional purposes (the
-"License"). The License shall be deemed effective as of the date CC0 was
-applied by Affirmer to the Work. Should any part of the License for any
-reason be judged legally invalid or ineffective under applicable law, such
-partial invalidity or ineffectiveness shall not invalidate the remainder
-of the License, and in such case Affirmer hereby affirms that he or she
-will not (i) exercise any of his or her remaining Copyright and Related
-Rights in the Work or (ii) assert any associated claims and causes of
-action with respect to the Work, in either case contrary to Affirmer's
-express Statement of Purpose.
-
-4. Limitations and Disclaimers.
-
- a. No trademark or patent rights held by Affirmer are waived, abandoned,
-    surrendered, licensed or otherwise affected by this document.
- b. Affirmer offers the Work as-is and makes no representations or
-    warranties of any kind concerning the Work, express, implied,
-    statutory or otherwise, including without limitation warranties of
-    title, merchantability, fitness for a particular purpose, non
-    infringement, or the absence of latent or other defects, accuracy, or
-    the present or absence of errors, whether or not discoverable, all to
-    the greatest extent permissible under applicable law.
- c. Affirmer disclaims responsibility for clearing rights of other persons
-    that may apply to the Work or any use thereof, including without
-    limitation any person's Copyright and Related Rights in the Work.
-    Further, Affirmer disclaims responsibility for obtaining any necessary
-    consents, permissions or other rights required for any use of the
-    Work.
- d. Affirmer understands and acknowledges that Creative Commons is not a
-    party to this document and has no duty or obligation with respect to
-    this CC0 or use of the Work.
 
 ```
 

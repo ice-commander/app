@@ -1,0 +1,11 @@
+[package]
+name = "ic-view-session"
+version = "0.1.0"
+edition = "2021"
+description = "The toolkit-free half of a plugin view: seeding, events, replies and redescribe"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+ic-view = { workspace = true }
+serde_json = { workspace = true }

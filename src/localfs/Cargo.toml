@@ -1,0 +1,33 @@
+[package]
+name = "localfs"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+
+# This machine's own disks behind the `FileSystemRpc` trait: the local
+# filesystem and the drives root that lists what is mounted. Everything reached
+# over a protocol or inside an archive is a plugin now, so nothing here links a
+# transport or a compression library — which is why the crate is no longer
+# called `virtualfs`.
+[dependencies]
+gtk = { package = "gtk4", version = "0.9", features = ["v4_12"], optional = true }
+adw = { package = "libadwaita", version = "0.7", features = ["v1_6"], optional = true }
+common = { workspace = true }
+client-config = { workspace = true }
+ic-platform = { workspace = true }
+fm-core = { workspace = true }
+tokio = { version = "1.36", features = ["full", "rt-multi-thread"] }
+uuid = { version = "1.8", features = ["v4", "v5"] }
+chrono = { version = "0.4", features = ["serde"] }
+async-trait = "0.1"
+kamadak-exif = "0.5"
+dirs = "6.0.0"
+bytes = { workspace = true }
+
+[features]
+default = ["gtk"]
+# GTK presentation half: the `gtk_fm_ui::FileSystemRpc` impls (thumbnails,
+# on_item_bound, mount dialogs) and the gio-backed drive enumeration. Off = the
+# providers expose only the GTK-free `fm_core` data trait (headless).
+gtk = ["dep:gtk", "dep:adw"]

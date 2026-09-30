@@ -1,6 +1,6 @@
 [package]
 name = "webserver-app"
-version = "0.7.92"
+version = "0.8.130"
 edition = "2021"
 publish = false
 description = "Ice Commander Web Server - Headless Dual-Pane File Manager (browser is the client)"
@@ -15,9 +15,15 @@ name = "ice-webserver"
 path = "src/main.rs"
 
 [dependencies]
+ic-plugin-host = { workspace = true }
+ic-view = { workspace = true }
+ic-view-session = { workspace = true }
+ic-i18n = { workspace = true }
+connection-form = { workspace = true }
+ic-plugin-api = { workspace = true }
 panel-core = { workspace = true }
 panel-server = { workspace = true }
-virtualfs = { path = "../virtualfs", default-features = false }
+localfs = { path = "../localfs", default-features = false }
 fm-core = { workspace = true }
 ic-platform = { workspace = true }
 client-config = { workspace = true }
@@ -47,3 +53,6 @@ name = "ice-commander-webserver"
 assets = [
     { source = "../../bin/webserver-app/release/ice-webserver", dest = "/usr/bin/ice-webserver", mode = "755" },
 ]
+
+[dev-dependencies]
+common = { workspace = true }

@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import { tr } from "../lib/i18n";
-import type { Connection, Drive } from '../api/types'
+import type { Connection, Drive, Side } from '../api/types'
 import arrowRightIcon from '../assets/arrow-right.svg'
 import starIcon from '../assets/star.svg'
 import emptyStarIcon from '../assets/empty-star.svg'
 import { driveIcon, driveSection, SECTION_ORDER, SECTION_TITLES, type DriveSection } from '../lib/driveIcons'
-import { ConnectionForm } from './ConnectionForm'
+import { ConnectionEditor } from './view/ConnectionEditor'
 
 interface Props {
   drives: Drive[]
@@ -15,12 +15,14 @@ interface Props {
   onActivate: (key: string) => void
   onToggleFavorite: (key: string) => void
   onSetFavoritesOnly: (value: boolean) => void
-  /** Persist a connection; `connect` = also mount it in this panel. */
-  onSaveConnection: (conn: Connection, connect: boolean) => void
+  /** Which panel a "save & connect" mounts into. */
+  side: Side
+  /** A record was stored; refresh the list (and the panel when it connected). */
+  onConnectionSaved: (name: string, connected: boolean) => void
   onDeleteConnection: (name: string) => void
 }
 
-export function SelectSource({ drives, connections, favoritesOnly, onActivate, onToggleFavorite, onSetFavoritesOnly, onSaveConnection, onDeleteConnection }: Props) {
+export function SelectSource({ drives, connections, favoritesOnly, side, onActivate, onToggleFavorite, onSetFavoritesOnly, onConnectionSaved, onDeleteConnection }: Props) {
   // `undefined` = closed, `null` = creating a new one, otherwise the record to edit.
   const [editing, setEditing] = useState<Connection | null | undefined>(undefined)
   // Two-step delete: first click arms the button, second confirms.
@@ -136,12 +138,16 @@ export function SelectSource({ drives, connections, favoritesOnly, onActivate, o
         />{tr("webpult.show_only_favorite_drives_on_the_toolbar")}</label>
 
       {editing !== undefined && (
-        <ConnectionForm
-          // `key` remounts the form when switching records, so its fields reload.
+        <ConnectionEditor
+          // `key` remounts the editor when switching records, so its fields reload.
           key={editing?.name ?? '__new__'}
           initial={editing ?? undefined}
+          side={side}
           onCancel={() => setEditing(undefined)}
-          onSave={(conn, connect) => { setEditing(undefined); onSaveConnection(conn, connect) }}
+          onSaved={(name, connected) => {
+            setEditing(undefined)
+            onConnectionSaved(name, connected)
+          }}
         />
       )}
     </div>

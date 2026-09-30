@@ -16,11 +16,9 @@
     <file compressed="true" preprocess="xml-stripblanks">file.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">fileexplorer.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">folder.svg</file>
-    <file compressed="true" preprocess="xml-stripblanks">ftp.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">home.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">list-icons.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">medium-icons.svg</file>
-    <file compressed="true" preprocess="xml-stripblanks">netdrive.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">refresh.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">small-icons.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">ssd.svg</file>

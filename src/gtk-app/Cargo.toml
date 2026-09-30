@@ -1,6 +1,6 @@
 [package]
 name = "ice-commander-gtk"
-version = "0.7.122"
+version = "0.8.130"
 edition = "2021"
 description = "Ice Commander - Dual-Pane File Manager"
 authors = ["Igor Savchenko <igor.savchenko@icecommander.com>"]
@@ -14,6 +14,13 @@ name = "ice-commander"
 path = "src/main.rs"
 
 [dependencies]
+ic-plugin-api = { workspace = true }
+ic-plugin-host = { workspace = true }
+connection-form = { workspace = true }
+ic-view = { workspace = true }
+ic-view-session = { workspace = true }
+ic-view-gtk = { workspace = true }
+ic-canvas-gtk = { workspace = true }
 gtk = { package = "gtk4", version = "0.9", features = ["v4_12"] }
 adw = { package = "libadwaita", version = "0.7", features = ["v1_6"] }
 libc = "0.2"
@@ -23,7 +30,6 @@ serde_json = "1.0"
 common = { workspace = true }
 ic-model = { workspace = true }
 ic-utils = { workspace = true }
-sysinfo = "0.29"
 client-config = { workspace = true }
 ic-logging = { workspace = true }
 hostname = "0.4"
@@ -33,27 +39,23 @@ fm-core = { workspace = true }
 relm4 = { workspace = true }
 gtk-terminal-ui = { workspace = true }
 gtk-registry-ui = { workspace = true }
-gtk-process-ui = { workspace = true }
-gtk-devtools-ui = { workspace = true }
 gtk-updater-ui = { workspace = true }
 gtk-viewer-ui = { workspace = true }
 panel-router = { path = "../panel-router" }
 panel-server = { workspace = true }
-virtualfs = { workspace = true }
+localfs = { workspace = true }
 md5 = "0.8.0"
 reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls-webpki-roots"] }
 # Connection-secret encryption at rest (machine-derived key) + protected export.
 secret-store = { workspace = true }
 transfer-core = { workspace = true }
-gtk-sysinfo-ui = { workspace = true }
 
 uuid = { version = "1.8", features = ["v4", "v5"] }
 async-trait = "0.1"
-ic-platform = { workspace = true, features = ["video-codecs"] }
+ic-platform = { workspace = true }
 dirs = "6.0.0"
 chrono = { version = "0.4", features = ["serde"] }
 rodio = { version = "0.19", default-features = false, features = ["mp3", "flac", "vorbis", "wav", "symphonia-aac", "symphonia-isomp4"] }
-pdfium-render = { version = "0.9.2" }
 image = "0.24.2"
 kamadak-exif = "0.5"
 
@@ -99,5 +101,4 @@ assets = [
 gtk4 = "*"
 libadwaita = "*"
 
-[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
-libmpv2 = "6.0"
+[dev-dependencies]

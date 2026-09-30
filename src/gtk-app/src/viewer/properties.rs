@@ -1,6 +1,9 @@
 use adw::prelude::*;
 
-pub(super) fn show_directory_properties(parent_window: &impl IsA<gtk::Window>, entry: &gtk_fm_ui::FileEntry) {
+pub(super) fn show_directory_properties(
+    parent_window: &impl IsA<gtk::Window>,
+    entry: &gtk_fm_ui::FileEntry,
+) {
     let folder_icon = gtk::Image::builder()
         .resource("/com/icecommander/gtk/folder.svg")
         .pixel_size(80)

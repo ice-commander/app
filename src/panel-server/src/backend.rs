@@ -1,5 +1,6 @@
 use crate::{
-    ApiCmd, ApiConnection, ApiDrive, ApiFileContent, ApiPanelState, ApiResult, PanelSide,
+    ApiCmd, ApiConnection, ApiConnectionForm, ApiDrive, ApiFileContent, ApiPanelState, ApiResult,
+    PanelSide,
 };
 
 #[async_trait::async_trait(?Send)]
@@ -21,7 +22,12 @@ pub trait PanelBackend {
     async fn mkdir(&self, side: PanelSide, name: String) -> ApiResult<()>;
     async fn rename(&self, side: PanelSide, old_path: String, new_name: String) -> ApiResult<()>;
     async fn copy(&self, src: PanelSide, dst: PanelSide, paths: Vec<String>) -> ApiResult<()>;
-    async fn move_entries(&self, src: PanelSide, dst: PanelSide, paths: Vec<String>) -> ApiResult<()>;
+    async fn move_entries(
+        &self,
+        src: PanelSide,
+        dst: PanelSide,
+        paths: Vec<String>,
+    ) -> ApiResult<()>;
     async fn read_file(&self, side: PanelSide, path: String) -> ApiResult<ApiFileContent>;
     async fn stream_file(&self, side: PanelSide, path: String) -> ApiResult<Vec<u8>>;
     async fn write_file(&self, side: PanelSide, path: String, content: String) -> ApiResult<()>;
@@ -40,6 +46,40 @@ pub trait PanelBackend {
     fn set_connections_dialog(&self, open: bool) -> ApiResult<()>;
     fn export_connections(&self, password: Option<String>) -> ApiResult<String>;
     fn import_connections(&self, data: String, password: Option<String>) -> ApiResult<usize>;
+
+    // Runs on the thread that owns the plugins: the registries are thread-bound
+    // and what they hand back is not Send, so an actix worker never reaches them.
+    fn connection_kinds(&self) -> ApiResult<serde_json::Value>;
+    async fn submit_connection_form(&self, form: ApiConnectionForm)
+        -> ApiResult<serde_json::Value>;
+    fn connection_form_event(
+        &self,
+        kind: String,
+        event: serde_json::Value,
+    ) -> ApiResult<serde_json::Value>;
+    fn plugin_views(&self) -> ApiResult<serde_json::Value>;
+    fn open_plugin_view(&self, id: String, argument: String) -> ApiResult<serde_json::Value>;
+    fn plugin_view_event(
+        &self,
+        id: String,
+        event: serde_json::Value,
+    ) -> ApiResult<serde_json::Value>;
+    fn close_plugin_view(&self, id: String) -> ApiResult<()>;
+    fn plugin_asset(&self, name: String) -> ApiResult<Vec<u8>>;
+
+    async fn open_viewer(
+        &self,
+        side: PanelSide,
+        path: String,
+        client: String,
+    ) -> ApiResult<Option<serde_json::Value>>;
+    fn viewer_event(&self, instance: u64, event: serde_json::Value)
+        -> ApiResult<serde_json::Value>;
+    fn viewer_part(&self, instance: u64, name: String) -> ApiResult<Vec<u8>>;
+    fn close_viewer(&self, instance: u64, force: bool) -> ApiResult<serde_json::Value>;
+    fn drop_viewers_of(&self, client: String);
+
+    fn translations(&self) -> ApiResult<serde_json::Value>;
 
     fn toggle_favorite(&self, path: String);
     fn get_favorites_only(&self) -> bool;
@@ -92,10 +132,20 @@ pub async fn dispatch_core<B: PanelBackend + ?Sized>(backend: &B, cmd: ApiCmd) -
         ApiCmd::StreamFile { side, path, reply } => {
             let _ = reply.send(backend.stream_file(side, path).await);
         }
-        ApiCmd::WriteFile { side, path, content, reply } => {
+        ApiCmd::WriteFile {
+            side,
+            path,
+            content,
+            reply,
+        } => {
             let _ = reply.send(backend.write_file(side, path, content).await);
         }
-        ApiCmd::UploadFile { side, path, data, reply } => {
+        ApiCmd::UploadFile {
+            side,
+            path,
+            data,
+            reply,
+        } => {
             let _ = reply.send(backend.upload_file(side, path, data).await);
         }
 
@@ -107,15 +157,30 @@ pub async fn dispatch_core<B: PanelBackend + ?Sized>(backend: &B, cmd: ApiCmd) -
             let _ = reply.send(Ok(()));
             let _ = backend.mkdir(side, name).await;
         }
-        ApiCmd::Rename { side, old_path, new_name, reply } => {
+        ApiCmd::Rename {
+            side,
+            old_path,
+            new_name,
+            reply,
+        } => {
             let _ = reply.send(Ok(()));
             let _ = backend.rename(side, old_path, new_name).await;
         }
-        ApiCmd::Copy { src_side, dst_side, paths, reply } => {
+        ApiCmd::Copy {
+            src_side,
+            dst_side,
+            paths,
+            reply,
+        } => {
             let _ = reply.send(Ok(()));
             let _ = backend.copy(src_side, dst_side, paths).await;
         }
-        ApiCmd::Move { src_side, dst_side, paths, reply } => {
+        ApiCmd::Move {
+            src_side,
+            dst_side,
+            paths,
+            reply,
+        } => {
             let _ = reply.send(Ok(()));
             let _ = backend.move_entries(src_side, dst_side, paths).await;
         }
@@ -135,7 +200,11 @@ pub async fn dispatch_core<B: PanelBackend + ?Sized>(backend: &B, cmd: ApiCmd) -
         ApiCmd::DeleteConnection { name, reply } => {
             let _ = reply.send(backend.delete_connection(name));
         }
-        ApiCmd::ConnectTo { side, connection, reply } => {
+        ApiCmd::ConnectTo {
+            side,
+            connection,
+            reply,
+        } => {
             let _ = reply.send(backend.connect_to(side, connection).await);
         }
         ApiCmd::RefreshPanel { side, reply } => {
@@ -156,7 +225,11 @@ pub async fn dispatch_core<B: PanelBackend + ?Sized>(backend: &B, cmd: ApiCmd) -
         ApiCmd::ExportConnections { password, reply } => {
             let _ = reply.send(backend.export_connections(password));
         }
-        ApiCmd::ImportConnections { data, password, reply } => {
+        ApiCmd::ImportConnections {
+            data,
+            password,
+            reply,
+        } => {
             let _ = reply.send(backend.import_connections(data, password));
         }
 
@@ -170,6 +243,68 @@ pub async fn dispatch_core<B: PanelBackend + ?Sized>(backend: &B, cmd: ApiCmd) -
         ApiCmd::SetFavoritesOnly { value, reply } => {
             backend.set_favorites_only(value);
             let _ = reply.send(Ok(()));
+        }
+
+        ApiCmd::ConnectionKinds { reply } => {
+            let _ = reply.send(backend.connection_kinds());
+        }
+        ApiCmd::SubmitConnectionForm { form, reply } => {
+            let _ = reply.send(backend.submit_connection_form(form).await);
+        }
+        ApiCmd::ConnectionFormEvent { kind, event, reply } => {
+            let _ = reply.send(backend.connection_form_event(kind, event));
+        }
+        ApiCmd::PluginViews { reply } => {
+            let _ = reply.send(backend.plugin_views());
+        }
+        ApiCmd::OpenPluginView {
+            id,
+            argument,
+            reply,
+        } => {
+            let _ = reply.send(backend.open_plugin_view(id, argument));
+        }
+        ApiCmd::PluginViewEvent { id, event, reply } => {
+            let _ = reply.send(backend.plugin_view_event(id, event));
+        }
+        ApiCmd::ClosePluginView { id, reply } => {
+            let _ = reply.send(backend.close_plugin_view(id));
+        }
+        ApiCmd::PluginAsset { name, reply } => {
+            let _ = reply.send(backend.plugin_asset(name));
+        }
+        ApiCmd::ViewerOpen {
+            side,
+            path,
+            client,
+            reply,
+        } => {
+            let _ = reply.send(backend.open_viewer(side, path, client).await);
+        }
+        ApiCmd::ViewerEvent {
+            instance,
+            event,
+            reply,
+        } => {
+            let _ = reply.send(backend.viewer_event(instance, event));
+        }
+        ApiCmd::ViewerPart {
+            instance,
+            name,
+            reply,
+        } => {
+            let _ = reply.send(backend.viewer_part(instance, name));
+        }
+        ApiCmd::ViewerClose {
+            instance,
+            force,
+            reply,
+        } => {
+            let _ = reply.send(backend.close_viewer(instance, force));
+        }
+        ApiCmd::ViewersGone { client } => backend.drop_viewers_of(client),
+        ApiCmd::Translations { reply } => {
+            let _ = reply.send(backend.translations());
         }
 
         other => return Some(other),
