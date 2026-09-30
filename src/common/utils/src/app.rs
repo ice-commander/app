@@ -48,7 +48,10 @@ pub fn restart_app() {
             {
                 if exe_str.ends_with(" (deleted)") {
                     exe_str.truncate(exe_str.len() - " (deleted)".len());
-                    log_msg(&format!("Detected '(deleted)' suffix. Stripped path: {}", exe_str));
+                    log_msg(&format!(
+                        "Detected '(deleted)' suffix. Stripped path: {}",
+                        exe_str
+                    ));
                 }
             }
 
@@ -154,7 +157,9 @@ mod tests {
         let lines: Vec<&str> = contents.lines().collect();
         assert_eq!(lines.len(), 2, "each event appends exactly one line");
         for (line, msg) in lines.iter().zip(["first line", "second line"]) {
-            let (stamp, rest) = line.split_once("] ").expect("line must start with [timestamp]");
+            let (stamp, rest) = line
+                .split_once("] ")
+                .expect("line must start with [timestamp]");
             assert_eq!(rest, msg);
             assert!(stamp.starts_with('['));
             assert_eq!(stamp.len(), 20, "unexpected timestamp width in {:?}", line);

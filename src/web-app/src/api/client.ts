@@ -1,5 +1,13 @@
 import type { Backend, TerminalCallbacks, TerminalSession } from './backend'
 import type { Connection, Drive, FileContent, Operation, PanelState, Side } from './types'
+import type {
+  ConnectionKinds,
+  Json,
+  ViewerAnswer,
+  ViewerClosed,
+  ViewerOpened,
+  ViewSnapshot,
+} from '../lib/view/types'
 import { HttpBackend } from './http'
 
 /**
@@ -34,6 +42,42 @@ export const exportConnections = (password?: string): Promise<string> => backend
 export const importConnections = (data: string, password?: string): Promise<number> =>
   backend.importConnections(data, password)
 export const connectTo = (side: Side, connection: Connection): Promise<void> => backend.connectTo(side, connection)
+
+// ── the declarative plugin surface ────────────────────────────────────────────
+export const fetchConnectionKinds = (): Promise<ConnectionKinds> => backend.fetchConnectionKinds()
+export const submitConnectionForm = (form: {
+  kind: string
+  values: Record<string, Json>
+  touched: string[]
+  editing?: string
+  connect?: Side
+}): Promise<{ ok: boolean; name?: string; missing?: string[] }> =>
+  backend.submitConnectionForm(form)
+export const sendConnectionFormEvent = (
+  kind: string,
+  event: Record<string, unknown>,
+): Promise<ViewSnapshot> => backend.sendConnectionFormEvent(kind, event)
+export const fetchPluginViews = (): Promise<{ id: string; title: string }[]> =>
+  backend.fetchPluginViews()
+export const openPluginView = (id: string, argument?: string): Promise<ViewSnapshot> =>
+  backend.openPluginView(id, argument)
+export const sendPluginViewEvent = (
+  id: string,
+  event: Record<string, unknown>,
+): Promise<ViewSnapshot> => backend.sendPluginViewEvent(id, event)
+export const closePluginView = (id: string): Promise<void> => backend.closePluginView(id)
+export const openViewer = (side: Side, path: string): Promise<ViewerOpened | null> =>
+  backend.openViewer(side, path)
+export const sendViewerEvent = (
+  instance: number,
+  event: Record<string, unknown>,
+): Promise<ViewerAnswer> => backend.sendViewerEvent(instance, event)
+export const viewerPartUrl = (instance: number, name: string, drawn?: number): string =>
+  backend.viewerPartUrl(instance, name, drawn)
+export const closeViewer = (instance: number, force?: boolean): Promise<ViewerClosed> =>
+  backend.closeViewer(instance, force)
+export const fetchTranslations = (): Promise<{ lang: string; keys: Record<string, string> }> =>
+  backend.fetchTranslations()
 
 // ── favorites ─────────────────────────────────────────────────────────────────
 export const toggleFavorite = (key: string): Promise<void> => backend.toggleFavorite(key)

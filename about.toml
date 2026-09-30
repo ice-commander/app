@@ -24,11 +24,6 @@ accepted = [
     # File-level copyleft only (symphonia, resvg/usvg, webpki-roots …). It binds
     # those crates' own files, not this project's code.
     "MPL-2.0",
-    # libmpv2 / libmpv2-sys — the Rust bindings to libmpv, used by the video
-    # viewer on Windows and macOS only. LGPL is satisfied here because this
-    # source tree is published and can be relinked.
-    "LGPL-2.1",
-    "LGPL-2.1-or-later",
 ]
 
 # The desktop app is built for these; the list decides which platform-only
@@ -56,8 +51,4 @@ private = { ignore = true }
 # expression is an AND — every part has to be accepted explicitly.
 [ring]
 accepted = ["ISC", "MIT", "OpenSSL", "OpenSSL-standalone", "SSLeay-standalone"]
-
-[display-info.clarify]
-license = "Apache-2.0"
-files = [{ path = "LICENSE", license = "Apache-2.0", checksum = "1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6" }]
 

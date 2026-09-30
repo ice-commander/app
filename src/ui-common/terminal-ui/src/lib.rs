@@ -714,7 +714,6 @@ fn paste_into_pty(
     });
 }
 
-
 fn acs_char(b: u8) -> Option<char> {
     Some(match b {
         b'q' => '─',

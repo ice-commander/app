@@ -65,7 +65,10 @@ mod tests {
     fn plain_names_are_joined_under_a_leading_slash_on_both_platforms() {
         for windows in [true, false] {
             assert_eq!(join_with(&["tmp"], windows), "/tmp");
-            assert_eq!(join_with(&["home", "ice", "docs"], windows), "/home/ice/docs");
+            assert_eq!(
+                join_with(&["home", "ice", "docs"], windows),
+                "/home/ice/docs"
+            );
         }
     }
 
@@ -82,11 +85,31 @@ mod tests {
     #[test]
     fn scripts_beyond_latin_survive_joining_and_splitting() {
         for (label, names, joined) in [
-            ("ukrainian", vec!["дім", "мої файли", "звіт.txt"], "/дім/мої файли/звіт.txt"),
-            ("chinese", vec!["家", "我的文件", "报告.txt"], "/家/我的文件/报告.txt"),
-            ("arabic", vec!["منزل", "ملفاتي", "تقرير.txt"], "/منزل/ملفاتي/تقرير.txt"),
-            ("greek", vec!["σπίτι", "τα αρχεία μου"], "/σπίτι/τα αρχεία μου"),
-            ("emoji", vec!["🎧 music", "track 1.mp3"], "/🎧 music/track 1.mp3"),
+            (
+                "ukrainian",
+                vec!["дім", "мої файли", "звіт.txt"],
+                "/дім/мої файли/звіт.txt",
+            ),
+            (
+                "chinese",
+                vec!["家", "我的文件", "报告.txt"],
+                "/家/我的文件/报告.txt",
+            ),
+            (
+                "arabic",
+                vec!["منزل", "ملفاتي", "تقرير.txt"],
+                "/منزل/ملفاتي/تقرير.txt",
+            ),
+            (
+                "greek",
+                vec!["σπίτι", "τα αρχεία μου"],
+                "/σπίτι/τα αρχεία μου",
+            ),
+            (
+                "emoji",
+                vec!["🎧 music", "track 1.mp3"],
+                "/🎧 music/track 1.mp3",
+            ),
         ] {
             for windows in [true, false] {
                 assert_eq!(join_with(&names, windows), joined, "{label}");
@@ -110,8 +133,14 @@ mod tests {
 
     #[test]
     fn a_trailing_backslash_absorbs_the_separator_only_on_windows() {
-        assert_eq!(join_with(&["home", "dir\\", "file.txt"], true), "/home/dir\\file.txt");
-        assert_eq!(join_with(&["home", "dir\\", "file.txt"], false), "/home/dir\\/file.txt");
+        assert_eq!(
+            join_with(&["home", "dir\\", "file.txt"], true),
+            "/home/dir\\file.txt"
+        );
+        assert_eq!(
+            join_with(&["home", "dir\\", "file.txt"], false),
+            "/home/dir\\/file.txt"
+        );
     }
 
     #[test]
@@ -147,7 +176,11 @@ mod tests {
                 vec!["дом", "файлы"],
             ] {
                 let joined = join_with(&names, windows);
-                assert_eq!(join_with(&split_joined(&joined), windows), joined, "{names:?}");
+                assert_eq!(
+                    join_with(&split_joined(&joined), windows),
+                    joined,
+                    "{names:?}"
+                );
             }
         }
     }

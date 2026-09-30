@@ -37,7 +37,10 @@ pub fn level(config: &client_config::AppConfig) -> ic_logging::LevelFilter {
 }
 
 pub fn max_mb(config: &client_config::AppConfig) -> u64 {
-    config.get::<u64>("ui.log_max_mb").unwrap_or(DEFAULT_MAX_MB).max(1)
+    config
+        .get::<u64>("ui.log_max_mb")
+        .unwrap_or(DEFAULT_MAX_MB)
+        .max(1)
 }
 
 pub fn apply(config: &client_config::AppConfig) {

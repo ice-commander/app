@@ -4,7 +4,6 @@ use std::rc::Rc;
 use common::AppError;
 use fm_core::rpc::FileSystemRpc;
 
-use virtualfs::archive_rpc::ArchiveFileSystemRpc;
 use crate::nav::{NavPath, PathLevel};
 
 use crate::PathSegment;
@@ -16,7 +15,10 @@ pub struct History {
 
 impl History {
     pub fn new() -> Self {
-        Self { snapshots: Vec::new(), index: 0 }
+        Self {
+            snapshots: Vec::new(),
+            index: 0,
+        }
     }
 
     pub fn record(&mut self, nav: NavPath) {
@@ -97,7 +99,11 @@ impl RouterState {
             showing_selector: Rc::new(Cell::new(false)),
             resolving: Cell::new(false),
             path: Rc::new(RefCell::new(crate::nav::NavPath::new(
-                crate::nav::PathLevel::new(root_fs.display_name().unwrap_or_default(), "/", root_fs),
+                crate::nav::PathLevel::new(
+                    root_fs.display_name().unwrap_or_default(),
+                    "/",
+                    root_fs,
+                ),
             ))),
             on_changed: Rc::new(RefCell::new(None)),
         }
@@ -114,28 +120,47 @@ impl RouterState {
     }
 
     pub async fn list_active(&self) -> Result<(), AppError> {
+        self.show_active_contents(fm_core::listing::Freshness::Fresh)
+            .await
+    }
+
+    /// The same, for a caller that has just read this directory itself — the
+    /// walk that checks a typed path ends on the folder the panel is about to
+    /// show, and reading it twice in one action is waste, not carefulness.
+    async fn show_active_contents(
+        &self,
+        freshness: fm_core::listing::Freshness,
+    ) -> Result<(), AppError> {
         let (fs, rel) = {
             let path = self.path.borrow();
             let a = path.active();
             (a.fs.clone(), a.relative_path.clone())
         };
-        let entries = fs.list_dir(rel).await?;
-        {
-            let mut path = self.path.borrow_mut();
-            let active = path.active_mut();
-            active.entries = Rc::new(entries);
-            active.loaded = true;
-        }
+        // The one memory holds it; the level is a window onto that.
+        fm_core::listing::list(&fs, &rel, freshness).await?;
         self.notify_changed();
         Ok(())
     }
 
+    /// Reads this folder again, and stops trusting what is remembered about
+    /// anything inside it.
+    ///
+    /// A refresh follows every write the application makes — a copy into this
+    /// folder, a delete, a rename — and a tree copied in changes what is below
+    /// it as much as the folder itself. It is also what the user asks for with
+    /// F5, and there it means the same thing: believe nothing you kept.
     pub async fn refresh(&self) -> Result<(), AppError> {
+        let (fs, rel) = {
+            let path = self.path.borrow();
+            let a = path.active();
+            (a.fs.clone(), a.relative_path.clone())
+        };
+        fm_core::listing::forget_within(fs.as_ref(), &rel);
         self.list_active().await
     }
 
-    async fn show_active(&self) -> Result<(), AppError> {
-        let loaded = self.path.borrow().active().loaded;
+    pub(crate) async fn show_active(&self) -> Result<(), AppError> {
+        let loaded = self.path.borrow().active().has_been_read();
         if loaded {
             self.notify_changed();
             Ok(())
@@ -161,7 +186,11 @@ impl RouterState {
         let segs = Self::normalize_typed_segments(crate::parse_path_to_segments(input.trim()));
 
         let f0 = self.path.borrow().levels()[0].fs.clone();
-        let walk_base = if f0.is_root_fs() { self.local_provider.clone() } else { f0.clone() };
+        let walk_base = if f0.is_root_fs() {
+            self.local_provider.clone()
+        } else {
+            f0.clone()
+        };
 
         let leaving = self.path.borrow().absolute_path();
         if let Some(name) = self.active_selected() {
@@ -172,10 +201,16 @@ impl RouterState {
         for i in 0..segs.len() {
             let levels = crate::nav::build_levels(&segs[..=i], walk_base.clone());
             let (fs, rel) = {
-                let last = levels.last().expect("build_levels always yields the root level");
+                let last = levels
+                    .last()
+                    .expect("build_levels always yields the root level");
                 (last.fs.clone(), last.relative_path.clone())
             };
-            match fs.list_dir(rel).await {
+            // Only asking whether this much of the path exists. A folder read
+            // a moment ago on the way in is the same folder now, and on a
+            // server inside an archive each of these used to be the whole
+            // container over the network again.
+            match fm_core::listing::list(&fs, &rel, fm_core::listing::Freshness::Remembered).await {
                 Ok(_) => valid = i + 1,
                 Err(_) => break,
             }
@@ -185,7 +220,10 @@ impl RouterState {
         let final_levels = crate::nav::build_levels(&segs[..valid], commit_base.clone());
         *self.path.borrow_mut() = crate::nav::NavPath::from_levels(final_levels, commit_base);
         self.showing_selector.set(false);
-        self.list_active().await?;
+        // The walk above ended on this very folder; showing it does not need
+        // to ask again.
+        self.show_active_contents(fm_core::listing::Freshness::Remembered)
+            .await?;
         self.record_history_snapshot();
 
         Ok(valid == segs.len())
@@ -206,7 +244,10 @@ impl RouterState {
                         if out.is_empty()
                             && s.name.len() == 2
                             && s.name.ends_with(':')
-                            && s.name.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+                            && s.name
+                                .chars()
+                                .next()
+                                .is_some_and(|c| c.is_ascii_alphabetic())
                         {
                             s.name = s.name.to_uppercase();
                         }
@@ -250,9 +291,11 @@ impl RouterState {
                 parts.push(name);
                 fm_core::path::join_segment_names(&parts)
             };
-            if crate::nav::is_archive(name) {
-                let archive = Rc::new(ArchiveFileSystemRpc::new(child_rel, parent_fs));
-                path.push(PathLevel::new(name, "/", archive));
+            if let Some(plugin) = fm_core::plugin_fs::filesystem_for(name) {
+                let provider = Rc::new(fm_core::plugin_fs::PluginFsRpc::new(
+                    plugin, child_rel, parent_fs,
+                ));
+                path.push(PathLevel::new(name, "/", provider));
             } else {
                 path.push(PathLevel::new(name, child_rel, parent_fs));
             }
@@ -264,6 +307,11 @@ impl RouterState {
 
     pub fn active_provider(&self) -> Rc<dyn FileSystemRpc> {
         self.path.borrow().active().fs.clone()
+    }
+
+    /// Where the panel stands, as its own filesystem spells it.
+    pub fn active_relative_path(&self) -> String {
+        self.path.borrow().active().relative_path.clone()
     }
 
     pub fn resolve_relative(&self, abs: &str) -> String {

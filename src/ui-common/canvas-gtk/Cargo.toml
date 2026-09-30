@@ -1,0 +1,16 @@
+[package]
+name = "ic-canvas-gtk"
+version = "0.1.0"
+edition = "2021"
+description = "A place in a GTK window where a plugin puts pixels of its own"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+gtk = { package = "gtk4", version = "0.9", features = ["v4_12"] }
+ic-plugin-api = { workspace = true }
+libc = "0.2"
+
+[[test]]
+name = "drawing"
+harness = false

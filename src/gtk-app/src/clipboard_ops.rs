@@ -24,11 +24,7 @@ fn same_filesystem(src: Option<&Rc<dyn FileSystemRpc>>, dest: &Rc<dyn FileSystem
     }
 }
 
-pub fn take(
-    clipboard: &Rc<Clipboard>,
-    fm: &Rc<panel_router::PanelRouter>,
-    kind: ClipKind,
-) -> bool {
+pub fn take(clipboard: &Rc<Clipboard>, fm: &Rc<panel_router::PanelRouter>, kind: ClipKind) -> bool {
     let items: Vec<_> = fm
         .selected_entries()
         .into_iter()
@@ -70,16 +66,18 @@ pub fn paste_into(
     let Ok(app_window) = window.clone().downcast::<adw::ApplicationWindow>() else {
         return;
     };
-    let Some((kind, source_path, items, provider, refresh_source, source_level)) = clipboard.with(|c| {
-        (
-            c.kind,
-            c.source_path.clone(),
-            c.items.clone(),
-            c.source.clone(),
-            c.refresh_source.clone(),
-            c.anchor.upgrade(),
-        )
-    }) else {
+    let Some((kind, source_path, items, provider, refresh_source, source_level)) =
+        clipboard.with(|c| {
+            (
+                c.kind,
+                c.source_path.clone(),
+                c.items.clone(),
+                c.source.clone(),
+                c.refresh_source.clone(),
+                c.anchor.upgrade(),
+            )
+        })
+    else {
         return;
     };
     let dest_path = match &into_subdir {
@@ -213,7 +211,10 @@ mod tests {
         let second = map.get("a (1).txt").unwrap();
         assert_ne!(first, second, "both were numbered against the same list");
         assert_eq!(first, "a (2).txt");
-        assert_eq!(second, "a (1) (1).txt", "an existing counter is not parsed, another is appended");
+        assert_eq!(
+            second, "a (1) (1).txt",
+            "an existing counter is not parsed, another is appended"
+        );
     }
 
     #[test]
@@ -225,7 +226,10 @@ mod tests {
     #[test]
     fn a_folder_is_numbered_without_being_split_at_its_dot() {
         let map = super::plan_names(&[ci("backup.2024", true)], taken(&["backup.2024"]));
-        assert_eq!(map.get("backup.2024").map(String::as_str), Some("backup.2024 (1)"));
+        assert_eq!(
+            map.get("backup.2024").map(String::as_str),
+            Some("backup.2024 (1)")
+        );
     }
 
     #[test]
@@ -244,12 +248,18 @@ mod tests {
 
     #[test]
     fn a_name_without_an_extension_still_counts_up() {
-        assert_eq!(unique_name("README", false, &taken(&["README"])), "README (1)");
+        assert_eq!(
+            unique_name("README", false, &taken(&["README"])),
+            "README (1)"
+        );
     }
 
     #[test]
     fn a_dotfile_keeps_its_leading_dot() {
-        assert_eq!(unique_name(".bashrc", false, &taken(&[".bashrc"])), ".bashrc (1)");
+        assert_eq!(
+            unique_name(".bashrc", false, &taken(&[".bashrc"])),
+            ".bashrc (1)"
+        );
     }
 
     #[test]

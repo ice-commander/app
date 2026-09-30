@@ -10,7 +10,12 @@ publish = false
 # `fm_core::FileSystemRpc` objects only — no widgets — so it builds without GTK and is
 # the core a headless (console/web-server) backend drives, the same one the GTK app's
 [dependencies]
+ic-plugin-api = { workspace = true }
 common = { workspace = true }
 fm-core = { workspace = true }
-virtualfs = { path = "../virtualfs", default-features = false }
+ic-platform = { workspace = true }
 async-trait = "0.1"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tokio = { workspace = true }

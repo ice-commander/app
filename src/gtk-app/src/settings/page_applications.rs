@@ -33,7 +33,11 @@ pub(super) fn build(page_box: &Box, parent: &gtk::Window, config: client_config:
     {
         let config = config.clone();
         action_row.connect_selected_notify(move |row| {
-            let value = if row.selected() == 1 { "system" } else { "viewer" };
+            let value = if row.selected() == 1 {
+                "system"
+            } else {
+                "viewer"
+            };
             config.set("ui.double_click_action", value.to_string());
             config.save();
         });
@@ -47,7 +51,9 @@ pub(super) fn build(page_box: &Box, parent: &gtk::Window, config: client_config:
         .margin_top(24)
         .build();
 
-    let assoc_list = ListBox::builder().selection_mode(SelectionMode::None).build();
+    let assoc_list = ListBox::builder()
+        .selection_mode(SelectionMode::None)
+        .build();
     assoc_list.add_css_class("boxed-list");
 
     let rebuild_cell: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::new(RefCell::new(None));

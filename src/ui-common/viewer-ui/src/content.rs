@@ -2,8 +2,8 @@ use crate::encoding::{encode_windows_1251, get_text_for_format};
 use crate::metadata::query_file_metadata;
 use crate::{Format, Mode};
 use adw::prelude::*;
-use gtk::{Align, Button, Label, Orientation, ScrolledWindow, TextView, Window};
 use fm_core::rpc::FileSystemRpc;
+use gtk::{Align, Button, Label, Orientation, ScrolledWindow, TextView, Window};
 use std::cell::{Cell, RefCell};
 use std::path::Path;
 use std::rc::Rc;
@@ -21,9 +21,7 @@ pub(crate) fn load_image_paintable(pic: &gtk::Picture, data: &[u8], raw: &RawHoo
         gtk::glib::Bytes::from(data)
     };
     let stream = gtk::gio::MemoryInputStream::from_bytes(&bytes_glib);
-    if let Ok(pixbuf) =
-        gtk::gdk_pixbuf::Pixbuf::from_stream(&stream, gtk::gio::Cancellable::NONE)
-    {
+    if let Ok(pixbuf) = gtk::gdk_pixbuf::Pixbuf::from_stream(&stream, gtk::gio::Cancellable::NONE) {
         let pixbuf = pixbuf.apply_embedded_orientation().unwrap_or(pixbuf);
         let texture = gtk::gdk::Texture::for_pixbuf(&pixbuf);
         pic.set_paintable(Some(&texture));
@@ -54,8 +52,23 @@ pub(crate) fn build_editor_content(
         .unwrap_or_default();
     let ext_is_image = matches!(
         ext.as_str(),
-        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "svg" | "webp" | "ico" |
-        "nef" | "cr2" | "cr3" | "arw" | "dng" | "raf" | "orf" | "rw2" | "pef"
+        "png"
+            | "jpg"
+            | "jpeg"
+            | "gif"
+            | "bmp"
+            | "svg"
+            | "webp"
+            | "ico"
+            | "nef"
+            | "cr2"
+            | "cr3"
+            | "arw"
+            | "dng"
+            | "raf"
+            | "orf"
+            | "rw2"
+            | "pef"
     );
     let is_image = decide_image(&bytes, &ext, ext_is_image);
 
@@ -91,7 +104,9 @@ pub(crate) fn build_editor_content(
     let file_path = Rc::new(RefCell::new(file_path_str.map(|s| s.to_string())));
     let file_name_cell = Rc::new(RefCell::new(file_name.to_string()));
 
-    let main_box = gtk::Box::builder().orientation(Orientation::Vertical).build();
+    let main_box = gtk::Box::builder()
+        .orientation(Orientation::Vertical)
+        .build();
 
     let toolbar = gtk::Box::builder()
         .orientation(Orientation::Horizontal)
@@ -104,7 +119,9 @@ pub(crate) fn build_editor_content(
     toolbar.add_css_class("editor-toolbar");
     crate::style::ensure_loaded();
 
-    let btn_close = Button::builder().tooltip_text(&*crate::i18n::tr("editor.tooltip_close")).build();
+    let btn_close = Button::builder()
+        .tooltip_text(&*crate::i18n::tr("editor.tooltip_close"))
+        .build();
     let btn_close_content = gtk::Box::builder()
         .orientation(Orientation::Horizontal)
         .spacing(4)
@@ -130,7 +147,9 @@ pub(crate) fn build_editor_content(
     btn_view_content.append(&lbl_view);
     btn_view.set_child(Some(&btn_view_content));
 
-    let btn_edit = Button::builder().tooltip_text(&*crate::i18n::tr("editor.tooltip_edit")).build();
+    let btn_edit = Button::builder()
+        .tooltip_text(&*crate::i18n::tr("editor.tooltip_edit"))
+        .build();
     let btn_edit_content = gtk::Box::builder()
         .orientation(Orientation::Horizontal)
         .spacing(4)
@@ -142,7 +161,9 @@ pub(crate) fn build_editor_content(
     btn_edit_content.append(&lbl_edit);
     btn_edit.set_child(Some(&btn_edit_content));
 
-    let btn_save = Button::builder().tooltip_text(&*crate::i18n::tr("editor.tooltip_save")).build();
+    let btn_save = Button::builder()
+        .tooltip_text(&*crate::i18n::tr("editor.tooltip_save"))
+        .build();
     let btn_save_content = gtk::Box::builder()
         .orientation(Orientation::Horizontal)
         .spacing(4)
@@ -222,7 +243,11 @@ pub(crate) fn build_editor_content(
         ext.as_str(),
         "nef" | "cr2" | "cr3" | "arw" | "dng" | "raf" | "orf" | "rw2" | "pef"
     );
-    let raw_hook: RawHook = if is_raw_file { services.raw_thumbnail.clone() } else { None };
+    let raw_hook: RawHook = if is_raw_file {
+        services.raw_thumbnail.clone()
+    } else {
+        None
+    };
     let raw_hook_dropdown = raw_hook.clone();
     let raw_hook_reload = raw_hook.clone();
     let raw_hook_btn = raw_hook.clone();
@@ -484,7 +509,8 @@ pub(crate) fn build_editor_content(
 
                 gtk::glib::spawn_future_local(async move {
                     let res = if let Some(ref p) = provider_c {
-                        p.read_file_opt(path_c.clone(), None, crate::read_blocking(&path_c)).await
+                        p.read_file_opt(path_c.clone(), None, crate::read_blocking(&path_c))
+                            .await
                     } else {
                         std::fs::read(std::path::Path::new(&path_c)).map_err(common::AppError::from)
                     };
@@ -495,7 +521,9 @@ pub(crate) fn build_editor_content(
                             *original_bytes_c.borrow_mut() = bytes.clone();
                             let fmt = current_format_c.get();
                             match fmt {
-                                Format::Image => load_image_paintable(&picture_c, &bytes, &raw_hook_c),
+                                Format::Image => {
+                                    load_image_paintable(&picture_c, &bytes, &raw_hook_c)
+                                }
                                 Format::Hex => hex_view_c.set_bytes(&bytes),
                                 _ => {
                                     let text = get_text_for_format(fmt, &bytes);
@@ -512,7 +540,10 @@ pub(crate) fn build_editor_content(
                             root_stack_c.set_visible_child_name("content");
                             let dialog = adw::AlertDialog::builder()
                                 .heading(&*crate::i18n::tr("editor.reload_error"))
-                                .body(&*crate::i18n::trf("editor.failed_reload", &[("error", &*(e.to_string()).to_string())]))
+                                .body(&*crate::i18n::trf(
+                                    "editor.failed_reload",
+                                    &[("error", &*(e.to_string()).to_string())],
+                                ))
                                 .build();
                             dialog.add_response("ok", &*crate::i18n::tr("editor.ok"));
                             dialog.present(Some(&window_c));
@@ -607,9 +638,16 @@ pub(crate) fn build_editor_content(
 
                 gtk::glib::spawn_future_local(async move {
                     let res = if let Some(ref p) = provider_res {
-                        p.write_file(path_for_callback.clone(), save_bytes_res.clone(), None, None).await
+                        p.write_file(
+                            path_for_callback.clone(),
+                            save_bytes_res.clone(),
+                            None,
+                            None,
+                        )
+                        .await
                     } else {
-                        std::fs::write(Path::new(&path_for_callback), &save_bytes_res).map_err(common::AppError::from)
+                        std::fs::write(Path::new(&path_for_callback), &save_bytes_res)
+                            .map_err(common::AppError::from)
                     };
                     btn_save_res.set_sensitive(true);
                     match res {
@@ -632,13 +670,17 @@ pub(crate) fn build_editor_content(
 
                             on_saved_res();
 
-                            let new_meta = query_file_metadata(path_for_callback, provider_res).await;
+                            let new_meta =
+                                query_file_metadata(path_for_callback, provider_res).await;
                             initial_metadata_res.set(new_meta);
                         }
                         Err(e) => {
                             let dialog = adw::AlertDialog::builder()
                                 .heading(&*crate::i18n::tr("editor.save_error"))
-                                .body(&*crate::i18n::trf("editor.failed_save", &[("error", &*(e.to_string()).to_string())]))
+                                .body(&*crate::i18n::trf(
+                                    "editor.failed_save",
+                                    &[("error", &*(e.to_string()).to_string())],
+                                ))
                                 .build();
                             dialog.add_response("ok", &*crate::i18n::tr("editor.ok"));
                             dialog.present(Some(&window_res));
@@ -685,7 +727,9 @@ pub(crate) fn build_editor_content(
             });
             dialog.present(Some(&window_save));
         } else {
-            let Some(path) = file_path_save.borrow().clone() else { return; };
+            let Some(path) = file_path_save.borrow().clone() else {
+                return;
+            };
             let fast_save = services_save.fast_save;
 
             let baseline = initial_metadata_save.get();
@@ -707,12 +751,24 @@ pub(crate) fn build_editor_content(
                                     .heading(&*crate::i18n::tr("editor.file_changed_externally"))
                                     .body(&*crate::i18n::tr("editor.file_changed_externally_body"))
                                     .build();
-                                dialog.add_response("overwrite", &*crate::i18n::tr("editor.overwrite_anyway"));
-                                dialog.add_response("reload", &*crate::i18n::tr("editor.reload_from_disk"));
+                                dialog.add_response(
+                                    "overwrite",
+                                    &*crate::i18n::tr("editor.overwrite_anyway"),
+                                );
+                                dialog.add_response(
+                                    "reload",
+                                    &*crate::i18n::tr("editor.reload_from_disk"),
+                                );
                                 dialog.add_response("cancel", &*crate::i18n::tr("editor.cancel"));
                                 dialog.set_default_response(Some("cancel"));
-                                dialog.set_response_appearance("overwrite", adw::ResponseAppearance::Destructive);
-                                dialog.set_response_appearance("reload", adw::ResponseAppearance::Suggested);
+                                dialog.set_response_appearance(
+                                    "overwrite",
+                                    adw::ResponseAppearance::Destructive,
+                                );
+                                dialog.set_response_appearance(
+                                    "reload",
+                                    adw::ResponseAppearance::Suggested,
+                                );
 
                                 let do_save_dialog = do_save_c.clone();
                                 let reload_file_dialog = reload_file_c.clone();
@@ -722,7 +778,10 @@ pub(crate) fn build_editor_content(
                                 dialog.connect_response(None, move |d, response| {
                                     match response {
                                         "overwrite" => {
-                                            do_save_dialog(path_save_inner.clone(), save_bytes_inner.clone());
+                                            do_save_dialog(
+                                                path_save_inner.clone(),
+                                                save_bytes_inner.clone(),
+                                            );
                                         }
                                         "reload" => {
                                             reload_file_dialog();
@@ -740,10 +799,14 @@ pub(crate) fn build_editor_content(
                                 .heading(&*crate::i18n::tr("editor.file_not_found"))
                                 .body(&*crate::i18n::tr("editor.file_deleted_externally_body"))
                                 .build();
-                            dialog.add_response("overwrite", &*crate::i18n::tr("editor.save_anyway"));
+                            dialog
+                                .add_response("overwrite", &*crate::i18n::tr("editor.save_anyway"));
                             dialog.add_response("cancel", &*crate::i18n::tr("editor.cancel"));
                             dialog.set_default_response(Some("cancel"));
-                            dialog.set_response_appearance("overwrite", adw::ResponseAppearance::Suggested);
+                            dialog.set_response_appearance(
+                                "overwrite",
+                                adw::ResponseAppearance::Suggested,
+                            );
 
                             let do_save_dialog = do_save_c.clone();
                             let path_save_inner = path_save.clone();
@@ -751,7 +814,10 @@ pub(crate) fn build_editor_content(
 
                             dialog.connect_response(None, move |d, response| {
                                 if response == "overwrite" {
-                                    do_save_dialog(path_save_inner.clone(), save_bytes_inner.clone());
+                                    do_save_dialog(
+                                        path_save_inner.clone(),
+                                        save_bytes_inner.clone(),
+                                    );
                                 }
                                 d.close();
                             });
@@ -856,7 +922,6 @@ pub(crate) fn build_editor_content(
     window.present();
 }
 
-
 fn decide_image(bytes: &[u8], ext: &str, ext_is_image: bool) -> bool {
     if looks_like_image(bytes, ext) {
         return true;
@@ -874,8 +939,8 @@ fn looks_like_image(bytes: &[u8], ext: &str) -> bool {
         b"GIF87a",
         b"GIF89a",
         b"BM",
-        b"II*\x00",       // TIFF little-endian, also most raw formats
-        b"MM\x00*",       // TIFF big-endian
+        b"II*\x00", // TIFF little-endian, also most raw formats
+        b"MM\x00*", // TIFF big-endian
         b"FUJIFILM",
     ];
     if SIGNATURES.iter().any(|sig| bytes.starts_with(sig)) {
@@ -917,7 +982,11 @@ mod tests {
     fn camera_raws_stay_images() {
         assert!(decide_image(b"IIRO\x08\x00\x00\x00", "orf", true));
         assert!(decide_image(b"IIU\x00\x18\x00\x00\x00", "rw2", true));
-        assert!(decide_image(b"\x00\x00\x00\x18ftypcrx \x00\x00\x00\x01", "cr3", true));
+        assert!(decide_image(
+            b"\x00\x00\x00\x18ftypcrx \x00\x00\x00\x01",
+            "cr3",
+            true
+        ));
         assert!(looks_like_image(b"II*\x00\x08\x00\x00\x00", "nef"));
     }
 

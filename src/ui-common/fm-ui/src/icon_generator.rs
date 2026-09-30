@@ -182,7 +182,11 @@ mod tests {
         backgrounds.sort_unstable();
         let count = backgrounds.len();
         backgrounds.dedup();
-        assert_eq!(backgrounds.len(), count, "two file types share a background");
+        assert_eq!(
+            backgrounds.len(),
+            count,
+            "two file types share a background"
+        );
     }
 
     #[test]
@@ -193,4 +197,3 @@ mod tests {
         assert!(svg.contains("#ffeea3"));
     }
 }
-
