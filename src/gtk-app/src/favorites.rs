@@ -1,5 +1,7 @@
 pub fn get_favorites(config: &client_config::AppConfig) -> Vec<String> {
-    config.get::<Vec<String>>("ui.favorites").unwrap_or_default()
+    config
+        .get::<Vec<String>>("ui.favorites")
+        .unwrap_or_default()
 }
 
 pub fn is_favorite(config: &client_config::AppConfig, path: &str) -> bool {
@@ -43,7 +45,9 @@ pub fn set_favorites(config: &client_config::AppConfig, favs: Vec<String>) {
 }
 
 pub fn is_favorites_only(config: &client_config::AppConfig) -> bool {
-    config.get::<bool>("ui.drives_toolbar_favorites_only").unwrap_or(false)
+    config
+        .get::<bool>("ui.drives_toolbar_favorites_only")
+        .unwrap_or(false)
 }
 
 pub fn set_favorites_only(config: &client_config::AppConfig, val: bool) {
@@ -52,7 +56,10 @@ pub fn set_favorites_only(config: &client_config::AppConfig, val: bool) {
 }
 
 pub fn reset_to_defaults(config: &client_config::AppConfig) {
-    set_favorites(config, vec!["local_fs:/".to_string(), "local_fs:~".to_string()]);
+    set_favorites(
+        config,
+        vec!["local_fs:/".to_string(), "local_fs:~".to_string()],
+    );
     set_favorites_only(config, false);
 }
 

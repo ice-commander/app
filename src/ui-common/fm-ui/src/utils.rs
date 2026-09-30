@@ -2,6 +2,20 @@ use adw::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+pub const TOOLBAR_ICON_SIZE: i32 = 20;
+
+pub fn toolbar_icon(resource: &str) -> gtk::Image {
+    let image = gtk::Image::from_resource(resource);
+    image.set_pixel_size(TOOLBAR_ICON_SIZE);
+    image
+}
+
+pub fn toolbar_icon_named(name: &str) -> gtk::Image {
+    let image = gtk::Image::from_icon_name(name);
+    image.set_pixel_size(TOOLBAR_ICON_SIZE);
+    image
+}
+
 pub fn build_path_string(parts: &[String]) -> String {
     fm_core::path::join_segment_names(parts)
 }
@@ -45,12 +59,17 @@ pub fn update_status_bar_text(
             let folders_str = if folders == 1 {
                 crate::i18n::tr("fm.status.one_folder").to_string()
             } else {
-                crate::i18n::trf("fm.status.many_folders", &[("count", &*(folders).to_string())]).to_string()
+                crate::i18n::trf(
+                    "fm.status.many_folders",
+                    &[("count", &*(folders).to_string())],
+                )
+                .to_string()
             };
             let files_str = if files == 1 {
                 crate::i18n::tr("fm.status.one_file").to_string()
             } else {
-                crate::i18n::trf("fm.status.many_files", &[("count", &*(files).to_string())]).to_string()
+                crate::i18n::trf("fm.status.many_files", &[("count", &*(files).to_string())])
+                    .to_string()
             };
             format!("{}, {}", folders_str, files_str)
         }
@@ -71,10 +90,23 @@ pub fn update_status_bar_text(
                     format!(" | {}", date)
                 };
                 if entry.is_dir() {
-                    crate::i18n::trf("fm.status.selected_folder", &[("name", &*(name).to_string()), ("date", &*(date_part).to_string())])
-                        .to_string()
+                    crate::i18n::trf(
+                        "fm.status.selected_folder",
+                        &[
+                            ("name", &*(name).to_string()),
+                            ("date", &*(date_part).to_string()),
+                        ],
+                    )
+                    .to_string()
                 } else {
-                    crate::i18n::trf("fm.status.selected_file", &[("name", &*(name).to_string()), ("size", &*(format_size(entry.size())).to_string()), ("date", &*(date_part).to_string())])
+                    crate::i18n::trf(
+                        "fm.status.selected_file",
+                        &[
+                            ("name", &*(name).to_string()),
+                            ("size", &*(format_size(entry.size())).to_string()),
+                            ("date", &*(date_part).to_string()),
+                        ],
+                    )
                     .to_string()
                 }
             } else {
@@ -101,14 +133,28 @@ pub fn update_status_bar_text(
         let folders_str = if sel_folders == 1 {
             crate::i18n::tr("fm.status.one_folder").to_string()
         } else {
-            crate::i18n::trf("fm.status.many_folders", &[("count", &*(sel_folders).to_string())]).to_string()
+            crate::i18n::trf(
+                "fm.status.many_folders",
+                &[("count", &*(sel_folders).to_string())],
+            )
+            .to_string()
         };
         let files_str = if sel_files == 1 {
             crate::i18n::tr("fm.status.one_file").to_string()
         } else {
-            crate::i18n::trf("fm.status.many_files", &[("count", &*(sel_files).to_string())]).to_string()
+            crate::i18n::trf(
+                "fm.status.many_files",
+                &[("count", &*(sel_files).to_string())],
+            )
+            .to_string()
         };
-        crate::i18n::trf("fm.status.selected_multiple", &[("folders", &*(folders_str).to_string()), ("files", &*(files_str).to_string())])
+        crate::i18n::trf(
+            "fm.status.selected_multiple",
+            &[
+                ("folders", &*(folders_str).to_string()),
+                ("files", &*(files_str).to_string()),
+            ],
+        )
         .to_string()
     };
     status_label.set_text(&status_text);
@@ -129,21 +175,11 @@ pub fn get_file_icon(name: &str, is_dir: bool, size: u32, permissions: Option<u3
     }
 
     let ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
-    let lower_name = name.to_lowercase();
-    let is_tar_compound = lower_name.ends_with(".tar.gz") || lower_name.ends_with(".tar.bz2");
 
-    let mapped_type = if is_tar_compound {
-        Some((crate::icon_generator::FileType::Archive, "TAR".to_string()))
+    let mapped_type = if let Some(label) = fm_core::plugin_fs::mount_label(name) {
+        Some((crate::icon_generator::FileType::Archive, label))
     } else {
         match ext.as_str() {
-            "zip" | "rar" | "7z" | "tar" | "gz" | "tgz" | "bz2" | "tbz2" | "tbz" => {
-                let text = if ext == "7z" {
-                    "7Z".to_string()
-                } else {
-                    ext.to_uppercase()
-                };
-                Some((crate::icon_generator::FileType::Archive, text))
-            }
             "pdf" | "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" => {
                 let text = if ext.len() > 4 {
                     ext[..4].to_uppercase()
@@ -340,14 +376,20 @@ mod tests {
     #[test]
     fn fractional_sizes_keep_two_decimals() {
         assert_eq!(format_size(1536), "1.50 KB");
-        assert_eq!(format_size(3 * 1024 * 1024 * 1024 + 512 * 1024 * 1024), "3.50 GB");
+        assert_eq!(
+            format_size(3 * 1024 * 1024 * 1024 + 512 * 1024 * 1024),
+            "3.50 GB"
+        );
     }
 
     #[test]
     fn the_largest_size_stays_in_gigabytes() {
         let text = format_size(u64::MAX);
         assert!(text.ends_with(" GB"), "unexpected unit in {text}");
-        assert!(text.starts_with("17179869184"), "unexpected value in {text}");
+        assert!(
+            text.starts_with("17179869184"),
+            "unexpected value in {text}"
+        );
     }
 
     fn assert_classified(name: &str, label: &str, file_type: FileType) {
@@ -374,27 +416,95 @@ mod tests {
         );
     }
 
-    #[test]
-    fn compound_tar_names_are_labelled_tar() {
-        assert_classified("backup.tar.gz", "TAR", FileType::Archive);
-        assert_classified("backup.tar.bz2", "TAR", FileType::Archive);
-        assert_classified("BACKUP.TAR.GZ", "TAR", FileType::Archive);
+    fn with_a_filesystem_plugin(extensions: &str) -> fm_core::plugin_fs::RegistryLease {
+        use std::os::raw::{c_char, c_int};
+        extern "C" fn open_in(
+            _: ic_plugin_api::IcFsSource,
+            _: *const c_char,
+            _: *mut std::os::raw::c_void,
+        ) -> ic_plugin_api::IcFsHandle {
+            1 as ic_plugin_api::IcFsHandle
+        }
+        extern "C" fn close(_: ic_plugin_api::IcFsHandle) {}
+        extern "C" fn list(
+            _: ic_plugin_api::IcFsHandle,
+            _: *const c_char,
+        ) -> ic_plugin_api::IcListing {
+            ic_plugin_api::IcListing {
+                items: std::ptr::null(),
+                count: 0,
+            }
+        }
+        extern "C" fn read(
+            _: ic_plugin_api::IcFsHandle,
+            _: *const c_char,
+        ) -> ic_plugin_api::IcBytes {
+            ic_plugin_api::IcBytes {
+                data: std::ptr::null(),
+                len: 0,
+            }
+        }
+        extern "C" fn read_only(_: ic_plugin_api::IcFsHandle) -> c_int {
+            1
+        }
+        extern "C" fn last_error(_: ic_plugin_api::IcFsHandle) -> *const c_char {
+            std::ptr::null()
+        }
+        let table = ic_plugin_api::IcFsVTable {
+            struct_size: std::mem::size_of::<ic_plugin_api::IcFsVTable>() as u32,
+            open_in,
+            close,
+            list,
+            read,
+            is_read_only: read_only,
+            last_error,
+            write: None,
+            create_dir: None,
+            remove: None,
+            rename: None,
+            shell_open: None,
+            shell_read: None,
+            shell_write: None,
+            shell_resize: None,
+            shell_close: None,
+            shell_available: None,
+            columns: None,
+            list_rows: None,
+            action_state: None,
+            cell_clicked: None,
+        };
+        let lease = fm_core::plugin_fs::lease_registry_for_test();
+        let declared = std::ffi::CString::new(extensions).unwrap();
+        assert_eq!(
+            fm_core::plugin_fs::register(declared.as_ptr(), &table, std::ptr::null_mut()),
+            ic_plugin_api::IC_OK
+        );
+        lease
     }
 
     #[test]
-    fn short_tar_aliases_keep_their_own_label() {
+    fn a_file_a_plugin_can_open_is_labelled_from_what_the_plugin_declares() {
+        let _lease = with_a_filesystem_plugin(".zip,.tar,.tar.gz,.tgz,.tar.bz2,.tbz2,.tbz");
+        assert_classified("backup.tar.gz", "TAR", FileType::Archive);
+        assert_classified("BACKUP.TAR.GZ", "TAR", FileType::Archive);
         assert_classified("backup.tgz", "TGZ", FileType::Archive);
         assert_classified("backup.tbz2", "TBZ2", FileType::Archive);
-        assert_classified("backup.tbz", "TBZ", FileType::Archive);
-        assert_classified("backup.bz2", "BZ2", FileType::Archive);
-        assert_classified("backup.tar", "TAR", FileType::Archive);
+        assert_classified("dump.zip", "ZIP", FileType::Archive);
     }
 
     #[test]
-    fn seven_zip_gets_a_leading_digit_label() {
-        assert_classified("dump.7z", "7Z", FileType::Archive);
-        assert_classified("dump.rar", "RAR", FileType::Archive);
+    fn a_format_no_plugin_declares_is_not_an_archive_to_the_application() {
+        let _lease = with_a_filesystem_plugin(".zip");
         assert_classified("dump.zip", "ZIP", FileType::Archive);
+        assert_ne!(
+            get_file_icon("dump.7z", false, LIST_SIZE, None),
+            FileIcon::GeneratedSvg(generate_svg_icon("7Z", FileType::Archive, LIST_SIZE)),
+            "the application must not know 7z on its own"
+        );
+        assert_ne!(
+            get_file_icon("dump.rar", false, LIST_SIZE, None),
+            FileIcon::GeneratedSvg(generate_svg_icon("RAR", FileType::Archive, LIST_SIZE))
+        );
     }
 
     #[test]
@@ -441,8 +551,14 @@ mod tests {
     #[test]
     fn any_executable_bit_turns_an_unknown_file_into_a_binary() {
         let bin = FileIcon::GeneratedSvg(generate_svg_icon("BIN", FileType::Executable, LIST_SIZE));
-        assert_eq!(get_file_icon("tool.bundle", false, LIST_SIZE, Some(0o755)), bin);
-        assert_eq!(get_file_icon("tool.bundle", false, LIST_SIZE, Some(0o001)), bin);
+        assert_eq!(
+            get_file_icon("tool.bundle", false, LIST_SIZE, Some(0o755)),
+            bin
+        );
+        assert_eq!(
+            get_file_icon("tool.bundle", false, LIST_SIZE, Some(0o001)),
+            bin
+        );
         assert_eq!(
             get_file_icon("tool.bundle", false, LIST_SIZE, Some(0o644)),
             FileIcon::Resource(FILE_RES.to_string())

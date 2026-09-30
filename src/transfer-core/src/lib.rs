@@ -13,7 +13,9 @@ pub struct ThrottleTimer {
 
 impl ThrottleTimer {
     pub fn new() -> Self {
-        Self { last: std::time::Instant::now() }
+        Self {
+            last: std::time::Instant::now(),
+        }
     }
 
     pub fn ready(&mut self) -> bool {
@@ -82,8 +84,14 @@ pub fn retarget_top_level(
 
 #[derive(Clone, Debug)]
 pub enum CopyMessage {
-    FileStart { name: String, size: u64 },
-    Progress { file_bytes: u64, total_bytes_copied: u64 },
+    FileStart {
+        name: String,
+        size: u64,
+    },
+    Progress {
+        file_bytes: u64,
+        total_bytes_copied: u64,
+    },
     FileDone,
     FileSkipped,
 }
@@ -107,7 +115,14 @@ pub fn request_error_decision_blocking(
     message: String,
 ) -> ErrorAction {
     let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-    if error_tx.send(ErrorRequest { file: file.to_string(), message, reply: reply_tx }).is_err() {
+    if error_tx
+        .send(ErrorRequest {
+            file: file.to_string(),
+            message,
+            reply: reply_tx,
+        })
+        .is_err()
+    {
         return ErrorAction::Abort;
     }
     reply_rx.blocking_recv().unwrap_or(ErrorAction::Abort)
@@ -119,7 +134,14 @@ pub async fn request_error_decision_async(
     message: String,
 ) -> ErrorAction {
     let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-    if error_tx.send(ErrorRequest { file: file.to_string(), message, reply: reply_tx }).is_err() {
+    if error_tx
+        .send(ErrorRequest {
+            file: file.to_string(),
+            message,
+            reply: reply_tx,
+        })
+        .is_err()
+    {
         return ErrorAction::Abort;
     }
     reply_rx.await.unwrap_or(ErrorAction::Abort)
@@ -140,14 +162,16 @@ pub fn format_size(bytes: u64) -> String {
     }
 }
 
-
 pub async fn read_file_async(
     provider: std::rc::Rc<dyn FileSystemRpc>,
     path: String,
     progress_callback: Rc<dyn Fn(u64)>,
 ) -> Result<Vec<u8>, AppError> {
     provider
-        .read_file(path, Some(Box::new(move |bytes_read| progress_callback(bytes_read))))
+        .read_file(
+            path,
+            Some(Box::new(move |bytes_read| progress_callback(bytes_read))),
+        )
         .await
         .map_err(AppError::from)
 }
@@ -160,7 +184,14 @@ pub async fn write_file_async(
     progress_callback: Rc<dyn Fn(u64)>,
 ) -> Result<(), AppError> {
     provider
-        .write_file(path, content, permissions, Some(Box::new(move |bytes_written| progress_callback(bytes_written))))
+        .write_file(
+            path,
+            content,
+            permissions,
+            Some(Box::new(move |bytes_written| {
+                progress_callback(bytes_written)
+            })),
+        )
         .await
         .map_err(AppError::from)
 }
@@ -178,7 +209,10 @@ pub async fn create_dir_async(
     dir_name: String,
     permissions: Option<u32>,
 ) -> Result<(), AppError> {
-    provider.create_directory(parent_path, dir_name, permissions).await.map_err(AppError::from)
+    provider
+        .create_directory(parent_path, dir_name, permissions)
+        .await
+        .map_err(AppError::from)
 }
 
 pub async fn scan_items(
@@ -188,12 +222,8 @@ pub async fn scan_items(
     on_update: impl Fn(usize, usize, u64) + 'static,
     cancellation_flag: Arc<AtomicBool>,
 ) -> Result<Vec<TransferItem>, AppError> {
-    let provider_is_local = provider.is_local()
-        && !src_parent.contains(".zip")
-        && !src_parent.contains(".tar")
-        && !src_parent.contains(".tgz")
-        && !src_parent.contains(".tbz");
-
+    let provider_is_local =
+        provider.is_local() && !fm_core::plugin_fs::path_crosses_plugin_fs(&src_parent);
 
     if provider_is_local {
         let src_parent_c = src_parent.clone();
@@ -202,7 +232,11 @@ pub async fn scan_items(
 
         #[derive(Debug)]
         enum ScanMessage {
-            Progress { files: usize, dirs: usize, bytes: u64 },
+            Progress {
+                files: usize,
+                dirs: usize,
+                bytes: u64,
+            },
             Done(Vec<TransferItem>),
         }
 
@@ -222,7 +256,9 @@ pub async fn scan_items(
             impl LocalScanner {
                 fn maybe_send_progress(&mut self) {
                     let now = std::time::Instant::now();
-                    if now.duration_since(self.last_update) >= std::time::Duration::from_millis(PROGRESS_THROTTLE_MS) {
+                    if now.duration_since(self.last_update)
+                        >= std::time::Duration::from_millis(PROGRESS_THROTTLE_MS)
+                    {
                         let _ = self.tx.blocking_send(ScanMessage::Progress {
                             files: self.total_files,
                             dirs: self.total_dirs,
@@ -268,11 +304,7 @@ pub async fn scan_items(
                         let file_name = entry.file_name().to_string_lossy().to_string();
                         let file_type = entry.file_type()?;
                         if file_type.is_dir() {
-                            self.scan(
-                                entry.path(),
-                                relative_path.join(&file_name),
-                                file_name,
-                            )?;
+                            self.scan(entry.path(), relative_path.join(&file_name), file_name)?;
                         } else {
                             let metadata = entry.metadata()?;
                             let permissions = mode_of(&metadata);
@@ -458,42 +490,49 @@ pub async fn execute_transfer(
             let mut throttle = ThrottleTimer::new();
             let mut skipped_local: Vec<String> = Vec::new();
 
-            let mut copy_one_file = |item: &TransferItem, dest_path: &str, base: u64| -> std::io::Result<u64> {
-                let mut src_file = std::fs::File::open(&item.src_path)?;
-                if let Some(parent) = std::path::Path::new(dest_path).parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                let mut dest_file = std::fs::File::create(dest_path)?;
-                let mut file_copied = 0u64;
-                let mut buffer = [0u8; 64 * 1024];
-                loop {
-                    if cancellation_flag_c.load(Ordering::Relaxed) {
-                        drop(dest_file);
-                        let _ = std::fs::remove_file(dest_path);
-                        return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "Cancelled"));
+            let mut copy_one_file =
+                |item: &TransferItem, dest_path: &str, base: u64| -> std::io::Result<u64> {
+                    let mut src_file = std::fs::File::open(&item.src_path)?;
+                    if let Some(parent) = std::path::Path::new(dest_path).parent() {
+                        let _ = std::fs::create_dir_all(parent);
                     }
-                    let bytes_read = src_file.read(&mut buffer)?;
-                    if bytes_read == 0 {
-                        break;
+                    let mut dest_file = std::fs::File::create(dest_path)?;
+                    let mut file_copied = 0u64;
+                    let mut buffer = [0u8; 64 * 1024];
+                    loop {
+                        if cancellation_flag_c.load(Ordering::Relaxed) {
+                            drop(dest_file);
+                            let _ = std::fs::remove_file(dest_path);
+                            return Err(std::io::Error::new(
+                                std::io::ErrorKind::Interrupted,
+                                "Cancelled",
+                            ));
+                        }
+                        let bytes_read = src_file.read(&mut buffer)?;
+                        if bytes_read == 0 {
+                            break;
+                        }
+                        dest_file.write_all(&buffer[..bytes_read])?;
+                        file_copied += bytes_read as u64;
+                        if throttle.ready() {
+                            let _ = progress_tx_c.send(CopyMessage::Progress {
+                                file_bytes: file_copied,
+                                total_bytes_copied: base + file_copied,
+                            });
+                        }
                     }
-                    dest_file.write_all(&buffer[..bytes_read])?;
-                    file_copied += bytes_read as u64;
-                    if throttle.ready() {
-                        let _ = progress_tx_c.send(CopyMessage::Progress {
-                            file_bytes: file_copied,
-                            total_bytes_copied: base + file_copied,
-                        });
-                    }
-                }
-                drop(dest_file);
-                Ok(file_copied)
-            };
+                    drop(dest_file);
+                    Ok(file_copied)
+                };
 
             for item in items_c.iter() {
                 let dest_path = join_path(&dest_parent_c, &item.relative_path);
                 loop {
                     if cancellation_flag_c.load(Ordering::Relaxed) {
-                        return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "Cancelled"));
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::Interrupted,
+                            "Cancelled",
+                        ));
                     }
 
                     let attempt: std::io::Result<()> = if item.is_dir {
@@ -502,7 +541,10 @@ pub async fn execute_transfer(
                             #[cfg(unix)]
                             if let Some(mode) = item.permissions {
                                 use std::os::unix::fs::PermissionsExt;
-                                let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode));
+                                let _ = std::fs::set_permissions(
+                                    path,
+                                    std::fs::Permissions::from_mode(mode),
+                                );
                             }
                         })
                     } else {
@@ -514,7 +556,10 @@ pub async fn execute_transfer(
                             #[cfg(unix)]
                             if let Some(mode) = item.permissions {
                                 use std::os::unix::fs::PermissionsExt;
-                                let _ = std::fs::set_permissions(&dest_path, std::fs::Permissions::from_mode(mode));
+                                let _ = std::fs::set_permissions(
+                                    &dest_path,
+                                    std::fs::Permissions::from_mode(mode),
+                                );
                             }
                             let _ = progress_tx_c.send(CopyMessage::Progress {
                                 file_bytes: copied,
@@ -528,7 +573,11 @@ pub async fn execute_transfer(
                     match attempt {
                         Ok(()) => break,
                         Err(e) if e.kind() == std::io::ErrorKind::Interrupted => return Err(e),
-                        Err(e) => match request_error_decision_blocking(&error_tx_c, &item.name, e.to_string()) {
+                        Err(e) => match request_error_decision_blocking(
+                            &error_tx_c,
+                            &item.name,
+                            e.to_string(),
+                        ) {
                             ErrorAction::Retry => continue,
                             ErrorAction::Skip => {
                                 skipped_local.push(item.relative_path.clone());
@@ -538,7 +587,10 @@ pub async fn execute_transfer(
                                 break;
                             }
                             ErrorAction::Abort => {
-                                return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "Cancelled"));
+                                return Err(std::io::Error::new(
+                                    std::io::ErrorKind::Interrupted,
+                                    "Cancelled",
+                                ));
                             }
                         },
                     }
@@ -566,7 +618,13 @@ pub async fn execute_transfer(
                     } else {
                         String::new()
                     };
-                    create_dir_async(dest_provider.clone(), parent, item.name.clone(), item.permissions).await
+                    create_dir_async(
+                        dest_provider.clone(),
+                        parent,
+                        item.name.clone(),
+                        item.permissions,
+                    )
+                    .await
                 } else {
                     let _ = progress_tx.send(CopyMessage::FileStart {
                         name: item.name.clone(),
@@ -599,7 +657,8 @@ pub async fn execute_transfer(
                             }
                             let progress_tx_c2 = progress_tx.clone();
                             let overall_copied_bytes_c2 = overall_copied_bytes;
-                            let write_throttle = Rc::new(std::cell::RefCell::new(ThrottleTimer::new()));
+                            let write_throttle =
+                                Rc::new(std::cell::RefCell::new(ThrottleTimer::new()));
                             let write_throttle_c = write_throttle.clone();
                             write_file_async(
                                 dest_provider.clone(),
@@ -610,7 +669,8 @@ pub async fn execute_transfer(
                                     if write_throttle_c.borrow_mut().ready() {
                                         let _ = progress_tx_c2.send(CopyMessage::Progress {
                                             file_bytes: bytes_written,
-                                            total_bytes_copied: overall_copied_bytes_c2 + bytes_written,
+                                            total_bytes_copied: overall_copied_bytes_c2
+                                                + bytes_written,
                                         });
                                     }
                                 }),
@@ -631,25 +691,35 @@ pub async fn execute_transfer(
                 match attempt {
                     Ok(()) => break,
                     Err(AppError::Cancelled) => return Err(AppError::Cancelled),
-                    Err(e) => match request_error_decision_async(&error_tx, &item.name, e.to_string()).await {
-                        ErrorAction::Retry => continue,
-                        ErrorAction::Skip => {
-                            skipped.push(item.relative_path.clone());
-                            if !dest_is_local && !item.is_dir {
-                                dest_provider.delete_entries(vec![dest_path.clone()]).await.ok();
+                    Err(e) => {
+                        match request_error_decision_async(&error_tx, &item.name, e.to_string())
+                            .await
+                        {
+                            ErrorAction::Retry => continue,
+                            ErrorAction::Skip => {
+                                skipped.push(item.relative_path.clone());
+                                if !dest_is_local && !item.is_dir {
+                                    dest_provider
+                                        .delete_entries(vec![dest_path.clone()])
+                                        .await
+                                        .ok();
+                                }
+                                if !item.is_dir {
+                                    let _ = progress_tx.send(CopyMessage::FileSkipped);
+                                }
+                                break;
                             }
-                            if !item.is_dir {
-                                let _ = progress_tx.send(CopyMessage::FileSkipped);
+                            ErrorAction::Abort => {
+                                if !dest_is_local && !item.is_dir {
+                                    dest_provider
+                                        .delete_entries(vec![dest_path.clone()])
+                                        .await
+                                        .ok();
+                                }
+                                return Err(AppError::Cancelled);
                             }
-                            break;
                         }
-                        ErrorAction::Abort => {
-                            if !dest_is_local && !item.is_dir {
-                                dest_provider.delete_entries(vec![dest_path.clone()]).await.ok();
-                            }
-                            return Err(AppError::Cancelled);
-                        }
-                    },
+                    }
                 }
             }
         }
@@ -672,13 +742,15 @@ pub async fn execute_transfer(
         }
 
         if !paths_to_delete.is_empty() {
-            src_provider.delete_entries(paths_to_delete).await.map_err(AppError::from)?;
+            src_provider
+                .delete_entries(paths_to_delete)
+                .await
+                .map_err(AppError::from)?;
         }
     }
 
     Ok(())
 }
-
 
 pub type ProviderFactory = Box<dyn FnOnce() -> Rc<dyn FileSystemRpc> + Send>;
 
@@ -736,7 +808,10 @@ mod tests {
     }
 
     fn renames(pairs: &[(&str, &str)]) -> std::collections::HashMap<String, String> {
-        pairs.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .collect()
     }
 
     #[test]
@@ -782,7 +857,10 @@ mod tests {
     fn only_the_first_segment_is_matched() {
         let mut items = [item("/docs/a/notes.txt", "a/notes.txt", "notes.txt", false)];
         retarget_top_level(&mut items, &renames(&[("notes.txt", "notes (1).txt")]));
-        assert_eq!(items[0].relative_path, "a/notes.txt", "a nested namesake must not be hit");
+        assert_eq!(
+            items[0].relative_path, "a/notes.txt",
+            "a nested namesake must not be hit"
+        );
         assert_eq!(items[0].name, "notes.txt");
     }
 

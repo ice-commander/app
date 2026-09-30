@@ -11,7 +11,11 @@ pub(super) fn build_fbuttons(
     right_info: &crate::panel_builder::PanelInfo,
     active_panel: std::rc::Rc<std::cell::Cell<super::ActivePanelSide>>,
     selector_updaters: std::rc::Rc<std::cell::RefCell<Vec<std::rc::Rc<dyn Fn()>>>>,
-    global_on_connect: std::rc::Rc<std::cell::RefCell<Option<std::rc::Rc<dyn Fn(crate::connection_manager::FtpConnection) + 'static>>>>,
+    global_on_connect: std::rc::Rc<
+        std::cell::RefCell<
+            Option<std::rc::Rc<dyn Fn(crate::connection_manager::Connection) + 'static>>,
+        >,
+    >,
     btn_f4_ref: std::rc::Rc<std::cell::RefCell<Option<Button>>>,
     btn_f7_ref: std::rc::Rc<std::cell::RefCell<Option<Button>>>,
 ) -> gtk::Box {
@@ -94,8 +98,12 @@ pub(super) fn build_fbuttons(
                         if btn_clone.label().as_ref().map(|s| s.as_str())
                             == Some(crate::i18n::tr("f_buttons.f4_new").as_str())
                         {
-                            crate::editor::show_new_file_window(&window_clone, Some(active_fm.clone()));
-                        } else if let Some(entry) = active_fm.selected_entries().into_iter().next() {
+                            crate::editor::show_new_file_window(
+                                &window_clone,
+                                Some(active_fm.clone()),
+                            );
+                        } else if let Some(entry) = active_fm.selected_entries().into_iter().next()
+                        {
                             let path = entry.path();
                             crate::editor::show_editor(&window_clone, entry, active_fm.clone());
                             crate::api::notify_viewer_opened(side, &path, "edit");
@@ -127,8 +135,12 @@ pub(super) fn build_fbuttons(
                 let active_panel_btn = active_panel.clone();
                 btn.connect_clicked(move |_| {
                     let toggle = match active_panel_btn.get() {
-                        super::ActivePanelSide::Left => Some(left_info_clone.active_toggle_terminal()),
-                        super::ActivePanelSide::Right => Some(right_info_clone.active_toggle_terminal()),
+                        super::ActivePanelSide::Left => {
+                            Some(left_info_clone.active_toggle_terminal())
+                        }
+                        super::ActivePanelSide::Right => {
+                            Some(right_info_clone.active_toggle_terminal())
+                        }
                         super::ActivePanelSide::None => None,
                     };
                     if let Some(toggle) = toggle {

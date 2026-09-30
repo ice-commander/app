@@ -2,7 +2,7 @@
 !include "x64.nsh"
 
 Name "Ice Commander Console"
-OutFile "..\\..\\distr\\ice-commander-console-0.7.124-1-win64.exe"
+OutFile "..\\..\\distr\\ice-commander-console-0.8.130-1-win64.exe"
 InstallDir "$PROGRAMFILES64\Ice Commander Console"
 Target amd64-unicode
 
@@ -64,7 +64,7 @@ Section "Ice Commander Console (Required)" SecMain
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\IceCommanderConsole" "DisplayName" "Ice Commander Console"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\IceCommanderConsole" "UninstallString" '"$INSTDIR\Uninstall.exe"'
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\IceCommanderConsole" "DisplayIcon" '"$INSTDIR\ice-console.exe"'
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\IceCommanderConsole" "DisplayVersion" "0.7.124"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\IceCommanderConsole" "DisplayVersion" "0.8.130"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\IceCommanderConsole" "Publisher" "Ice Commander Project"
 SectionEnd
 

@@ -120,5 +120,3 @@ pub fn spawn_linux_gui_update(file_path: &Path) -> Result<std::process::Child, S
         Err("spawn_linux_gui_update is only supported on Linux".to_string())
     }
 }
-
-

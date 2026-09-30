@@ -1,14 +1,12 @@
 use adw::prelude::*;
 
-mod audio;
-mod pdf;
-mod plugins;
-mod style;
+mod declared;
 pub(crate) mod properties;
 pub(crate) mod source;
-mod tags;
-mod video;
 
+// What the built-in viewer used to claim. Kept while the plugins that
+// replace it are written; the panel still reads AUDIO_EXT for its own player.
+#[allow(dead_code)]
 const IMAGE_EXT: [&str; 17] = [
     "png", "jpg", "jpeg", "gif", "bmp", "svg", "webp", "ico", "nef", "cr2", "cr3", "arw", "dng",
     "raf", "orf", "rw2", "pef",
@@ -16,24 +14,11 @@ const IMAGE_EXT: [&str; 17] = [
 
 pub(crate) const AUDIO_EXT: [&str; 8] = ["mp3", "wav", "ogg", "oga", "flac", "m4a", "aac", "mp4a"];
 
-pub(crate) const VIDEO_EXT: [&str; 15] = [
-    "mp4", "mkv", "avi", "mov", "webm", "m4v", "wmv", "flv", "ts", "m2ts", "mts", "mpg", "mpeg",
-    "3gp", "ogv",
-];
-
 pub(crate) fn extension_of(path: &str) -> String {
     std::path::Path::new(path)
         .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
         .unwrap_or_default()
-}
-
-fn load_icon(resource_path: &str) -> gtk::Image {
-    let img = gtk::Image::from_resource(resource_path);
-    img.set_pixel_size(30);
-    img.set_width_request(30);
-    img.set_height_request(30);
-    img
 }
 
 pub fn show_viewer(
@@ -46,25 +31,14 @@ pub fn show_viewer(
         return;
     }
     let file_path_str = entry.path();
-    let ext = extension_of(&file_path_str);
-    let kind = if AUDIO_EXT.contains(&ext.as_str()) {
-        Some(source::Kind::Audio)
-    } else if VIDEO_EXT.contains(&ext.as_str()) {
-        Some(source::Kind::Video)
-    } else if ext == "pdf" {
-        Some(source::Kind::Pdf)
-    } else if IMAGE_EXT.contains(&ext.as_str()) {
-        None
-    } else if router.provider().is_local() {
-        source::sniff(&file_path_str)
-    } else {
-        None
-    };
 
-    if kind == Some(source::Kind::Audio) {
+    // A plugin that claims this kind of file draws the window instead of the
+    // application. By extension and nothing else: reading the first bytes of
+    // everything on a server is a request per file for a name we already have.
+    if let Some(viewer) = ic_plugin_host::viewer_for(&entry.name()) {
         open_with(
             parent_window,
-            Box::new(plugins::AudioPlugin),
+            Box::new(declared::DeclaredPlugin::showing(viewer)),
             file_path_str.clone(),
             entry.name(),
             router.clone(),
@@ -73,30 +47,8 @@ pub fn show_viewer(
         return;
     }
 
-    if kind == Some(source::Kind::Video) {
-        #[cfg(target_os = "linux")]
-        {
-            if !ic_platform::video_codecs::is_video_decoding_available() {
-                video::prompt_codec_installation(parent_window, &file_path_str, &router);
-                return;
-            }
-        }
-        open_video(parent_window, &entry, &router);
-        return;
-    }
-
-    if kind == Some(source::Kind::Pdf) {
-        open_with(
-            parent_window,
-            Box::new(plugins::PdfPlugin),
-            file_path_str.clone(),
-            entry.name(),
-            router.clone(),
-            false,
-        );
-        return;
-    }
-
+    // Everything else that nobody claimed falls to the application's own text
+    // and hex viewer, which stays where it is and is always the last resort.
     let parent = parent_window.clone().upcast::<gtk::Window>();
     let router_open = router.clone();
     let path_open = file_path_str.clone();
@@ -113,68 +65,9 @@ pub fn show_viewer(
     });
 }
 
-fn open_video(
-    parent_window: &impl IsA<gtk::Window>,
-    entry: &gtk_fm_ui::FileEntry,
+pub(crate) fn services(
     router: &std::rc::Rc<panel_router::PanelRouter>,
-) {
-    let path = entry.path();
-    let provider = router.provider();
-    if provider.is_local() {
-        video::show_video_player_window(parent_window, &path, router.config());
-        return;
-    }
-
-    let (fetch_win, label, cancelled) =
-        source::fetching_window(parent_window, &entry.name(), entry.size());
-    let parent = parent_window.clone().upcast::<gtk::Window>();
-    let config = router.config();
-    let total = entry.size();
-
-    gtk::glib::spawn_future_local(async move {
-        let label_progress = label.clone();
-        let copy = gtk_viewer_ui::local_copy(&provider, &path, move |done| {
-            label_progress.set_text(&crate::i18n::trf(
-                "viewer.fetching_progress",
-                &[
-                    ("done", &gtk_fm_ui::utils::format_size(done)),
-                    ("total", &gtk_fm_ui::utils::format_size(total)),
-                ],
-            ));
-        })
-        .await;
-
-        if cancelled.get() {
-            return;
-        }
-        fetch_win.close();
-
-        match copy {
-            Ok(copy) => {
-                let player = video::show_video_player_window(
-                    &parent,
-                    &copy.path.to_string_lossy(),
-                    config,
-                );
-                let copy = std::cell::RefCell::new(Some(copy));
-                player.connect_close_request(move |_| {
-                    drop(copy.borrow_mut().take());
-                    gtk::glib::Propagation::Proceed
-                });
-            }
-            Err(e) => {
-                let dialog = adw::AlertDialog::builder()
-                    .heading(&*crate::i18n::tr("player.video_title"))
-                    .body(&crate::i18n::trf("editor.failed_read", &[("error", &e)]))
-                    .build();
-                dialog.add_response("ok", "OK");
-                dialog.present(Some(&parent));
-            }
-        }
-    });
-}
-
-pub(crate) fn services(router: &std::rc::Rc<panel_router::PanelRouter>) -> gtk_viewer_ui::HostServices {
+) -> gtk_viewer_ui::HostServices {
     let config = router.config();
     let save_hotkey = crate::hotkey::get_hotkeys(&config)
         .into_iter()
@@ -182,6 +75,8 @@ pub(crate) fn services(router: &std::rc::Rc<panel_router::PanelRouter>) -> gtk_v
         .map(|h| h.keys);
     let router_saved = router.clone();
     let router_dir = router.clone();
+    // Read on every press, so a key changed in Settings takes effect in open windows.
+    let router_keys = router.clone();
 
     gtk_viewer_ui::HostServices {
         save_hotkey,
@@ -190,6 +85,14 @@ pub(crate) fn services(router: &std::rc::Rc<panel_router::PanelRouter>) -> gtk_v
         on_saved: std::rc::Rc::new(move || router_saved.refresh_spawned()),
         observer: Some(std::rc::Rc::new(crate::viewer_probe::Probe)),
         raw_thumbnail: Some(std::rc::Rc::new(crate::editor::raw_thumbnail)),
+        fullscreen_key: std::rc::Rc::new(move |keyval, state| {
+            crate::hotkey::is_bound_to(
+                &router_keys.config(),
+                "toggle_video_fullscreen",
+                keyval,
+                state,
+            )
+        }),
     }
 }
 

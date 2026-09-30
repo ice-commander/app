@@ -22,7 +22,7 @@ echo "--- Building fakejbig (GPL-free libjbig replacement) ---"
 ./src/fakejbig/build-windows.sh
 
 echo "--- Checking the bundle for GPL code ---"
-./builder/check-bundle-licenses.sh || true
+./builder/check-bundle-licenses.sh --strict
 
 echo "--- Compiling 64-bit Windows Installer with NSIS natively! ---"
 mkdir -p ./distr
@@ -31,7 +31,9 @@ makensis src/gtk-app/setup.nsi
 
 VERSION=$(node -p "require('./package.json').version")
 
-echo "$(md5sum distr/ice-commander-gtk-${VERSION}-1-win64.exe | awk '{print $1}') [GTK4-EXE] ice-commander-gtk-${VERSION}-1-win64.exe" >> distr/md5sums.txt
+SUM=$(md5sum "distr/ice-commander-gtk-${VERSION}-1-win64.exe" | awk '{print $1}')
+[ -n "$SUM" ] || { echo "could not checksum the installer" >&2; exit 1; }
+echo "$SUM [GTK4-EXE] ice-commander-gtk-${VERSION}-1-win64.exe" >> distr/md5sums.txt
 
 echo "--- Done! ---"
 exit 0

@@ -66,11 +66,7 @@ pub fn prompt_unlock(parent: Option<&gtk::Window>, on_done: Rc<dyn Fn(bool)>) {
     dialog.present(parent_present.as_ref());
 }
 
-pub fn prompt_set(
-    parent: &gtk::Window,
-    config: client_config::AppConfig,
-    on_done: Rc<dyn Fn(bool)>,
-) {
+pub fn prompt_set(parent: &gtk::Window, on_done: Rc<dyn Fn(bool)>) {
     let first = password_entry("security.new_placeholder");
     let again = password_entry("security.repeat_placeholder");
     let error = gtk::Label::builder()
@@ -118,8 +114,6 @@ pub fn prompt_set(
             again.grab_focus();
             return;
         }
-
-        crate::secret_store::upgrade_legacy_secrets(&config);
 
         match crate::secret_store::set_master_password(Some(&pw)) {
             Ok(()) => {

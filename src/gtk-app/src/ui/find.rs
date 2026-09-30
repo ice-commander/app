@@ -7,11 +7,9 @@ macro_rules! println {
 }
 
 use adw::prelude::*;
-use gtk::glib;
-use gtk::{
-    Align, Box, Button, Entry, Label, ListBox, ListBoxRow, Orientation, ScrolledWindow,
-};
 use fm_core::rpc::FileSystemRpc;
+use gtk::glib;
+use gtk::{Align, Box, Button, Entry, Label, ListBox, ListBoxRow, Orientation, ScrolledWindow};
 use panel_router::PanelRouter;
 use std::cell::RefCell;
 
@@ -26,8 +24,16 @@ async fn list_dir_async(
     let path_for_log = path.clone();
     let entries = provider.list_dir(path).await.map_err(AppError::from)?;
     println!("[SEARCH RPC] list_dir completed for '{}'", path_for_log);
-    let dirs = entries.iter().filter(|e| e.is_dir).map(|e| e.name.clone()).collect();
-    let files = entries.iter().filter(|e| !e.is_dir).map(|e| (e.name.clone(), e.size)).collect();
+    let dirs = entries
+        .iter()
+        .filter(|e| e.is_dir)
+        .map(|e| e.name.clone())
+        .collect();
+    let files = entries
+        .iter()
+        .filter(|e| !e.is_dir)
+        .map(|e| (e.name.clone(), e.size))
+        .collect();
     Ok((dirs, files))
 }
 
@@ -69,7 +75,10 @@ enum SearchMessage {
     Finished(bool), // true if capped, false if completed
 }
 
-pub fn show_search_dialog<P: glib::object::IsA<gtk::Window>>(parent: &P, active_fm: &Rc<PanelRouter>) {
+pub fn show_search_dialog<P: glib::object::IsA<gtk::Window>>(
+    parent: &P,
+    active_fm: &Rc<PanelRouter>,
+) {
     let current_path_str = active_fm.current_path_string();
     println!(
         "[SEARCH UI] show_search_dialog called. current_path_str: '{}'",
@@ -98,7 +107,10 @@ pub fn show_search_dialog<P: glib::object::IsA<gtk::Window>>(parent: &P, active_
         .build();
 
     let path_label = Label::builder()
-        .label(&*crate::i18n::trf("find.starting_from", &[("path", &*(current_path_str).to_string())]))
+        .label(&*crate::i18n::trf(
+            "find.starting_from",
+            &[("path", &*(current_path_str).to_string())],
+        ))
         .use_markup(true)
         .halign(Align::Start)
         .css_classes(vec!["dim-label"])
@@ -261,9 +273,10 @@ pub fn show_search_dialog<P: glib::object::IsA<gtk::Window>>(parent: &P, active_
             if query.trim().is_empty() {
                 return;
             }
-            let skip_hidden =
-                !active_fm_search_clone.config().get::<bool>(&active_fm_search_clone.show_hidden_config_key())
-                    .unwrap_or(false);
+            let skip_hidden = !active_fm_search_clone
+                .config()
+                .get::<bool>(&active_fm_search_clone.show_hidden_config_key())
+                .unwrap_or(false);
             println!(
                 "[SEARCH UI] Starting new search | Query: '{}' | Path: '{}'",
                 query, current_path_str
@@ -590,7 +603,9 @@ pub fn show_search_dialog<P: glib::object::IsA<gtk::Window>>(parent: &P, active_
                                     if skip_hidden && f_name.starts_with('.') {
                                         continue;
                                     }
-                                    if atomic_cancel_remote.load(std::sync::atomic::Ordering::Relaxed) {
+                                    if atomic_cancel_remote
+                                        .load(std::sync::atomic::Ordering::Relaxed)
+                                    {
                                         break;
                                     }
 
@@ -691,35 +706,42 @@ pub fn show_search_dialog<P: glib::object::IsA<gtk::Window>>(parent: &P, active_
 
                 loop {
                     match rx.try_recv() {
-                        Ok(msg) => {
-                            match msg {
-                                SearchMessage::ScanningDir(dir) => {
-                                    println!("[SEARCH UI] Scanning directory update: '{}'", dir);
-                                    status_lbl.set_text(&*crate::i18n::trf("find.status_searching", &[("dir", &*(dir).to_string())]));
-                                }
-                                SearchMessage::Match(res) => {
-                                    received_count += 1;
-                                    pending_matches.push(res);
-                                }
-                                SearchMessage::Finished(capped) => {
-                                    println!("[SEARCH UI] Traversal finished message received. capped: {}", capped);
-                                    *searching.borrow_mut() = false;
+                        Ok(msg) => match msg {
+                            SearchMessage::ScanningDir(dir) => {
+                                println!("[SEARCH UI] Scanning directory update: '{}'", dir);
+                                status_lbl.set_text(&*crate::i18n::trf(
+                                    "find.status_searching",
+                                    &[("dir", &*(dir).to_string())],
+                                ));
+                            }
+                            SearchMessage::Match(res) => {
+                                received_count += 1;
+                                pending_matches.push(res);
+                            }
+                            SearchMessage::Finished(capped) => {
+                                println!(
+                                    "[SEARCH UI] Traversal finished message received. capped: {}",
+                                    capped
+                                );
+                                *searching.borrow_mut() = false;
 
-                                    btn.set_sensitive(true);
-                                    btn.set_label(&*crate::i18n::tr("find.search_btn"));
-                                    btn.add_css_class("suggested-action");
-                                    btn.remove_css_class("destructive-action");
+                                btn.set_sensitive(true);
+                                btn.set_label(&*crate::i18n::tr("find.search_btn"));
+                                btn.add_css_class("suggested-action");
+                                btn.remove_css_class("destructive-action");
 
-                                    if capped {
-                                        status_lbl.set_text(
-                                            &*crate::i18n::tr("find.status_completed_capped"),
-                                        );
-                                    } else {
-                                        status_lbl.set_text(&*crate::i18n::trf("find.status_completed", &[("count", &*(received_count.to_string()).to_string())]));
-                                    }
+                                if capped {
+                                    status_lbl.set_text(&*crate::i18n::tr(
+                                        "find.status_completed_capped",
+                                    ));
+                                } else {
+                                    status_lbl.set_text(&*crate::i18n::trf(
+                                        "find.status_completed",
+                                        &[("count", &*(received_count.to_string()).to_string())],
+                                    ));
                                 }
                             }
-                        }
+                        },
                         Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
                             break;
                         }
@@ -737,7 +759,10 @@ pub fn show_search_dialog<P: glib::object::IsA<gtk::Window>>(parent: &P, active_
                     btn.set_label(&*crate::i18n::tr("find.search_btn"));
                     btn.add_css_class("suggested-action");
                     btn.remove_css_class("destructive-action");
-                    status_lbl.set_text(&*crate::i18n::trf("find.status_completed", &[("count", &*(received_count.to_string()).to_string())]));
+                    status_lbl.set_text(&*crate::i18n::trf(
+                        "find.status_completed",
+                        &[("count", &*(received_count.to_string()).to_string())],
+                    ));
                 }
 
                 if *cancel_flag.borrow() && *searching.borrow() {
@@ -746,8 +771,10 @@ pub fn show_search_dialog<P: glib::object::IsA<gtk::Window>>(parent: &P, active_
                     btn.set_label(&*crate::i18n::tr("find.search_btn"));
                     btn.add_css_class("suggested-action");
                     btn.remove_css_class("destructive-action");
-                    status_lbl
-                        .set_text(&*crate::i18n::trf("find.status_stopped", &[("count", &*(received_count.to_string()).to_string())]));
+                    status_lbl.set_text(&*crate::i18n::trf(
+                        "find.status_stopped",
+                        &[("count", &*(received_count.to_string()).to_string())],
+                    ));
                 }
 
                 if !pending_matches.is_empty() {
@@ -834,7 +861,11 @@ pub fn show_search_dialog<P: glib::object::IsA<gtk::Window>>(parent: &P, active_
                                     .build()
                             };
 
-                            let btn_go = create_btn(&*crate::i18n::tr("find.open_location"), "/com/icecommander/gtk/open.svg", "");
+                            let btn_go = create_btn(
+                                &*crate::i18n::tr("find.open_location"),
+                                "/com/icecommander/gtk/open.svg",
+                                "",
+                            );
                             let pop_go = popover.clone();
                             let folder_go = res_folder.clone();
                             let fm_go = fm_menu_inner.clone();
@@ -847,7 +878,11 @@ pub fn show_search_dialog<P: glib::object::IsA<gtk::Window>>(parent: &P, active_
                             });
                             vbox.append(&btn_go);
 
-                            let btn_copy = create_btn(&*crate::i18n::tr("find.copy_path"), "/com/icecommander/gtk/copy.svg", "");
+                            let btn_copy = create_btn(
+                                &*crate::i18n::tr("find.copy_path"),
+                                "/com/icecommander/gtk/copy.svg",
+                                "",
+                            );
                             let pop_copy = popover.clone();
                             let full_path = join_paths(&res_folder, &res_name);
                             btn_copy.connect_clicked(move |_| {
@@ -863,8 +898,11 @@ pub fn show_search_dialog<P: glib::object::IsA<gtk::Window>>(parent: &P, active_
                                 .build();
                             vbox.append(&sep);
 
-                            let btn_del =
-                                create_btn(&*crate::i18n::tr("find.delete"), "/com/icecommander/gtk/delete-file.svg", "destructive-action");
+                            let btn_del = create_btn(
+                                &*crate::i18n::tr("find.delete"),
+                                "/com/icecommander/gtk/delete-file.svg",
+                                "destructive-action",
+                            );
                             let pop_del = popover.clone();
                             let full_path_del = join_paths(&res_folder, &res_name);
                             let provider_del = provider_for_gesture.clone();
@@ -878,11 +916,16 @@ pub fn show_search_dialog<P: glib::object::IsA<gtk::Window>>(parent: &P, active_
 
                                 let confirm_dialog = adw::AlertDialog::builder()
                                     .heading(&*crate::i18n::tr("find.confirm_delete_title"))
-                                    .body(&*crate::i18n::trf("find.confirm_delete_body", &[("name", &*(res_name_del).to_string())]))
+                                    .body(&*crate::i18n::trf(
+                                        "find.confirm_delete_body",
+                                        &[("name", &*(res_name_del).to_string())],
+                                    ))
                                     .build();
 
-                                confirm_dialog.add_response("cancel", &*crate::i18n::tr("find.cancel"));
-                                confirm_dialog.add_response("delete", &*crate::i18n::tr("find.delete"));
+                                confirm_dialog
+                                    .add_response("cancel", &*crate::i18n::tr("find.cancel"));
+                                confirm_dialog
+                                    .add_response("delete", &*crate::i18n::tr("find.delete"));
                                 confirm_dialog.set_response_appearance(
                                     "delete",
                                     adw::ResponseAppearance::Destructive,

@@ -21,6 +21,9 @@ pub struct SourceInfo {
     pub root_icon: String,
     pub connection_id: Option<String>,
     pub extra_columns: Vec<fm_core::rpc::ColumnSpec>,
+    pub columns_replace_defaults: bool,
+    pub is_read_only: bool,
+    pub wants_quick_filter: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -62,6 +65,10 @@ pub struct Shared {
 
 #[derive(Clone)]
 struct Views {
+    write_buttons: Vec<gtk::Widget>,
+    /// Kept apart: it is the panel's own and sits at the far end, so hiding
+    /// the rest does not reach it.
+    view_switcher: gtk::Widget,
     rendered_crumbs: std::cell::RefCell<(String, Vec<BreadcrumbSegment>)>,
     stack: gtk::Stack,
     list_view: gtk::ColumnView,
@@ -95,6 +102,7 @@ pub struct FmPanelInit {
     pub thumbnailer: Option<ThumbnailFn>,
     pub toolbar_start_extras: Vec<gtk::Widget>,
     pub toolbar_end_extras: Vec<gtk::Widget>,
+    pub on_selection_changed: Option<std::rc::Rc<dyn Fn(u32, u32)>>,
 }
 
 impl FmPanelInit {
@@ -107,13 +115,18 @@ impl FmPanelInit {
             thumbnailer: None,
             toolbar_start_extras: Vec::new(),
             toolbar_end_extras: Vec::new(),
+            on_selection_changed: None,
         }
     }
 }
 
 #[derive(Debug)]
 pub enum FmPanelInput {
-    ClipboardState { count: usize, mine: bool, cut: bool },
+    ClipboardState {
+        count: usize,
+        mine: bool,
+        cut: bool,
+    },
     Listing {
         path: String,
         entries: Vec<RemoteFileEntry>,
@@ -171,6 +184,9 @@ pub enum FmPanelInput {
     CancelAddressEdit,
     CommitAddressEdit(String),
     ViewToggled(u32),
+    /// Whether the panel's own toolbar buttons are shown. A plugin whose
+    /// filesystem draws its own toolbar turns them off while it is open.
+    ShowDefaultToolbar(bool),
     FilterChanged(String),
 }
 
@@ -192,6 +208,14 @@ pub enum FmPanelOutput {
     Start,
     ActivateFile {
         path: String,
+    },
+    /// A tick in one of a plugin's own columns was clicked. `dir` is the
+    /// listing it happened in and `name` the row.
+    CellToggled {
+        dir: String,
+        name: String,
+        column: String,
+        ticked: bool,
     },
     Download {
         paths: Vec<String>,
@@ -220,14 +244,8 @@ pub enum FmPanelOutput {
         path: String,
         mode: u32,
     },
-    #[cfg(feature = "support-archives")]
     Extract {
         archive_path: String,
-    },
-    #[cfg(feature = "support-archives")]
-    Compress {
-        src: String,
-        dest: String,
     },
     ViewModeChanged(String),
     StateChanged {
@@ -281,6 +299,10 @@ pub struct FmPanelModel {
     is_root: bool,
     select_name: Option<String>,
     listing_generation: u64,
+    /// Whether the panel's own toolbar buttons are wanted. Held because every
+    /// listing decides afresh what to show, and would otherwise bring them
+    /// back the moment anything was listed.
+    default_toolbar_shown: bool,
     view_mode_reflect: Option<String>,
     sort_reflect: Option<(String, bool)>,
     address_row: gtk::Box,
@@ -799,7 +821,7 @@ impl SimpleComponent for FmPanelModel {
 
         let mk_icon_btn = |res: &str, tip: String| {
             let b = gtk::Button::builder()
-                .child(&gtk::Image::from_resource(res))
+                .child(&crate::utils::toolbar_icon(res))
                 .tooltip_text(&tip)
                 .build();
             b.set_cursor_from_name(Some("pointer"));
@@ -811,7 +833,7 @@ impl SimpleComponent for FmPanelModel {
         nav_pill.set_valign(gtk::Align::Center);
 
         let btn_hist_back = gtk::Button::builder()
-            .child(&gtk::Image::from_resource("/com/fm-ui/gtk/arrow-left.svg"))
+            .child(&crate::utils::toolbar_icon("/com/fm-ui/gtk/arrow-left.svg"))
             .tooltip_text(&*crate::i18n::tr("fm.navigate_back"))
             .sensitive(false)
             .build();
@@ -825,7 +847,9 @@ impl SimpleComponent for FmPanelModel {
         nav_pill.append(&btn_hist_back);
 
         let btn_hist_forward = gtk::Button::builder()
-            .child(&gtk::Image::from_resource("/com/fm-ui/gtk/arrow-right.svg"))
+            .child(&crate::utils::toolbar_icon(
+                "/com/fm-ui/gtk/arrow-right.svg",
+            ))
             .tooltip_text(&*crate::i18n::tr("fm.navigate_forward"))
             .sensitive(false)
             .build();
@@ -887,8 +911,10 @@ impl SimpleComponent for FmPanelModel {
                 crate::dialogs::show_create_dir_dialog(window.as_ref(), &shared, sender.clone());
             });
         }
+        let mut write_buttons: Vec<gtk::Widget> = Vec::new();
         if with_default_toolbar {
             header.pack_start(&btn_create_dir);
+            write_buttons.push(btn_create_dir.clone().upcast());
         }
 
         let btn_rename = mk_icon_btn(
@@ -898,6 +924,7 @@ impl SimpleComponent for FmPanelModel {
         btn_rename.set_sensitive(false);
         if with_default_toolbar {
             header.pack_start(&btn_rename);
+            write_buttons.push(btn_rename.clone().upcast());
         }
 
         let btn_delete = mk_icon_btn(
@@ -916,6 +943,7 @@ impl SimpleComponent for FmPanelModel {
         }
         if with_default_toolbar {
             header.pack_start(&btn_delete);
+            write_buttons.push(btn_delete.clone().upcast());
         }
 
         let clip_sep_l = gtk::Separator::builder()
@@ -925,6 +953,7 @@ impl SimpleComponent for FmPanelModel {
             .build();
         if with_default_toolbar {
             header.pack_start(&clip_sep_l);
+            write_buttons.push(clip_sep_l.clone().upcast());
         }
 
         let btn_cut = mk_icon_btn(
@@ -945,6 +974,9 @@ impl SimpleComponent for FmPanelModel {
         );
         btn_cut.set_sensitive(false);
         btn_copy.set_sensitive(false);
+        let empty_clipboard = fm_core::clipboard::badge_state(0, false, false);
+        btn_paste.set_sensitive(empty_clipboard.paste_enabled);
+        btn_clip_clear.set_sensitive(empty_clipboard.clear_enabled);
 
         let mk_badge = || {
             let l = gtk::Label::new(None);
@@ -987,10 +1019,15 @@ impl SimpleComponent for FmPanelModel {
             .build();
         if with_default_toolbar {
             header.pack_start(&cut_overlay);
+            write_buttons.push(cut_overlay.clone().upcast());
             header.pack_start(&copy_overlay);
+            write_buttons.push(copy_overlay.clone().upcast());
             header.pack_start(&btn_paste);
+            write_buttons.push(btn_paste.clone().upcast());
             header.pack_start(&btn_clip_clear);
+            write_buttons.push(btn_clip_clear.clone().upcast());
             header.pack_start(&clip_sep_r);
+            write_buttons.push(clip_sep_r.clone().upcast());
         }
 
         let btn_chmod = mk_icon_btn(
@@ -1008,8 +1045,8 @@ impl SimpleComponent for FmPanelModel {
         }
         if with_default_toolbar {
             header.pack_start(&btn_chmod);
+            write_buttons.push(btn_chmod.clone().upcast());
         }
-
 
         let view_switcher = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         view_switcher.add_css_class("linked");
@@ -1021,15 +1058,17 @@ impl SimpleComponent for FmPanelModel {
         };
         let current_size = config.get::<u32>(&cfg_key).unwrap_or(80) as i32;
         let btn_view_list = gtk::ToggleButton::builder()
-            .child(&gtk::Image::from_resource("/com/fm-ui/gtk/list-icons.svg"))
+            .child(&crate::utils::toolbar_icon("/com/fm-ui/gtk/list-icons.svg"))
             .tooltip_text(&*crate::i18n::tr("fm.list_view"))
             .build();
         let btn_view_small = gtk::ToggleButton::builder()
-            .child(&gtk::Image::from_resource("/com/fm-ui/gtk/small-icons.svg"))
+            .child(&crate::utils::toolbar_icon(
+                "/com/fm-ui/gtk/small-icons.svg",
+            ))
             .tooltip_text(&*crate::i18n::tr("fm.small_icons"))
             .build();
         let btn_view_large = gtk::ToggleButton::builder()
-            .child(&gtk::Image::from_resource("/com/fm-ui/gtk/thumbnails.svg"))
+            .child(&crate::utils::toolbar_icon("/com/fm-ui/gtk/thumbnails.svg"))
             .tooltip_text(&*crate::i18n::tr("fm.medium_icons"))
             .build();
         for b in [&btn_view_list, &btn_view_small, &btn_view_large] {
@@ -1085,7 +1124,6 @@ impl SimpleComponent for FmPanelModel {
         address_row.set_margin_start(8);
         address_row.set_margin_end(8);
         address_row.set_margin_top(2);
-        address_row.set_margin_bottom(2);
         address_row.append(&nav_pill);
         address_row.append(&breadcrumbs_scroller);
 
@@ -1321,6 +1359,7 @@ impl SimpleComponent for FmPanelModel {
             let btn_rename_c = btn_rename.clone();
             let btn_chmod_c = btn_chmod.clone();
             let sender_sel = sender.clone();
+            let on_selection_changed = init.on_selection_changed.clone();
             selection_model.connect_selection_changed(move |sm, _, _| {
                 let mut selected = Vec::new();
                 let bitset = sm.selection();
@@ -1334,6 +1373,10 @@ impl SimpleComponent for FmPanelModel {
                     }
                 }
                 let count = selected.len();
+                if let Some(ref notify) = on_selection_changed {
+                    let dirs = selected.iter().filter(|(_, d)| *d).count() as u32;
+                    notify(count as u32 - dirs, dirs);
+                }
                 *shared_sel.selected_files.borrow_mut() = selected.clone();
                 btn_delete_c.set_sensitive(count > 0);
                 btn_rename_c.set_sensitive(count == 1);
@@ -1450,7 +1493,7 @@ impl SimpleComponent for FmPanelModel {
             .margin_bottom(4)
             .visible(false)
             .build();
-        let filter_icon = gtk::Image::from_icon_name("system-search-symbolic");
+        let filter_icon = crate::utils::toolbar_icon_named("system-search-symbolic");
         filter_icon.set_margin_start(4);
         let filter_entry = gtk::Entry::builder()
             .placeholder_text(&*crate::i18n::tr("fm.filter_placeholder"))
@@ -1520,7 +1563,7 @@ impl SimpleComponent for FmPanelModel {
             .margin_bottom(4)
             .visible(false)
             .build();
-        let select_icon = gtk::Image::from_icon_name("edit-select-all-symbolic");
+        let select_icon = crate::utils::toolbar_icon_named("edit-select-all-symbolic");
         select_icon.set_margin_start(4);
         let select_entry = gtk::Entry::builder()
             .placeholder_text(&*crate::i18n::tr("fm.select_mask_placeholder"))
@@ -1618,6 +1661,8 @@ impl SimpleComponent for FmPanelModel {
         }
 
         let views = Views {
+            write_buttons,
+            view_switcher: view_switcher.clone().upcast(),
             rendered_crumbs: std::cell::RefCell::new((String::new(), Vec::new())),
             stack,
             list_view: list_view.clone(),
@@ -1656,6 +1701,7 @@ impl SimpleComponent for FmPanelModel {
             is_root: true,
             select_name: None,
             listing_generation: 0,
+            default_toolbar_shown: true,
             view_mode_reflect: None,
             sort_reflect: None,
             address_row: address_row.clone(),
@@ -1696,7 +1742,7 @@ impl SimpleComponent for FmPanelModel {
                     badge.set_visible(shown);
                 }
                 self.views.btn_paste.set_sensitive(state.paste_enabled);
-                self.views.btn_clip_clear.set_visible(state.clear_visible);
+                self.views.btn_clip_clear.set_sensitive(state.clear_enabled);
                 self.shared.clip_count.set(count);
             }
             FmPanelInput::AddAddressEndWidget(widget) => {
@@ -1739,7 +1785,14 @@ impl SimpleComponent for FmPanelModel {
                             }
                             _ => "N/A".to_string(),
                         };
-                        (e.name.clone(), e.is_dir, e.size, date, e.permissions, e.extra.clone())
+                        (
+                            e.name.clone(),
+                            e.is_dir,
+                            e.size,
+                            date,
+                            e.permissions,
+                            e.extra.clone(),
+                        )
                     })
                     .collect();
 
@@ -1747,8 +1800,35 @@ impl SimpleComponent for FmPanelModel {
                 *self.shared.cached_entries.borrow_mut() = display;
                 let fs_label = source.fs_label.clone();
                 let column_specs = source.extra_columns.clone();
+                let replace_defaults = source.columns_replace_defaults;
+                let read_only = source.is_read_only;
+                let wants_filter = source.wants_quick_filter;
                 *self.shared.source.borrow_mut() = source;
-                crate::view_factories::sync_extra_columns(&self.views.list_view, &column_specs);
+                crate::view_factories::sync_extra_columns(
+                    &self.views.list_view,
+                    &column_specs,
+                    replace_defaults,
+                    {
+                        let sender = sender.clone();
+                        let at = self.shared.current_path.clone();
+                        std::rc::Rc::new(move |name: &str, column: &str, ticked: bool| {
+                            let dir = crate::utils::build_path_string(&at.borrow());
+                            let _ = sender.output(FmPanelOutput::CellToggled {
+                                dir,
+                                name: name.to_string(),
+                                column: column.to_string(),
+                                ticked,
+                            });
+                        })
+                    },
+                );
+                let show_writing = !read_only && self.default_toolbar_shown;
+                for w in &self.views.write_buttons {
+                    w.set_visible(show_writing);
+                }
+                if wants_filter {
+                    self.views.filter_bar.set_visible(true);
+                }
                 self.breadcrumb = breadcrumb;
                 self.views
                     .source_label
@@ -1816,7 +1896,11 @@ impl SimpleComponent for FmPanelModel {
             FmPanelInput::StartRename => self.start_rename(),
             FmPanelInput::RequestCreateDir => {
                 let window = self.views.list_view.root().and_downcast::<gtk::Window>();
-                crate::dialogs::show_create_dir_dialog(window.as_ref(), &self.shared, sender.clone());
+                crate::dialogs::show_create_dir_dialog(
+                    window.as_ref(),
+                    &self.shared,
+                    sender.clone(),
+                );
             }
             FmPanelInput::RequestDelete => {
                 let window = self.views.list_view.root().and_downcast::<gtk::Window>();
@@ -1880,12 +1964,23 @@ impl SimpleComponent for FmPanelModel {
                 }
             }
             FmPanelInput::AddressNotResolved => {
-                self.views.address_hint_label.set_text(&crate::i18n::tr("fm.address_not_found"));
+                self.views
+                    .address_hint_label
+                    .set_text(&crate::i18n::tr("fm.address_not_found"));
                 self.views.address_hint.popup();
                 let hint = self.views.address_hint.clone();
                 gtk::glib::timeout_add_local_once(std::time::Duration::from_secs(2), move || {
                     hint.popdown();
                 });
+            }
+            FmPanelInput::ShowDefaultToolbar(shown) => {
+                self.views.view_switcher.set_visible(shown);
+                self.default_toolbar_shown = shown;
+                if !shown {
+                    for w in &self.views.write_buttons {
+                        w.set_visible(false);
+                    }
+                }
             }
             FmPanelInput::ViewToggled(size) => {
                 self.config.set(&self.config_key(), size);
@@ -2008,13 +2103,8 @@ fn render_breadcrumbs(model: &FmPanelModel, sender: &ComponentSender<FmPanelMode
     *model.views.rendered_crumbs.borrow_mut() = (source_key, segs.clone());
 }
 
-fn append_root_chip(
-    model: &FmPanelModel,
-    sender: &ComponentSender<FmPanelModel>,
-    bc: &gtk::Box,
-) {
-    let flag_img = gtk::Image::from_resource("/com/fm-ui/gtk/start.svg");
-    flag_img.set_pixel_size(16);
+fn append_root_chip(model: &FmPanelModel, sender: &ComponentSender<FmPanelModel>, bc: &gtk::Box) {
+    let flag_img = crate::utils::toolbar_icon("/com/fm-ui/gtk/start.svg");
     let flag_btn = gtk::Button::builder()
         .child(&flag_img)
         .css_classes(vec!["flat"])
@@ -2035,15 +2125,13 @@ fn append_root_chip(
     } else {
         source.root_icon.clone()
     };
-    let root_img = match source
-        .root_icon_svg
-        .clone()
-        .and_then(|svg| crate::view_factories::generated_svg_paintable(svg, 16))
-    {
+    let root_img = match source.root_icon_svg.clone().and_then(|svg| {
+        crate::view_factories::generated_svg_paintable(svg, crate::utils::TOOLBAR_ICON_SIZE)
+    }) {
         Some(p) => gtk::Image::from_paintable(Some(&p)),
         None => gtk::Image::from_resource(&root_icon),
     };
-    root_img.set_pixel_size(16);
+    root_img.set_pixel_size(crate::utils::TOOLBAR_ICON_SIZE);
     let root_child: gtk::Widget = if let Some(name) = source.display_name.clone() {
         let chip = gtk::Box::builder()
             .orientation(gtk::Orientation::Horizontal)
@@ -2099,15 +2187,13 @@ fn build_crumb(
         .orientation(gtk::Orientation::Horizontal)
         .spacing(4)
         .build();
-    let img = match segment
-        .icon_svg
-        .clone()
-        .and_then(|svg| crate::view_factories::generated_svg_paintable(svg, 16))
-    {
+    let img = match segment.icon_svg.clone().and_then(|svg| {
+        crate::view_factories::generated_svg_paintable(svg, crate::utils::TOOLBAR_ICON_SIZE)
+    }) {
         Some(p) => gtk::Image::from_paintable(Some(&p)),
         None => gtk::Image::from_resource(&segment.icon),
     };
-    img.set_pixel_size(16);
+    img.set_pixel_size(crate::utils::TOOLBAR_ICON_SIZE);
     seg_box.append(&img);
     seg_box.append(
         &gtk::Label::builder()
@@ -2153,13 +2239,7 @@ fn handle_activate(
         return;
     }
     let lower = entry.name().to_lowercase();
-    let is_archive = lower.ends_with(".zip")
-        || lower.ends_with(".tar")
-        || lower.ends_with(".tar.gz")
-        || lower.ends_with(".tgz")
-        || lower.ends_with(".tar.bz2")
-        || lower.ends_with(".tbz2")
-        || lower.ends_with(".tbz");
+    let is_archive = fm_core::plugin_fs::handles_extension(&lower);
     if entry.is_dir() || is_archive {
         let _ = sender.output(FmPanelOutput::NavigateEnter(entry.name()));
     } else {
@@ -2232,7 +2312,10 @@ fn render_listing(model: &FmPanelModel, sender: &ComponentSender<FmPanelModel>) 
         .cloned()
         .collect();
     if !is_root && icon_size == 30 {
-        entries.insert(0, ("..".to_string(), true, 0, String::new(), None, Vec::new()));
+        entries.insert(
+            0,
+            ("..".to_string(), true, 0, String::new(), None, Vec::new()),
+        );
     }
 
     let sm = &model.views.selection_model;
@@ -2240,26 +2323,27 @@ fn render_listing(model: &FmPanelModel, sender: &ComponentSender<FmPanelModel>) 
     let grid_view = &model.views.grid_view;
     let target_select = model.select_name.clone();
 
-    let build_item = |name: &str, is_dir: bool, size: u64, date: &str, perms: Option<u32>, extra: &[String]| {
-        let mut full = parts.clone();
-        if name == ".." {
-            if !full.is_empty() {
-                full.pop();
+    let build_item =
+        |name: &str, is_dir: bool, size: u64, date: &str, perms: Option<u32>, extra: &[String]| {
+            let mut full = parts.clone();
+            if name == ".." {
+                if !full.is_empty() {
+                    full.pop();
+                }
+            } else {
+                full.push(name.to_string());
             }
-        } else {
-            full.push(name.to_string());
-        }
-        let row = crate::file_entry::FileEntry::new(
-            name,
-            &build_path_string(&full),
-            is_dir,
-            size,
-            date,
-            perms,
-        );
-        row.set_extra(extra.to_vec());
-        row.upcast::<gtk::glib::Object>()
-    };
+            let row = crate::file_entry::FileEntry::new(
+                name,
+                &build_path_string(&full),
+                is_dir,
+                size,
+                date,
+                perms,
+            );
+            row.set_extra(extra.to_vec());
+            row.upcast::<gtk::glib::Object>()
+        };
 
     if entries.len() <= 300 {
         let items: Vec<gtk::glib::Object> = entries

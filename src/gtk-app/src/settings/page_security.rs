@@ -95,7 +95,7 @@ pub(super) fn build(page_box: &gtk::Box, parent: &gtk::Window, config: client_co
             });
 
             if wants_on {
-                crate::master_password::prompt_set(&parent, config.clone(), on_done);
+                crate::master_password::prompt_set(&parent, on_done);
             } else {
                 crate::master_password::prompt_clear(&parent, on_done);
             }

@@ -44,7 +44,7 @@ pub struct BadgeState {
     pub cut_badge: bool,
     pub copy_badge: bool,
     pub paste_enabled: bool,
-    pub clear_visible: bool,
+    pub clear_enabled: bool,
 }
 
 pub fn badge_state(count: usize, mine: bool, cut: bool) -> BadgeState {
@@ -53,7 +53,7 @@ pub fn badge_state(count: usize, mine: bool, cut: bool) -> BadgeState {
         cut_badge: any && mine && cut,
         copy_badge: any && mine && !cut,
         paste_enabled: any,
-        clear_visible: any,
+        clear_enabled: any,
     }
 }
 
@@ -213,6 +213,31 @@ mod tests {
     }
 
     #[test]
+    fn nothing_the_toolbar_offers_is_clickable_until_we_have_copied_something() {
+        let empty = badge_state(0, false, false);
+        assert!(!empty.paste_enabled, "paste is offered by sensitivity");
+        assert!(
+            !empty.clear_enabled,
+            "clearing is offered by sensitivity too, so the read-only visibility pass cannot re-enable it"
+        );
+        let filled = badge_state(2, true, false);
+        assert!(filled.paste_enabled);
+        assert!(filled.clear_enabled);
+    }
+
+    #[test]
+    fn the_system_clipboard_does_not_enable_our_paste() {
+        let held = Clipboard::new();
+        assert_eq!(held.count(), 0, "a fresh clipboard holds nothing of ours");
+        let st = badge_state(held.count(), false, false);
+        assert!(
+            !st.paste_enabled,
+            "paste offers only what was copied inside the program"
+        );
+        assert!(!st.clear_enabled);
+    }
+
+    #[test]
     fn an_empty_clipboard_shows_nothing_anywhere() {
         for mine in [false, true] {
             for cut in [false, true] {
@@ -223,7 +248,7 @@ mod tests {
                         cut_badge: false,
                         copy_badge: false,
                         paste_enabled: false,
-                        clear_visible: false
+                        clear_enabled: false
                     },
                     "mine={mine} cut={cut}"
                 );
@@ -253,7 +278,10 @@ mod tests {
             for mine in [false, true] {
                 for cut in [false, true] {
                     let st = badge_state(count, mine, cut);
-                    assert!(!(st.cut_badge && st.copy_badge), "count={count} mine={mine} cut={cut}");
+                    assert!(
+                        !(st.cut_badge && st.copy_badge),
+                        "count={count} mine={mine} cut={cut}"
+                    );
                 }
             }
         }
@@ -263,8 +291,11 @@ mod tests {
     fn paste_and_clear_are_offered_on_both_panels() {
         for mine in [false, true] {
             let st = badge_state(1, mine, true);
-            assert!(st.paste_enabled, "paste must be offered on the other panel too");
-            assert!(st.clear_visible);
+            assert!(
+                st.paste_enabled,
+                "paste must be offered on the other panel too"
+            );
+            assert!(st.clear_enabled);
         }
     }
 
@@ -308,7 +339,10 @@ mod tests {
         assert_eq!(cb.kind(), Some(ClipKind::Cut));
         assert_eq!(
             seen.borrow().as_slice(),
-            &[(1, "left".to_string(), false), (2, "right".to_string(), true)]
+            &[
+                (1, "left".to_string(), false),
+                (2, "right".to_string(), true)
+            ]
         );
     }
 
@@ -350,6 +384,9 @@ mod tests {
         let s = seen.clone();
         cb.connect_changed(Rc::new(move |n, _, _| s.borrow_mut().push(n)));
         cb.drop_if_unreachable(&[level.clone()]);
-        assert!(seen.borrow().is_empty(), "a still-open level must not flicker the badge");
+        assert!(
+            seen.borrow().is_empty(),
+            "a still-open level must not flicker the badge"
+        );
     }
 }

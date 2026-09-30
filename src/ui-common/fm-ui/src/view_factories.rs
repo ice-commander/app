@@ -810,7 +810,6 @@ pub fn create_grid_factory(
             name_label.set_text(&name);
             name_label.set_tooltip_text(Some(&name));
 
-
             {
                 let mut map = shared.active_widgets.borrow_mut();
                 map.retain(|_, (l, _)| l != &name_label);
@@ -884,16 +883,8 @@ pub fn create_grid_factory(
             }
 
             if !is_dir {
-                let lower_name = name.to_lowercase();
-                let is_tar_compound =
-                    lower_name.ends_with(".tar.gz") || lower_name.ends_with(".tar.bz2");
-                let is_archive_or_pdf = is_tar_compound
-                    || matches!(
-                        ext.as_str(),
-                        "zip" | "tar" | "tgz" | "gz" | "rar" | "7z" | "pdf" | "bz2" | "tbz2"
-                            | "tbz"
-                    );
-                if !is_archive_or_pdf {
+                let opens_as_a_folder = fm_core::plugin_fs::handles_extension(&name);
+                if !opens_as_a_folder && ext != "pdf" {
                     if let Some(tn) = &thumbnailer {
                         tn(&item.path(), &picture_wg);
                     }
@@ -984,7 +975,10 @@ mod tests {
 
     #[test]
     fn entries_of_the_same_kind_are_left_to_the_column_comparator() {
-        assert_eq!(compare_directories(&file("a.txt"), &file("b.txt"), false), None);
+        assert_eq!(
+            compare_directories(&file("a.txt"), &file("b.txt"), false),
+            None
+        );
         assert_eq!(compare_directories(&dir("apps"), &dir("bin"), false), None);
         assert_eq!(compare_directories(&dir("apps"), &dir("bin"), true), None);
     }
@@ -994,6 +988,142 @@ mod tests {
         assert_eq!(
             compare_directories(&file(".."), &file("a.txt"), false),
             Some(gtk::Ordering::Smaller)
+        );
+    }
+
+    /// Needs a display, and stays a single test on purpose.
+    ///
+    /// GTK wants all of its widgets on one thread, and the test harness gives
+    /// every `#[test]` a thread of its own — split up, these passed or failed
+    /// by luck rather than by what the code does. Where there is no display
+    /// the widget half cannot be built at all, and it says so and stops rather
+    /// than passing by not looking.
+    #[test]
+    fn a_plugins_columns_are_drawn_the_way_it_asked() {
+        if gtk::init().is_err() {
+            eprintln!("no display: the column drawing was not checked");
+            return;
+        }
+
+        fn column_view() -> gtk::ColumnView {
+            let view = gtk::ColumnView::new(None::<gtk::SingleSelection>);
+            // The three the panel always draws: name, size and date.
+            for title in ["Name", "Size", "Date"] {
+                view.append_column(
+                    &gtk::ColumnViewColumn::builder()
+                        .title(title)
+                        .factory(&gtk::SignalListItemFactory::new())
+                        .build(),
+                );
+            }
+            view
+        }
+
+        fn titles(view: &gtk::ColumnView) -> Vec<String> {
+            let columns = view.columns();
+            (0..columns.n_items())
+                .filter_map(|at| columns.item(at).and_downcast::<gtk::ColumnViewColumn>())
+                .map(|column| column.title().map(|t| t.to_string()).unwrap_or_default())
+                .collect()
+        }
+
+        fn shown(view: &gtk::ColumnView, at: u32) -> bool {
+            view.columns()
+                .item(at)
+                .and_downcast::<gtk::ColumnViewColumn>()
+                .expect("a column")
+                .is_visible()
+        }
+
+        /// What one cell of a column is built out of.
+        fn cell(view: &gtk::ColumnView, at: u32) -> Option<gtk::Widget> {
+            let column = view
+                .columns()
+                .item(at)
+                .and_downcast::<gtk::ColumnViewColumn>()
+                .expect("a column");
+            let factory = column
+                .factory()
+                .and_downcast::<gtk::SignalListItemFactory>()
+                .expect("a factory");
+            let item: gtk::ListItem = gtk::glib::Object::new();
+            factory.emit_by_name::<()>("setup", &[&item]);
+            item.child()
+        }
+
+        fn spec(key: &str, kind: fm_core::rpc::ColumnKind) -> fm_core::rpc::ColumnSpec {
+            fm_core::rpc::ColumnSpec {
+                key: key.to_string(),
+                title: key.to_string(),
+                width: Some(60),
+                kind,
+            }
+        }
+
+        let nothing: OnCellToggled = std::rc::Rc::new(|_: &str, _: &str, _: bool| {});
+        let both = [
+            spec("fetch", fm_core::rpc::ColumnKind::Check),
+            spec("status", fm_core::rpc::ColumnKind::Text),
+        ];
+
+        // Added after the panel's own, which stay where they were.
+        let view = column_view();
+        sync_extra_columns(&view, &both, false, nothing.clone());
+        assert_eq!(
+            titles(&view),
+            vec!["Name", "Size", "Date", "fetch", "status"],
+            "a plugin's columns are added, not put in place of anything"
+        );
+        assert!(
+            shown(&view, 1) && shown(&view, 2),
+            "size and date must survive"
+        );
+
+        // A tick column is clickable; a text column is not.
+        assert!(
+            cell(&view, 3).and_downcast::<gtk::CheckButton>().is_some(),
+            "a tick column has to be a box the user can click"
+        );
+        assert!(
+            cell(&view, 4).and_downcast::<gtk::Label>().is_some(),
+            "a text column is read, not clicked"
+        );
+
+        // Listing again replaces them rather than piling them up.
+        for _ in 0..3 {
+            sync_extra_columns(&view, &both, false, nothing.clone());
+        }
+        assert_eq!(
+            titles(&view),
+            vec!["Name", "Size", "Date", "fetch", "status"],
+            "every listing would otherwise add another set"
+        );
+
+        // Walking back out takes them with it.
+        sync_extra_columns(&view, &[], false, nothing.clone());
+        assert_eq!(titles(&view), vec!["Name", "Size", "Date"]);
+
+        // A source that replaces the defaults hides them; the name stays, or
+        // there would be nothing left to read.
+        let view = column_view();
+        sync_extra_columns(
+            &view,
+            &[spec("cpu", fm_core::rpc::ColumnKind::Text)],
+            true,
+            nothing,
+        );
+        assert!(shown(&view, 0), "the name column is never hidden");
+        assert!(!shown(&view, 1) && !shown(&view, 2));
+        assert_eq!(titles(&view), vec!["Name", "Size", "Date", "cpu"]);
+    }
+
+    #[test]
+    fn a_column_title_with_no_phrase_behind_it_is_shown_as_it_came() {
+        // A plugin that ships no catalogue still gets a readable heading.
+        assert_eq!(ic_i18n::tr("Status"), "Status");
+        assert_eq!(
+            ic_i18n::tr("torrent.col_nothing_registered"),
+            "torrent.col_nothing_registered"
         );
     }
 
@@ -1024,8 +1154,86 @@ mod tests {
     }
 }
 
-pub fn sync_extra_columns(column_view: &gtk::ColumnView, specs: &[fm_core::rpc::ColumnSpec]) {
+/// Told which row, which column, and what the box now reads as.
+pub type OnCellToggled = std::rc::Rc<dyn Fn(&str, &str, bool)>;
+
+/// A column of tick boxes the user can click.
+///
+/// The cell the plugin answered is the truth: binding writes it into the box,
+/// and a click reports what the user asked for without changing the box
+/// itself. The panel lists again afterwards, so what is drawn is always what
+/// the plugin last said rather than what the click assumed.
+fn tick_column(
+    spec: &fm_core::rpc::ColumnSpec,
+    index: usize,
+    toggled: OnCellToggled,
+) -> gtk::ColumnViewColumn {
+    let factory = gtk::SignalListItemFactory::new();
+    factory.connect_setup(|_, obj| {
+        let Some(list_item) = obj.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let tick = gtk::CheckButton::builder()
+            .halign(gtk::Align::Center)
+            .margin_top(8)
+            .margin_bottom(8)
+            .build();
+        list_item.set_child(Some(&tick));
+    });
+    let key = spec.key.clone();
+    factory.connect_bind(move |_, obj| {
+        let Some(list_item) = obj.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let Some(item) = list_item
+            .item()
+            .and_downcast::<crate::file_entry::FileEntry>()
+        else {
+            return;
+        };
+        let Some(tick) = list_item.child().and_downcast::<gtk::CheckButton>() else {
+            return;
+        };
+        // Rebinding a recycled row must not read as the user clicking it.
+        if let Some(previous) = unsafe { tick.data::<gtk::glib::SignalHandlerId>(HANDLER) } {
+            let previous = unsafe { previous.as_ref() };
+            tick.block_signal(previous);
+            tick.set_active(fm_core::rpc::cell_is_ticked(&item.extra_at(index)));
+            tick.unblock_signal(previous);
+            return;
+        }
+        tick.set_active(fm_core::rpc::cell_is_ticked(&item.extra_at(index)));
+        let name = item.name();
+        let key = key.clone();
+        let toggled = toggled.clone();
+        let handler = tick.connect_toggled(move |t| {
+            toggled(&name, &key, t.is_active());
+        });
+        unsafe { tick.set_data(HANDLER, handler) };
+    });
+    let column = gtk::ColumnViewColumn::builder()
+        .title(ic_i18n::tr(spec.title.as_str()).as_str())
+        .factory(&factory)
+        .resizable(true)
+        .build();
+    column.set_fixed_width(spec.width.unwrap_or(60));
+    column
+}
+
+const HANDLER: &str = "ic-cell-toggle-handler";
+
+pub fn sync_extra_columns(
+    column_view: &gtk::ColumnView,
+    specs: &[fm_core::rpc::ColumnSpec],
+    replace_defaults: bool,
+    toggled: OnCellToggled,
+) {
     let columns = column_view.columns();
+    for index in 1..3u32 {
+        if let Some(col) = columns.item(index).and_downcast::<gtk::ColumnViewColumn>() {
+            col.set_visible(!replace_defaults);
+        }
+    }
     while columns.n_items() > 3 {
         let last = columns.n_items() - 1;
         match columns.item(last).and_downcast::<gtk::ColumnViewColumn>() {
@@ -1034,6 +1242,10 @@ pub fn sync_extra_columns(column_view: &gtk::ColumnView, specs: &[fm_core::rpc::
         }
     }
     for (index, spec) in specs.iter().enumerate() {
+        if spec.kind == fm_core::rpc::ColumnKind::Check {
+            column_view.append_column(&tick_column(spec, index, toggled.clone()));
+            continue;
+        }
         let factory = gtk::SignalListItemFactory::new();
         factory.connect_setup(|_, obj| {
             let Some(list_item) = obj.downcast_ref::<gtk::ListItem>() else {
@@ -1064,8 +1276,11 @@ pub fn sync_extra_columns(column_view: &gtk::ColumnView, specs: &[fm_core::rpc::
             };
             label.set_text(&item.extra_at(index));
         });
+        // A plugin sends a key; a key with no phrase behind it is its own
+        // text, the same rule the connection forms follow.
+        let translated = ic_i18n::tr(spec.title.as_str());
         let column = gtk::ColumnViewColumn::builder()
-            .title(spec.title.as_str())
+            .title(translated.as_str())
             .factory(&factory)
             .resizable(true)
             .build();

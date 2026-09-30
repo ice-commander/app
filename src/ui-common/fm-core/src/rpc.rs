@@ -23,22 +23,31 @@ pub struct RemoteFileEntry {
     pub extra: Vec<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// What a column of a plugin's own shows. Text is drawn and left alone; a tick
+/// is a box the user can click, and the click goes back to the plugin.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ColumnKind {
+    #[default]
+    Text,
+    Check,
+}
+
+/// What a cell in a tick column reads as. The plugin answers the same strings
+/// it answers for any other column, so this is the one place that decides what
+/// counts as ticked.
+pub fn cell_is_ticked(cell: &str) -> bool {
+    ic_plugin_api::cell_is_ticked(cell)
+}
+
+/// What a plugin writes into a cell to tick it.
+pub const TICKED: &str = ic_plugin_api::IC_CELL_TICKED;
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ColumnSpec {
     pub key: String,
     pub title: String,
     pub width: Option<i32>,
-}
-
-#[derive(Clone, Debug)]
-pub struct SshShellTarget {
-    pub host: String,
-    pub port: u16,
-    pub user: String,
-    pub pass: Option<String>,
-    pub key_path: Option<String>,
-    pub passphrase: Option<String>,
-    pub remote_dir: String,
+    pub kind: ColumnKind,
 }
 
 #[async_trait::async_trait(?Send)]
@@ -153,20 +162,48 @@ pub trait FileSystemRpc {
         Vec::new()
     }
 
-    fn supports_offset_io(&self) -> bool {
+    fn columns_replace_defaults(&self) -> bool {
         false
     }
 
-    async fn extract_archive(&self, _archive_path: String) -> Result<(), AppError> {
-        Err(AppError::Other("Not implemented".to_string()))
+    /// The plugin filesystem the panel is standing in, named by the extension
+    /// it was opened through. `None` for everything the application provides
+    /// itself, and for anything reached as a connection rather than a file.
+    fn plugin_scope(&self) -> Option<String> {
+        None
     }
 
-    async fn compress_to_archive(
-        &self,
-        _entry_path: String,
-        _archive_path: String,
-    ) -> Result<(), AppError> {
-        Err(AppError::Other("Not implemented".to_string()))
+    /// The handle the plugin opened this mount with, as an opaque token. It is
+    /// what a button scoped to this filesystem is handed, so the plugin knows
+    /// which of its mounts was acted on. `None` until the mount is open, and
+    /// for everything the application provides itself.
+    fn plugin_mount(&self) -> Option<usize> {
+        None
+    }
+
+    /// A tick in one of this mount's own columns was clicked.
+    ///
+    /// `dir` is the listing it happened in and `name` the row, as the listing
+    /// spelled them. Answers whether it was taken; the panel lists again after
+    /// one that was, because only the plugin knows what the cell reads as now.
+    fn toggle_cell(&self, _dir: &str, _name: &str, _column: &str, _ticked: bool) -> bool {
+        false
+    }
+
+    /// Whether one of this mount's own toolbar buttons is there, usable and
+    /// pressed, as a mask of `IC_ACTION_SHOWN`, `IC_ACTION_ENABLED` and
+    /// `IC_ACTION_ON`. Anything that has no opinion says so by leaving every
+    /// button there and usable.
+    fn plugin_action_state(&self, _action_id: &str) -> u32 {
+        ic_plugin_api::IC_ACTION_DEFAULT
+    }
+
+    fn wants_quick_filter(&self) -> bool {
+        false
+    }
+
+    fn supports_offset_io(&self) -> bool {
+        false
     }
 
     fn request_file_download(&self, _file_path: String, _transfer_id: uuid::Uuid) {}
@@ -181,6 +218,31 @@ pub trait FileSystemRpc {
     }
 
     fn is_local(&self) -> bool {
+        false
+    }
+
+    /// What this filesystem is, as a name that outlives the object.
+    ///
+    /// Two panels, two tabs and two navigations build their own provider for
+    /// the same disk or the same server, so anything remembered about a
+    /// directory has to be filed under what the filesystem *is* rather than
+    /// under which instance asked. The same server opened twice answers the
+    /// same name; two servers never do.
+    ///
+    /// An empty name means "do not remember anything about me" — the drives
+    /// root, whose contents change behind the application's back, and anything
+    /// that has no stable identity.
+    fn fs_id(&self) -> String {
+        String::new()
+    }
+
+    /// Whether work on this filesystem belongs on a thread of its own.
+    ///
+    /// True for anything that waits on something outside this machine. The
+    /// answer travels down a chain of mounts: an archive is as remote as the
+    /// server the archive file sits on, and doing its work on the thread that
+    /// draws would stop the application while a listing crosses the network.
+    fn runs_off_thread(&self) -> bool {
         false
     }
 
@@ -216,12 +278,17 @@ pub trait FileSystemRpc {
         None
     }
 
-    fn get_ssh_shell_target(&self, _remote_path: &str) -> Option<SshShellTarget> {
-        None
-    }
-
     fn supports_terminal(&self) -> bool {
         false
+    }
+
+    fn open_shell(
+        &self,
+        _cwd: &str,
+        _rows: u16,
+        _cols: u16,
+    ) -> Option<ic_platform::terminal::PtySession> {
+        None
     }
 
     fn content_wait(&self) -> ContentWait {
@@ -241,7 +308,6 @@ mod tests {
     fn rpc() -> TestRpc {
         TestRpc
     }
-
 
     #[test]
     fn a_filesystem_carries_no_terminal_unless_it_says_so() {
@@ -263,7 +329,6 @@ mod tests {
         assert!(rpc().get_path_segments("\\").is_empty());
     }
 
-
     #[test]
     fn single_component_name() {
         let segs = rpc().get_path_segments("/home");
@@ -277,7 +342,6 @@ mod tests {
         let segs = rpc().get_path_segments("/home");
         assert_eq!(segs[0].path, "/home");
     }
-
 
     #[test]
     fn multi_component_names() {
@@ -296,7 +360,6 @@ mod tests {
         assert_eq!(segs[1].path, "/home/user");
         assert_eq!(segs[2].path, "/home/user/docs");
     }
-
 
     #[test]
     fn trailing_slash_same_as_without() {
@@ -329,7 +392,6 @@ mod tests {
         assert_eq!(segs.len(), 3);
     }
 
-
     #[cfg(target_os = "windows")]
     mod windows_paths {
         use super::*;
@@ -358,7 +420,6 @@ mod tests {
             assert_eq!(segs[1].path, "/shared/folder");
         }
     }
-
 
     #[test]
     fn path_segment_clone_eq() {
@@ -395,6 +456,24 @@ mod tests {
     }
 
     #[test]
+    fn a_column_is_text_unless_it_says_otherwise() {
+        assert_eq!(ColumnKind::default(), ColumnKind::Text);
+        assert_eq!(ColumnSpec::default().kind, ColumnKind::Text);
+    }
+
+    #[test]
+    fn what_a_plugin_writes_to_tick_a_box_is_what_reads_back_as_ticked() {
+        assert!(cell_is_ticked(TICKED));
+        assert!(!cell_is_ticked("0"));
+        assert!(!cell_is_ticked(""));
+    }
+
+    #[test]
+    fn a_filesystem_takes_no_cell_clicks_unless_it_says_so() {
+        assert!(!rpc().toggle_cell("/", "a", "b", true));
+    }
+
+    #[test]
     fn a_filesystem_declares_no_extra_columns_unless_it_says_so() {
         assert!(rpc().extra_columns().is_empty());
     }
@@ -410,7 +489,23 @@ mod tests {
             extra: Vec::new(),
         };
         assert!(e.extra.is_empty());
-        assert_eq!(e, RemoteFileEntry { name: "a.txt".to_string(), size: 1, ..Default::default() });
+        assert_eq!(
+            e,
+            RemoteFileEntry {
+                name: "a.txt".to_string(),
+                size: 1,
+                ..Default::default()
+            }
+        );
     }
 
+    #[test]
+    fn a_filesystem_keeps_the_built_in_columns_unless_it_says_otherwise() {
+        assert!(!rpc().columns_replace_defaults());
+    }
+
+    #[test]
+    fn a_filesystem_does_not_ask_for_the_filter_bar_by_default() {
+        assert!(!rpc().wants_quick_filter());
+    }
 }

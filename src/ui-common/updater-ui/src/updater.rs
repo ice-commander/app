@@ -145,7 +145,9 @@ impl SimpleComponent for UpdaterModel {
 
         match &self.phase {
             UpdaterPhase::Downloading { version } => {
-                widgets.progress_window.set_title(Some(&crate::i18n::tr("updater.download_dialog_title")));
+                widgets
+                    .progress_window
+                    .set_title(Some(&crate::i18n::tr("updater.download_dialog_title")));
                 widgets.progress_label.set_label(&format!(
                     "{} v{}...",
                     crate::i18n::tr("updater.downloading_label"),
@@ -154,8 +156,12 @@ impl SimpleComponent for UpdaterModel {
                 widgets.progress_window.present();
             }
             UpdaterPhase::Installing => {
-                widgets.progress_window.set_title(Some(&crate::i18n::tr("updater.install_dialog_title")));
-                widgets.progress_label.set_label(&crate::i18n::tr("updater.installing_label"));
+                widgets
+                    .progress_window
+                    .set_title(Some(&crate::i18n::tr("updater.install_dialog_title")));
+                widgets
+                    .progress_label
+                    .set_label(&crate::i18n::tr("updater.installing_label"));
                 widgets.progress_window.present();
             }
             UpdaterPhase::Idle => widgets.progress_window.set_visible(false),
@@ -213,14 +219,8 @@ fn present_prompt_dialog(
         .transient_for(parent)
         .build();
 
-    dialog.add_response(
-        "later",
-        &crate::i18n::tr("updater.not_now_btn"),
-    );
-    dialog.add_response(
-        "install",
-        &crate::i18n::tr("updater.install_btn"),
-    );
+    dialog.add_response("later", &crate::i18n::tr("updater.not_now_btn"));
+    dialog.add_response("install", &crate::i18n::tr("updater.install_btn"));
     dialog.set_response_appearance("install", adw::ResponseAppearance::Suggested);
     dialog.set_default_response(Some("install"));
 
@@ -294,14 +294,8 @@ fn present_success_dialog(parent: &gtk::Window, sender: &ComponentSender<Updater
         .transient_for(parent)
         .build();
 
-    dialog.add_response(
-        "restart",
-        &crate::i18n::tr("updater.restart_btn"),
-    );
-    dialog.add_response(
-        "later",
-        &crate::i18n::tr("updater.later_btn"),
-    );
+    dialog.add_response("restart", &crate::i18n::tr("updater.restart_btn"));
+    dialog.add_response("later", &crate::i18n::tr("updater.later_btn"));
     dialog.set_response_appearance("restart", adw::ResponseAppearance::Suggested);
     dialog.set_default_response(Some("restart"));
 

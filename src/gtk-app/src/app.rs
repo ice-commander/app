@@ -5,14 +5,24 @@ pub struct Application;
 impl Application {
     pub fn init_resources() {
         gtk_fm_ui::init_resources();
-        gtk_sysinfo_ui::init_resources();
         gtk_terminal_ui::init_resources();
         gtk_registry_ui::init_resources();
-        gtk_process_ui::init_resources();
     }
 
     pub fn run(app: &adw::Application, config: client_config::AppConfig) {
         ic_utils::app::init_exe_path();
+        fm_core::plugin_fs::set_spawner(std::rc::Rc::new(|fut| {
+            gtk::glib::spawn_future_local(fut);
+        }));
+        fm_core::plugin_fs::set_icon_provider(std::rc::Rc::new(|name: &str| {
+            match gtk_fm_ui::utils::get_file_icon(name, false, 80, None) {
+                gtk_fm_ui::utils::FileIcon::GeneratedSvg(svg) => Some(svg),
+                _ => None,
+            }
+        }));
+        ic_plugin_host::set_settings_config(config.clone());
+        crate::plugin_view::install_waker();
+        crate::plugin_host::load_installed_plugins(&config);
 
         let mut needs_save = false;
 
@@ -44,8 +54,12 @@ impl Application {
             common::version::BUILD_TYPE
         );
 
-        virtualfs::set_connect_timeout_secs(config.get::<u64>("net.connect_timeout_secs").unwrap_or(20));
-        virtualfs::set_request_timeout_secs(config.get::<u64>("net.request_timeout_secs").unwrap_or(20));
+        localfs::set_connect_timeout_secs(
+            config.get::<u64>("net.connect_timeout_secs").unwrap_or(20),
+        );
+        localfs::set_request_timeout_secs(
+            config.get::<u64>("net.request_timeout_secs").unwrap_or(20),
+        );
 
         let my_info = ic_model::DeviceInfo {
             id: device_id,
@@ -61,12 +75,14 @@ impl Application {
         let args: Vec<String> = std::env::args().collect();
         let headless = args.iter().any(|a| a == "--headless");
         let webui = args.iter().any(|a| a == "--webui");
-        let port: u16 = args.iter()
+        let port: u16 = args
+            .iter()
             .skip_while(|a| *a != "--port")
             .nth(1)
             .and_then(|v| v.parse().ok())
             .unwrap_or(7878);
-        let host: String = args.iter()
+        let host: String = args
+            .iter()
             .skip_while(|a| *a != "--host")
             .nth(1)
             .cloned()
@@ -77,16 +93,24 @@ impl Application {
             if is_network {
                 eprintln!("[API] WARNING: binding to {host} — REST API accessible from other machines on the network!");
             }
-            network_warning = if is_network { Some((host.clone(), port)) } else { None };
+            network_warning = if is_network {
+                Some((host.clone(), port))
+            } else {
+                None
+            };
             let (tx, rx) = tokio::sync::mpsc::channel::<crate::api::ApiCmd>(64);
             let ws_sessions = crate::api::WsSessions::default();
             crate::api::init_notifier(ws_sessions.clone());
             let term_out_left = tokio::sync::broadcast::channel::<Vec<u8>>(1024).0;
             let term_out_right = tokio::sync::broadcast::channel::<Vec<u8>>(1024).0;
             crate::api::start_api_server(
-                port, webui, host,
-                tx.clone(), ws_sessions.clone(),
-                term_out_left.clone(), term_out_right.clone(),
+                port,
+                webui,
+                host,
+                tx.clone(),
+                ws_sessions.clone(),
+                term_out_left.clone(),
+                term_out_right.clone(),
                 include_bytes!("../assets/webui/bundle.js").to_vec(),
                 include_bytes!("../assets/webui/style.css").to_vec(),
             );

@@ -13,31 +13,14 @@ pub struct ConfigManager {
 impl ConfigManager {
     fn new(app_name: &str) -> Self {
         let config_path = Self::get_config_path(app_name);
-        match Self::load_from_disk(&config_path) {
-            Some(store) => Self { store, config_path },
-            None => {
-                let store =
-                    Self::load_from_disk(&Self::legacy_config_path(app_name)).unwrap_or_default();
-                let manager = Self { store, config_path };
-                if !manager.store.is_empty() {
-                    manager.save_to_disk();
-                }
-                manager
-            }
-        }
+        let store = Self::load_from_disk(&config_path).unwrap_or_default();
+        Self { store, config_path }
     }
 
     fn get_config_path(app_name: &str) -> PathBuf {
         let mut path = dirs::config_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
         let _ = fs::create_dir_all(&path);
         path.push(format!("{app_name}.conf"));
-        path
-    }
-
-    fn legacy_config_path(app_name: &str) -> PathBuf {
-        let mut path = dirs::config_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
-        path.push(app_name);
-        path.push("config.json");
         path
     }
 
@@ -95,6 +78,27 @@ impl AppConfig {
             if let Ok(json_value) = serde_json::to_value(value) {
                 manager.store.insert(key.to_string(), json_value);
             }
+        }
+    }
+
+    /// Removes a key, so that reading it is absent rather than a default. The
+    /// two differ wherever "never chosen" and "chose nothing" are not the same.
+    pub fn forget(&self, key: &str) {
+        if let Ok(mut manager) = self.inner.lock() {
+            manager.store.remove(key);
+        }
+    }
+
+    /// Every key currently held, so a caller can decide which to forget without
+    /// keeping a second list that could drift from what is actually stored.
+    pub fn keys(&self) -> Vec<String> {
+        match self.inner.lock() {
+            Ok(manager) => {
+                let mut held: Vec<String> = manager.store.keys().cloned().collect();
+                held.sort();
+                held
+            }
+            Err(_) => Vec::new(),
         }
     }
 
@@ -222,33 +226,5 @@ mod tests {
             "path: {}",
             path.display()
         );
-    }
-
-    #[test]
-    fn migrates_legacy_dir_config_when_flat_file_absent() {
-        let app = "_ice_commander_unit_tests_migration";
-        let flat = ConfigManager::get_config_path(app);
-        let _ = fs::remove_file(&flat);
-        let legacy = ConfigManager::legacy_config_path(app);
-        fs::create_dir_all(legacy.parent().unwrap()).unwrap();
-        fs::write(&legacy, r#"{ "test_migrated_key": "legacy-value" }"#).unwrap();
-
-        let cfg = AppConfig::new(app);
-        assert_eq!(
-            cfg.get::<String>("test_migrated_key"),
-            Some("legacy-value".to_string())
-        );
-        assert!(flat.exists(), "flat file not written on migration");
-        assert!(legacy.exists(), "legacy file must be left as backup");
-
-        fs::write(&flat, r#"{ "test_migrated_key": "flat-value" }"#).unwrap();
-        let cfg2 = AppConfig::new(app);
-        assert_eq!(
-            cfg2.get::<String>("test_migrated_key"),
-            Some("flat-value".to_string())
-        );
-
-        let _ = fs::remove_file(&flat);
-        let _ = fs::remove_dir_all(legacy.parent().unwrap());
     }
 }

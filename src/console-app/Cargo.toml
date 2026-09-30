@@ -1,6 +1,6 @@
 [package]
 name = "console-app"
-version = "0.7.92"
+version = "0.8.130"
 edition = "2021"
 publish = false
 description = "Ice Commander Console - Dual-Pane Terminal File Manager (TUI, à la Midnight Commander)"
@@ -15,15 +15,23 @@ name = "ice-console"
 path = "src/main.rs"
 
 [dependencies]
+connection-store = { workspace = true }
+connection-form = { workspace = true }
+serde_json = { workspace = true }
+ic-plugin-host = { workspace = true }
+ic-view = { workspace = true }
+ic-view-session = { workspace = true }
+ic-i18n = { workspace = true }
+base64 = "0.22"
+ic-plugin-api = { workspace = true }
 panel-core = { workspace = true }
-virtualfs = { path = "../virtualfs", default-features = false }
+localfs = { path = "../localfs", default-features = false }
 fm-core = { workspace = true }
 ic-platform = { workspace = true }
 client-config = { workspace = true }
 secret-store = { workspace = true }
 tokio = { version = "1.36", features = ["full", "rt-multi-thread"] }
 ratatui = "0.29"
-serde = { version = "1.0", features = ["derive"] }
 # Same crossterm ratatui 0.29 uses, plus its async EventStream (so PTY output and keystrokes
 # can be awaited together). vt100 is the terminal emulator: it turns the raw PTY byte stream
 # into a virtual cell grid we blit into the panel — no coordinate math of our own.
@@ -53,3 +61,7 @@ name = "ice-commander-console"
 assets = [
     { source = "../../bin/console-app/release/ice-console", dest = "/usr/bin/ice-console", mode = "755" },
 ]
+
+[dev-dependencies]
+async-trait = "0.1"
+common = { workspace = true }

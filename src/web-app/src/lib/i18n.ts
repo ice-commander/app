@@ -18,6 +18,11 @@ for (const path in modules) {
 const DEFAULT = 'en';
 let current = DEFAULT;
 
+// What the host served at startup. It carries the language the app is actually
+// set to and the keys plugins registered at runtime, neither of which can be
+// known at build time, so it is consulted first.
+let served: Record<string, string> = {};
+
 /** Set the active language by code (unknown -> English). */
 export function setLang(code: string): void {
   current = dicts[code] ? code : DEFAULT;
@@ -33,9 +38,21 @@ export function languages(): string[] {
   return Object.keys(dicts);
 }
 
-/** Translate a key: current language -> English -> the key itself. */
+/** Adopt the host's language and dictionary (see `GET /api/i18n`). */
+export function adopt(lang: string, keys: Record<string, string>): void {
+  setLang(lang);
+  served = keys;
+}
+
+/** Translate a key: host -> current language -> English -> the key itself. */
 export function tr(key: string): string {
-  return dicts[current]?.[key] ?? dicts[DEFAULT]?.[key] ?? key;
+  return served[key] ?? dicts[current]?.[key] ?? dicts[DEFAULT]?.[key] ?? key;
+}
+
+/** The same lookup, but absent rather than the key, for a plugin's optional text. */
+export function trOptional(key: string): string | undefined {
+  const found = served[key] ?? dicts[current]?.[key] ?? dicts[DEFAULT]?.[key];
+  return found === undefined || found === key ? undefined : found;
 }
 
 /** Translate with `%{name}` substitutions; unknown placeholders are left verbatim. */

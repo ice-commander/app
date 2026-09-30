@@ -53,7 +53,11 @@ mod tests {
     fn a_copy_of_a_non_latin_file_keeps_its_extension() {
         let taken = vec!["تقرير copy.txt".to_string()];
         let made = first_free("تقرير.txt", false, &taken, |stem, ext, n| {
-            if n == 1 { format!("{stem} copy{ext}") } else { format!("{stem} copy {n}{ext}") }
+            if n == 1 {
+                format!("{stem} copy{ext}")
+            } else {
+                format!("{stem} copy {n}{ext}")
+            }
         });
         assert_eq!(made, "تقرير copy 2.txt");
     }

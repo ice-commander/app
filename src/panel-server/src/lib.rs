@@ -121,6 +121,66 @@ pub enum ApiCmd {
     GetSettings {
         reply: oneshot::Sender<ApiResult<serde_json::Value>>,
     },
+    ConnectionKinds {
+        reply: oneshot::Sender<ApiResult<serde_json::Value>>,
+    },
+    SubmitConnectionForm {
+        form: ApiConnectionForm,
+        reply: oneshot::Sender<ApiResult<serde_json::Value>>,
+    },
+    ConnectionFormEvent {
+        kind: String,
+        event: serde_json::Value,
+        reply: oneshot::Sender<ApiResult<serde_json::Value>>,
+    },
+    PluginViews {
+        reply: oneshot::Sender<ApiResult<serde_json::Value>>,
+    },
+    OpenPluginView {
+        id: String,
+        argument: String,
+        reply: oneshot::Sender<ApiResult<serde_json::Value>>,
+    },
+    PluginViewEvent {
+        id: String,
+        event: serde_json::Value,
+        reply: oneshot::Sender<ApiResult<serde_json::Value>>,
+    },
+    ClosePluginView {
+        id: String,
+        reply: oneshot::Sender<ApiResult<()>>,
+    },
+    PluginAsset {
+        name: String,
+        reply: oneshot::Sender<ApiResult<Vec<u8>>>,
+    },
+    ViewerOpen {
+        side: PanelSide,
+        path: String,
+        client: String,
+        reply: oneshot::Sender<ApiResult<Option<serde_json::Value>>>,
+    },
+    ViewerEvent {
+        instance: u64,
+        event: serde_json::Value,
+        reply: oneshot::Sender<ApiResult<serde_json::Value>>,
+    },
+    ViewerPart {
+        instance: u64,
+        name: String,
+        reply: oneshot::Sender<ApiResult<Vec<u8>>>,
+    },
+    ViewerClose {
+        instance: u64,
+        force: bool,
+        reply: oneshot::Sender<ApiResult<serde_json::Value>>,
+    },
+    ViewersGone {
+        client: String,
+    },
+    Translations {
+        reply: oneshot::Sender<ApiResult<serde_json::Value>>,
+    },
     SetSettings {
         values: serde_json::Value,
         reply: oneshot::Sender<ApiResult<()>>,
@@ -271,6 +331,9 @@ pub struct ApiFileEntry {
     pub name: String,
     pub path: String,
     pub is_dir: bool,
+    /// A file a plugin filesystem can be entered as if it were a folder.
+    #[serde(default)]
+    pub enterable: bool,
     pub size: Option<u64>,
     pub modified: Option<String>,
 }
@@ -282,39 +345,37 @@ pub struct ApiFileContent {
     pub is_binary: bool,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+/// A saved connection as the browser sees it: the name, where it sits, which
+/// kind it is, and whatever that kind's own form holds. Nothing here knows a
+/// protocol — the fields are the plugin's, under the plugin's names.
+#[derive(Serialize, Deserialize, Clone, Default)]
 pub struct ApiConnection {
     pub name: String,
-    pub protocol: String,
-    pub host: String,
-    pub port: u16,
-    pub user: String,
     #[serde(default)]
-    pub pass: Option<String>,
+    pub folder: Option<String>,
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub settings: std::collections::BTreeMap<String, String>,
+    /// Which secret binds the host already holds a value for. No secret leaves
+    /// the host, so this is how a form drawn elsewhere knows not to ask again.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stored_secrets: Vec<String>,
+}
+
+/// What a declaratively rendered connection form sends back. The frontend never
+/// builds a record: it posts the binds it collected and the host commits them.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ApiConnectionForm {
+    pub kind: String,
     #[serde(default)]
-    pub auth_type: Option<String>,
+    pub values: serde_json::Map<String, serde_json::Value>,
     #[serde(default)]
-    pub key_path: Option<String>,
+    pub touched: Vec<String>,
+    /// The name of the record being edited, absent when creating a new one.
     #[serde(default)]
-    pub passphrase: Option<String>,
+    pub editing: Option<String>,
     #[serde(default)]
-    pub remote_path: Option<String>,
-    #[serde(default)]
-    pub use_tunnel: Option<bool>,
-    #[serde(default)]
-    pub tunnel_host: Option<String>,
-    #[serde(default)]
-    pub tunnel_port: Option<u16>,
-    #[serde(default)]
-    pub tunnel_user: Option<String>,
-    #[serde(default)]
-    pub tunnel_auth_type: Option<String>,
-    #[serde(default)]
-    pub tunnel_pass: Option<String>,
-    #[serde(default)]
-    pub tunnel_key_path: Option<String>,
-    #[serde(default)]
-    pub tunnel_passphrase: Option<String>,
+    pub connect: Option<PanelSide>,
 }
 
 pub type ApiResult<T> = Result<T, String>;
@@ -346,6 +407,7 @@ pub type WsSessions = Arc<Mutex<WsRegistry>>;
 pub struct WsRegistry {
     next_id: u64,
     sessions: std::collections::HashMap<u64, actix_ws::Session>,
+    clients: std::collections::HashMap<u64, String>,
     term_open: TermOpenState,
 }
 
@@ -358,19 +420,30 @@ struct TermOpenState {
 }
 
 impl WsRegistry {
-    fn insert(&mut self, session: actix_ws::Session) -> u64 {
+    fn insert(&mut self, client: &str, session: actix_ws::Session) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
         self.sessions.insert(id, session);
+        if !client.is_empty() {
+            self.clients.insert(id, client.to_string());
+        }
         id
     }
 
+    fn watched_by(&self, client: &str) -> bool {
+        self.clients.values().any(|held| held == client)
+    }
+
     fn snapshot(&self) -> Vec<(u64, actix_ws::Session)> {
-        self.sessions.iter().map(|(id, s)| (*id, s.clone())).collect()
+        self.sessions
+            .iter()
+            .map(|(id, s)| (*id, s.clone()))
+            .collect()
     }
 
     fn remove(&mut self, id: u64) {
         self.sessions.remove(&id);
+        self.clients.remove(&id);
     }
 
     fn is_empty(&self) -> bool {
@@ -410,7 +483,10 @@ impl TermMirror {
             total_bytes: 0,
         }));
         let (tap, _) = tokio::sync::broadcast::channel(256);
-        let mirror = TermMirror { scrollback: scrollback.clone(), tap: tap.clone() };
+        let mirror = TermMirror {
+            scrollback: scrollback.clone(),
+            tap: tap.clone(),
+        };
         let mut raw_rx = raw.subscribe();
         tokio::spawn(async move {
             loop {
@@ -441,7 +517,13 @@ impl TermMirror {
         mirror
     }
 
-    fn attach(&self) -> (Vec<u8>, u64, tokio::sync::broadcast::Receiver<(u64, Vec<u8>)>) {
+    fn attach(
+        &self,
+    ) -> (
+        Vec<u8>,
+        u64,
+        tokio::sync::broadcast::Receiver<(u64, Vec<u8>)>,
+    ) {
         let sb = self.scrollback.lock().unwrap();
         let rx = self.tap.subscribe();
         let mut replay = Vec::with_capacity(sb.total_bytes);
@@ -463,9 +545,12 @@ impl Notifier {
     }
 
     pub fn panel_updated(&self, side: &str, state: ApiPanelState) {
-        ws_broadcast_json(&self.sessions, serde_json::json!({
-            "event": "panel_updated", "side": side, "state": state,
-        }));
+        ws_broadcast_json(
+            &self.sessions,
+            serde_json::json!({
+                "event": "panel_updated", "side": side, "state": state,
+            }),
+        );
     }
 
     pub fn terminal_state(&self, side: &str, open: bool) {
@@ -477,9 +562,12 @@ impl Notifier {
                 _ => {}
             }
         }
-        ws_broadcast_json(&self.sessions, serde_json::json!({
-            "event": "terminal_state", "side": side, "open": open,
-        }));
+        ws_broadcast_json(
+            &self.sessions,
+            serde_json::json!({
+                "event": "terminal_state", "side": side, "open": open,
+            }),
+        );
     }
 
     pub fn terminal_expanded(&self, side: &str, expanded: bool) {
@@ -488,43 +576,58 @@ impl Notifier {
             reg.term_open.expanded_side = side.to_string();
             reg.term_open.expanded = expanded;
         }
-        ws_broadcast_json(&self.sessions, serde_json::json!({
-            "event": "terminal_expanded", "side": side, "expanded": expanded,
-        }));
+        ws_broadcast_json(
+            &self.sessions,
+            serde_json::json!({
+                "event": "terminal_expanded", "side": side, "expanded": expanded,
+            }),
+        );
     }
 
     pub fn view_mode(&self, side: &str, mode: &str) {
         if !self.has_clients() {
             return;
         }
-        ws_broadcast_json(&self.sessions, serde_json::json!({
-            "event": "view_mode", "side": side, "mode": mode,
-        }));
+        ws_broadcast_json(
+            &self.sessions,
+            serde_json::json!({
+                "event": "view_mode", "side": side, "mode": mode,
+            }),
+        );
     }
 
     pub fn viewer_opened(&self, side: &str, path: &str, mode: &str) {
         if !self.has_clients() {
             return;
         }
-        ws_broadcast_json(&self.sessions, serde_json::json!({
-            "event": "open_viewer", "side": side, "path": path, "mode": mode,
-        }));
+        ws_broadcast_json(
+            &self.sessions,
+            serde_json::json!({
+                "event": "open_viewer", "side": side, "path": path, "mode": mode,
+            }),
+        );
     }
 
     pub fn viewer_closed(&self) {
         if !self.has_clients() {
             return;
         }
-        ws_broadcast_json(&self.sessions, serde_json::json!({ "event": "close_viewer" }));
+        ws_broadcast_json(
+            &self.sessions,
+            serde_json::json!({ "event": "close_viewer" }),
+        );
     }
 
     pub fn connections_dialog(&self, open: bool) {
         if !self.has_clients() {
             return;
         }
-        ws_broadcast_json(&self.sessions, serde_json::json!({
-            "event": if open { "open_connections" } else { "close_connections" },
-        }));
+        ws_broadcast_json(
+            &self.sessions,
+            serde_json::json!({
+                "event": if open { "open_connections" } else { "close_connections" },
+            }),
+        );
     }
 }
 
@@ -631,20 +734,23 @@ pub fn ops_begin(
     let mut st = ops_state().lock().unwrap();
     let id = st.next_id;
     st.next_id += 1;
-    st.ops.insert(id, OpEntry {
-        op: ApiOperation {
-            id,
-            kind: kind.to_string(),
-            current_file: String::new(),
-            done_bytes: 0,
-            total_bytes,
-            done_files: 0,
-            total_files,
-            speed_bps: 0,
+    st.ops.insert(
+        id,
+        OpEntry {
+            op: ApiOperation {
+                id,
+                kind: kind.to_string(),
+                current_file: String::new(),
+                done_bytes: 0,
+                total_bytes,
+                done_files: 0,
+                total_files,
+                speed_bps: 0,
+            },
+            started: std::time::Instant::now(),
+            cancel,
         },
-        started: std::time::Instant::now(),
-        cancel,
-    });
+    );
     OpGuard { id }
 }
 
@@ -656,7 +762,11 @@ impl OpGuard {
             e.op.done_bytes = done_bytes;
             e.op.done_files = done_files;
             let secs = e.started.elapsed().as_secs_f64();
-            e.op.speed_bps = if secs > 0.2 { (done_bytes as f64 / secs) as u64 } else { 0 };
+            e.op.speed_bps = if secs > 0.2 {
+                (done_bytes as f64 / secs) as u64
+            } else {
+                0
+            };
         }
     }
 }
@@ -686,12 +796,12 @@ async fn cancel_operation(id: web::Path<u64>) -> impl Responder {
     }
 }
 
-async fn get_panel_state(
-    side: web::Path<PanelSide>,
-    state: web::Data<ApiState>,
-) -> impl Responder {
+async fn get_panel_state(side: web::Path<PanelSide>, state: web::Data<ApiState>) -> impl Responder {
     let (reply_tx, reply_rx) = oneshot::channel();
-    let cmd = ApiCmd::GetPanelState { side: *side, reply: reply_tx };
+    let cmd = ApiCmd::GetPanelState {
+        side: *side,
+        reply: reply_tx,
+    };
     if state.tx.send(cmd).await.is_err() {
         return HttpResponse::ServiceUnavailable().finish();
     }
@@ -713,7 +823,11 @@ async fn enter(
     state: web::Data<ApiState>,
 ) -> impl Responder {
     let (reply_tx, reply_rx) = oneshot::channel();
-    let cmd = ApiCmd::Enter { side: *side, name: body.name.clone(), reply: reply_tx };
+    let cmd = ApiCmd::Enter {
+        side: *side,
+        name: body.name.clone(),
+        reply: reply_tx,
+    };
     if state.tx.send(cmd).await.is_err() {
         return HttpResponse::ServiceUnavailable().finish();
     }
@@ -735,7 +849,11 @@ async fn breadcrumb(
     state: web::Data<ApiState>,
 ) -> impl Responder {
     let (reply_tx, reply_rx) = oneshot::channel();
-    let cmd = ApiCmd::Breadcrumb { side: *side, level: body.level, reply: reply_tx };
+    let cmd = ApiCmd::Breadcrumb {
+        side: *side,
+        level: body.level,
+        reply: reply_tx,
+    };
     if state.tx.send(cmd).await.is_err() {
         return HttpResponse::ServiceUnavailable().finish();
     }
@@ -746,12 +864,12 @@ async fn breadcrumb(
     }
 }
 
-async fn go_up(
-    side: web::Path<PanelSide>,
-    state: web::Data<ApiState>,
-) -> impl Responder {
+async fn go_up(side: web::Path<PanelSide>, state: web::Data<ApiState>) -> impl Responder {
     let (reply_tx, reply_rx) = oneshot::channel();
-    let cmd = ApiCmd::GoUp { side: *side, reply: reply_tx };
+    let cmd = ApiCmd::GoUp {
+        side: *side,
+        reply: reply_tx,
+    };
     if state.tx.send(cmd).await.is_err() {
         return HttpResponse::ServiceUnavailable().finish();
     }
@@ -762,12 +880,12 @@ async fn go_up(
     }
 }
 
-async fn add_tab(
-    side: web::Path<PanelSide>,
-    state: web::Data<ApiState>,
-) -> impl Responder {
+async fn add_tab(side: web::Path<PanelSide>, state: web::Data<ApiState>) -> impl Responder {
     let (reply_tx, reply_rx) = oneshot::channel();
-    let cmd = ApiCmd::AddTab { side: *side, reply: reply_tx };
+    let cmd = ApiCmd::AddTab {
+        side: *side,
+        reply: reply_tx,
+    };
     if state.tx.send(cmd).await.is_err() {
         return HttpResponse::ServiceUnavailable().finish();
     }
@@ -784,7 +902,11 @@ async fn close_tab(
 ) -> impl Responder {
     let (side, id) = *path;
     let (reply_tx, reply_rx) = oneshot::channel();
-    let cmd = ApiCmd::CloseTab { side, id, reply: reply_tx };
+    let cmd = ApiCmd::CloseTab {
+        side,
+        id,
+        reply: reply_tx,
+    };
     if state.tx.send(cmd).await.is_err() {
         return HttpResponse::ServiceUnavailable().finish();
     }
@@ -801,7 +923,11 @@ async fn switch_tab(
 ) -> impl Responder {
     let (side, id) = *path;
     let (reply_tx, reply_rx) = oneshot::channel();
-    let cmd = ApiCmd::SwitchTab { side, id, reply: reply_tx };
+    let cmd = ApiCmd::SwitchTab {
+        side,
+        id,
+        reply: reply_tx,
+    };
     if state.tx.send(cmd).await.is_err() {
         return HttpResponse::ServiceUnavailable().finish();
     }
@@ -812,12 +938,12 @@ async fn switch_tab(
     }
 }
 
-async fn go_back(
-    side: web::Path<PanelSide>,
-    state: web::Data<ApiState>,
-) -> impl Responder {
+async fn go_back(side: web::Path<PanelSide>, state: web::Data<ApiState>) -> impl Responder {
     let (reply_tx, reply_rx) = oneshot::channel();
-    let cmd = ApiCmd::GoBack { side: *side, reply: reply_tx };
+    let cmd = ApiCmd::GoBack {
+        side: *side,
+        reply: reply_tx,
+    };
     if state.tx.send(cmd).await.is_err() {
         return HttpResponse::ServiceUnavailable().finish();
     }
@@ -828,12 +954,12 @@ async fn go_back(
     }
 }
 
-async fn go_forward(
-    side: web::Path<PanelSide>,
-    state: web::Data<ApiState>,
-) -> impl Responder {
+async fn go_forward(side: web::Path<PanelSide>, state: web::Data<ApiState>) -> impl Responder {
     let (reply_tx, reply_rx) = oneshot::channel();
-    let cmd = ApiCmd::GoForward { side: *side, reply: reply_tx };
+    let cmd = ApiCmd::GoForward {
+        side: *side,
+        reply: reply_tx,
+    };
     if state.tx.send(cmd).await.is_err() {
         return HttpResponse::ServiceUnavailable().finish();
     }
@@ -855,7 +981,11 @@ async fn delete_entries(
     state: web::Data<ApiState>,
 ) -> impl Responder {
     let (reply_tx, reply_rx) = oneshot::channel();
-    let cmd = ApiCmd::Delete { side: *side, paths: body.paths.clone(), reply: reply_tx };
+    let cmd = ApiCmd::Delete {
+        side: *side,
+        paths: body.paths.clone(),
+        reply: reply_tx,
+    };
     if state.tx.send(cmd).await.is_err() {
         return HttpResponse::ServiceUnavailable().finish();
     }
@@ -877,7 +1007,11 @@ async fn mkdir(
     state: web::Data<ApiState>,
 ) -> impl Responder {
     let (reply_tx, reply_rx) = oneshot::channel();
-    let cmd = ApiCmd::Mkdir { side: *side, name: body.name.clone(), reply: reply_tx };
+    let cmd = ApiCmd::Mkdir {
+        side: *side,
+        name: body.name.clone(),
+        reply: reply_tx,
+    };
     if state.tx.send(cmd).await.is_err() {
         return HttpResponse::ServiceUnavailable().finish();
     }
@@ -966,12 +1100,12 @@ async fn move_entries(
     }
 }
 
-async fn go_home(
-    side: web::Path<PanelSide>,
-    state: web::Data<ApiState>,
-) -> impl Responder {
+async fn go_home(side: web::Path<PanelSide>, state: web::Data<ApiState>) -> impl Responder {
     let (reply_tx, reply_rx) = oneshot::channel();
-    let cmd = ApiCmd::GoHome { side: *side, reply: reply_tx };
+    let cmd = ApiCmd::GoHome {
+        side: *side,
+        reply: reply_tx,
+    };
     if state.tx.send(cmd).await.is_err() {
         return HttpResponse::ServiceUnavailable().finish();
     }
@@ -993,7 +1127,11 @@ async fn read_file(
     state: web::Data<ApiState>,
 ) -> impl Responder {
     let (reply_tx, reply_rx) = oneshot::channel();
-    let cmd = ApiCmd::ReadFile { side: *side, path: query.path.clone(), reply: reply_tx };
+    let cmd = ApiCmd::ReadFile {
+        side: *side,
+        path: query.path.clone(),
+        reply: reply_tx,
+    };
     if state.tx.send(cmd).await.is_err() {
         return HttpResponse::ServiceUnavailable().finish();
     }
@@ -1041,7 +1179,11 @@ fn parse_byte_range(header: &str, total: u64) -> Option<(u64, u64)> {
         (total.saturating_sub(suffix), total - 1)
     } else {
         let start: u64 = a.parse().ok()?;
-        let end = if b.is_empty() { total - 1 } else { b.parse::<u64>().ok()?.min(total - 1) };
+        let end = if b.is_empty() {
+            total - 1
+        } else {
+            b.parse::<u64>().ok()?.min(total - 1)
+        };
         (start, end)
     };
     if start > end || start >= total {
@@ -1059,13 +1201,19 @@ async fn stream_file(
     use actix_web::http::header::{ACCEPT_RANGES, CONTENT_RANGE, RANGE};
 
     let (reply_tx, reply_rx) = oneshot::channel();
-    let cmd = ApiCmd::StreamFile { side: *side, path: query.path.clone(), reply: reply_tx };
+    let cmd = ApiCmd::StreamFile {
+        side: *side,
+        path: query.path.clone(),
+        reply: reply_tx,
+    };
     if state.tx.send(cmd).await.is_err() {
         return HttpResponse::ServiceUnavailable().finish();
     }
     let bytes = match reply_rx.await {
         Ok(Ok(bytes)) => bytes,
-        Ok(Err(e)) => return HttpResponse::InternalServerError().json(serde_json::json!({ "error": e })),
+        Ok(Err(e)) => {
+            return HttpResponse::InternalServerError().json(serde_json::json!({ "error": e }))
+        }
         Err(_) => return HttpResponse::ServiceUnavailable().finish(),
     };
 
@@ -1102,7 +1250,12 @@ async fn write_file(
     state: web::Data<ApiState>,
 ) -> impl Responder {
     let (reply_tx, reply_rx) = oneshot::channel();
-    let cmd = ApiCmd::WriteFile { side: *side, path: body.path.clone(), content: body.content.clone(), reply: reply_tx };
+    let cmd = ApiCmd::WriteFile {
+        side: *side,
+        path: body.path.clone(),
+        content: body.content.clone(),
+        reply: reply_tx,
+    };
     if state.tx.send(cmd).await.is_err() {
         return HttpResponse::ServiceUnavailable().finish();
     }
@@ -1146,9 +1299,15 @@ struct ToggleFavoriteBody {
     path: String,
 }
 
-async fn toggle_favorite(body: web::Json<ToggleFavoriteBody>, state: web::Data<ApiState>) -> impl Responder {
+async fn toggle_favorite(
+    body: web::Json<ToggleFavoriteBody>,
+    state: web::Data<ApiState>,
+) -> impl Responder {
     let (reply_tx, reply_rx) = oneshot::channel();
-    let cmd = ApiCmd::ToggleFavorite { path: body.path.clone(), reply: reply_tx };
+    let cmd = ApiCmd::ToggleFavorite {
+        path: body.path.clone(),
+        reply: reply_tx,
+    };
     if state.tx.send(cmd).await.is_err() {
         return HttpResponse::ServiceUnavailable().finish();
     }
@@ -1161,7 +1320,12 @@ async fn toggle_favorite(body: web::Json<ToggleFavoriteBody>, state: web::Data<A
 
 async fn get_favorites_only(state: web::Data<ApiState>) -> impl Responder {
     let (reply_tx, reply_rx) = oneshot::channel();
-    if state.tx.send(ApiCmd::GetFavoritesOnly { reply: reply_tx }).await.is_err() {
+    if state
+        .tx
+        .send(ApiCmd::GetFavoritesOnly { reply: reply_tx })
+        .await
+        .is_err()
+    {
         return HttpResponse::ServiceUnavailable().finish();
     }
     match reply_rx.await {
@@ -1176,14 +1340,277 @@ struct FavoritesOnlyBody {
     value: bool,
 }
 
-async fn set_favorites_only(body: web::Json<FavoritesOnlyBody>, state: web::Data<ApiState>) -> impl Responder {
+async fn set_favorites_only(
+    body: web::Json<FavoritesOnlyBody>,
+    state: web::Data<ApiState>,
+) -> impl Responder {
     let (reply_tx, reply_rx) = oneshot::channel();
-    if state.tx.send(ApiCmd::SetFavoritesOnly { value: body.value, reply: reply_tx }).await.is_err() {
+    if state
+        .tx
+        .send(ApiCmd::SetFavoritesOnly {
+            value: body.value,
+            reply: reply_tx,
+        })
+        .await
+        .is_err()
+    {
         return HttpResponse::ServiceUnavailable().finish();
     }
     match reply_rx.await {
         Ok(Ok(())) => HttpResponse::Ok().json(serde_json::json!({ "ok": true })),
         Ok(Err(e)) => HttpResponse::InternalServerError().json(serde_json::json!({ "error": e })),
+        Err(_) => HttpResponse::ServiceUnavailable().finish(),
+    }
+}
+
+#[derive(Deserialize)]
+struct ViewArgument {
+    #[serde(default)]
+    arg: Option<String>,
+}
+
+/// Sends one command to the thread that owns the plugins and answers its reply.
+async fn ask(
+    state: &web::Data<ApiState>,
+    build: impl FnOnce(oneshot::Sender<ApiResult<serde_json::Value>>) -> ApiCmd,
+) -> HttpResponse {
+    let (reply_tx, reply_rx) = oneshot::channel();
+    if state.tx.send(build(reply_tx)).await.is_err() {
+        return HttpResponse::ServiceUnavailable().finish();
+    }
+    match reply_rx.await {
+        Ok(Ok(answered)) => HttpResponse::Ok().json(answered),
+        Ok(Err(e)) => HttpResponse::InternalServerError().json(serde_json::json!({ "error": e })),
+        Err(_) => HttpResponse::ServiceUnavailable().finish(),
+    }
+}
+
+async fn connection_kinds(state: web::Data<ApiState>) -> impl Responder {
+    ask(&state, |reply| ApiCmd::ConnectionKinds { reply }).await
+}
+
+async fn submit_connection_form(
+    body: web::Json<ApiConnectionForm>,
+    state: web::Data<ApiState>,
+) -> impl Responder {
+    let form = body.into_inner();
+    ask(&state, move |reply| ApiCmd::SubmitConnectionForm {
+        form,
+        reply,
+    })
+    .await
+}
+
+async fn connection_form_event(
+    kind: web::Path<String>,
+    body: web::Json<serde_json::Value>,
+    state: web::Data<ApiState>,
+) -> impl Responder {
+    let kind = kind.into_inner();
+    let event = body.into_inner();
+    ask(&state, move |reply| ApiCmd::ConnectionFormEvent {
+        kind,
+        event,
+        reply,
+    })
+    .await
+}
+
+async fn plugin_views(state: web::Data<ApiState>) -> impl Responder {
+    ask(&state, |reply| ApiCmd::PluginViews { reply }).await
+}
+
+async fn open_plugin_view(
+    id: web::Path<String>,
+    query: web::Query<ViewArgument>,
+    state: web::Data<ApiState>,
+) -> impl Responder {
+    let id = id.into_inner();
+    let argument = query.into_inner().arg.unwrap_or_else(|| "null".to_string());
+    ask(&state, move |reply| ApiCmd::OpenPluginView {
+        id,
+        argument,
+        reply,
+    })
+    .await
+}
+
+async fn plugin_view_event(
+    id: web::Path<String>,
+    body: web::Json<serde_json::Value>,
+    state: web::Data<ApiState>,
+) -> impl Responder {
+    let id = id.into_inner();
+    let event = body.into_inner();
+    ask(&state, move |reply| ApiCmd::PluginViewEvent {
+        id,
+        event,
+        reply,
+    })
+    .await
+}
+
+async fn close_plugin_view(id: web::Path<String>, state: web::Data<ApiState>) -> impl Responder {
+    let id = id.into_inner();
+    let (reply_tx, reply_rx) = oneshot::channel();
+    if state
+        .tx
+        .send(ApiCmd::ClosePluginView {
+            id,
+            reply: reply_tx,
+        })
+        .await
+        .is_err()
+    {
+        return HttpResponse::ServiceUnavailable().finish();
+    }
+    match reply_rx.await {
+        Ok(Ok(())) => HttpResponse::Ok().json(serde_json::json!({ "ok": true })),
+        Ok(Err(e)) => HttpResponse::InternalServerError().json(serde_json::json!({ "error": e })),
+        Err(_) => HttpResponse::ServiceUnavailable().finish(),
+    }
+}
+
+#[derive(Deserialize)]
+struct ViewerOpenBody {
+    side: PanelSide,
+    path: String,
+    client: Option<String>,
+}
+
+async fn viewer_open(
+    body: web::Json<ViewerOpenBody>,
+    state: web::Data<ApiState>,
+) -> impl Responder {
+    let body = body.into_inner();
+    let (reply_tx, reply_rx) = oneshot::channel();
+    let cmd = ApiCmd::ViewerOpen {
+        side: body.side,
+        path: body.path,
+        client: body.client.unwrap_or_default(),
+        reply: reply_tx,
+    };
+    if state.tx.send(cmd).await.is_err() {
+        return HttpResponse::ServiceUnavailable().finish();
+    }
+    match reply_rx.await {
+        Ok(Ok(Some(opened))) => HttpResponse::Ok().json(opened),
+        Ok(Ok(None)) => HttpResponse::NotFound()
+            .json(serde_json::json!({ "error": "nothing claims this file" })),
+        Ok(Err(e)) => HttpResponse::InternalServerError().json(serde_json::json!({ "error": e })),
+        Err(_) => HttpResponse::ServiceUnavailable().finish(),
+    }
+}
+
+async fn viewer_event(
+    instance: web::Path<u64>,
+    body: web::Json<serde_json::Value>,
+    state: web::Data<ApiState>,
+) -> impl Responder {
+    let instance = instance.into_inner();
+    let event = body.into_inner();
+    ask(&state, move |reply| ApiCmd::ViewerEvent {
+        instance,
+        event,
+        reply,
+    })
+    .await
+}
+
+async fn viewer_part(
+    named: web::Path<(u64, String)>,
+    state: web::Data<ApiState>,
+) -> impl Responder {
+    let (instance, name) = named.into_inner();
+    let (reply_tx, reply_rx) = oneshot::channel();
+    let cmd = ApiCmd::ViewerPart {
+        instance,
+        name,
+        reply: reply_tx,
+    };
+    if state.tx.send(cmd).await.is_err() {
+        return HttpResponse::ServiceUnavailable().finish();
+    }
+    match reply_rx.await {
+        Ok(Ok(bytes)) => HttpResponse::Ok()
+            .content_type(sniffed_content_type(&bytes))
+            .insert_header(("Content-Security-Policy", "sandbox; default-src 'none'"))
+            .insert_header(("X-Content-Type-Options", "nosniff"))
+            .body(bytes),
+        Ok(Err(e)) => HttpResponse::NotFound().json(serde_json::json!({ "error": e })),
+        Err(_) => HttpResponse::ServiceUnavailable().finish(),
+    }
+}
+
+#[derive(Deserialize)]
+struct ViewerCloseBody {
+    #[serde(default)]
+    force: bool,
+}
+
+async fn viewer_close(
+    instance: web::Path<u64>,
+    body: Option<web::Json<ViewerCloseBody>>,
+    state: web::Data<ApiState>,
+) -> impl Responder {
+    let instance = instance.into_inner();
+    let force = body.map(|body| body.into_inner().force).unwrap_or(false);
+    let (reply_tx, reply_rx) = oneshot::channel();
+    let cmd = ApiCmd::ViewerClose {
+        instance,
+        force,
+        reply: reply_tx,
+    };
+    if state.tx.send(cmd).await.is_err() {
+        return HttpResponse::ServiceUnavailable().finish();
+    }
+    match reply_rx.await {
+        Ok(Ok(answered)) => HttpResponse::Ok().json(answered),
+        Ok(Err(e)) => HttpResponse::InternalServerError().json(serde_json::json!({ "error": e })),
+        Err(_) => HttpResponse::ServiceUnavailable().finish(),
+    }
+}
+
+fn sniffed_content_type(bytes: &[u8]) -> &'static str {
+    match bytes {
+        [0xFF, 0xD8, 0xFF, ..] => "image/jpeg",
+        [0x89, b'P', b'N', b'G', ..] => "image/png",
+        [b'G', b'I', b'F', b'8', ..] => "image/gif",
+        [b'B', b'M', ..] => "image/bmp",
+        [b'R', b'I', b'F', b'F', _, _, _, _, b'W', b'E', b'B', b'P', ..] => "image/webp",
+        _ if bytes.starts_with(b"<svg") || bytes.starts_with(b"<?xml") => "image/svg+xml",
+        _ => "application/octet-stream",
+    }
+}
+
+async fn translations(state: web::Data<ApiState>) -> impl Responder {
+    ask(&state, |reply| ApiCmd::Translations { reply }).await
+}
+
+/// A plugin icon. Served for `<img src>` only: an inline SVG would run whatever
+/// script the file carries with the page's own origin.
+async fn plugin_asset(name: web::Path<String>, state: web::Data<ApiState>) -> impl Responder {
+    let name = name.into_inner();
+    let (reply_tx, reply_rx) = oneshot::channel();
+    if state
+        .tx
+        .send(ApiCmd::PluginAsset {
+            name,
+            reply: reply_tx,
+        })
+        .await
+        .is_err()
+    {
+        return HttpResponse::ServiceUnavailable().finish();
+    }
+    match reply_rx.await {
+        Ok(Ok(bytes)) => HttpResponse::Ok()
+            .content_type("image/svg+xml")
+            .insert_header(("Content-Security-Policy", "sandbox; default-src 'none'"))
+            .insert_header(("X-Content-Type-Options", "nosniff"))
+            .insert_header(("Cache-Control", "public, max-age=3600"))
+            .body(bytes),
+        Ok(Err(e)) => HttpResponse::NotFound().json(serde_json::json!({ "error": e })),
         Err(_) => HttpResponse::ServiceUnavailable().finish(),
     }
 }
@@ -1201,18 +1628,21 @@ async fn get_connections(state: web::Data<ApiState>) -> impl Responder {
     }
 }
 
-async fn save_connection(body: web::Json<ApiConnection>, state: web::Data<ApiState>) -> impl Responder {
+async fn save_connection(
+    body: web::Json<ApiConnection>,
+    state: web::Data<ApiState>,
+) -> impl Responder {
     let conn = body.into_inner();
-    if conn.name.trim().is_empty() || conn.host.trim().is_empty() {
+    // Only the name is the application's to demand; the rest is the kind's business.
+    if conn.name.trim().is_empty() || conn.kind.trim().is_empty() {
         return HttpResponse::BadRequest()
-            .json(serde_json::json!({ "error": "name and host are required" }));
-    }
-    if !matches!(conn.protocol.to_uppercase().as_str(), "FTP" | "SFTP" | "WEBDAV") {
-        return HttpResponse::BadRequest()
-            .json(serde_json::json!({ "error": format!("unknown protocol: {}", conn.protocol) }));
+            .json(serde_json::json!({ "error": "a connection needs a name and a kind" }));
     }
     let (reply_tx, reply_rx) = oneshot::channel();
-    let cmd = ApiCmd::SaveConnection { connection: conn, reply: reply_tx };
+    let cmd = ApiCmd::SaveConnection {
+        connection: conn,
+        reply: reply_tx,
+    };
     if state.tx.send(cmd).await.is_err() {
         return HttpResponse::ServiceUnavailable().finish();
     }
@@ -1225,7 +1655,10 @@ async fn save_connection(body: web::Json<ApiConnection>, state: web::Data<ApiSta
 
 async fn delete_connection(name: web::Path<String>, state: web::Data<ApiState>) -> impl Responder {
     let (reply_tx, reply_rx) = oneshot::channel();
-    let cmd = ApiCmd::DeleteConnection { name: name.into_inner(), reply: reply_tx };
+    let cmd = ApiCmd::DeleteConnection {
+        name: name.into_inner(),
+        reply: reply_tx,
+    };
     if state.tx.send(cmd).await.is_err() {
         return HttpResponse::ServiceUnavailable().finish();
     }
@@ -1260,12 +1693,12 @@ struct DialogBody {
     open: bool,
 }
 
-async fn refresh_panel(
-    side: web::Path<PanelSide>,
-    state: web::Data<ApiState>,
-) -> impl Responder {
+async fn refresh_panel(side: web::Path<PanelSide>, state: web::Data<ApiState>) -> impl Responder {
     let (reply_tx, reply_rx) = oneshot::channel();
-    let cmd = ApiCmd::RefreshPanel { side: *side, reply: reply_tx };
+    let cmd = ApiCmd::RefreshPanel {
+        side: *side,
+        reply: reply_tx,
+    };
     if state.tx.send(cmd).await.is_err() {
         return HttpResponse::ServiceUnavailable().finish();
     }
@@ -1278,7 +1711,12 @@ async fn refresh_panel(
 
 async fn get_settings(state: web::Data<ApiState>) -> impl Responder {
     let (reply_tx, reply_rx) = oneshot::channel();
-    if state.tx.send(ApiCmd::GetSettings { reply: reply_tx }).await.is_err() {
+    if state
+        .tx
+        .send(ApiCmd::GetSettings { reply: reply_tx })
+        .await
+        .is_err()
+    {
         return HttpResponse::ServiceUnavailable().finish();
     }
     match reply_rx.await {
@@ -1293,7 +1731,10 @@ async fn set_settings(
     state: web::Data<ApiState>,
 ) -> impl Responder {
     let (reply_tx, reply_rx) = oneshot::channel();
-    let cmd = ApiCmd::SetSettings { values: body.clone(), reply: reply_tx };
+    let cmd = ApiCmd::SetSettings {
+        values: body.clone(),
+        reply: reply_tx,
+    };
     if state.tx.send(cmd).await.is_err() {
         return HttpResponse::ServiceUnavailable().finish();
     }
@@ -1306,7 +1747,12 @@ async fn set_settings(
 
 async fn viewer_content(state: web::Data<ApiState>) -> impl Responder {
     let (reply_tx, reply_rx) = oneshot::channel();
-    if state.tx.send(ApiCmd::GetViewerContent { reply: reply_tx }).await.is_err() {
+    if state
+        .tx
+        .send(ApiCmd::GetViewerContent { reply: reply_tx })
+        .await
+        .is_err()
+    {
         return HttpResponse::ServiceUnavailable().finish();
     }
     match reply_rx.await {
@@ -1326,7 +1772,10 @@ async fn set_connections_dialog(
     state: web::Data<ApiState>,
 ) -> impl Responder {
     let (reply_tx, reply_rx) = oneshot::channel();
-    let cmd = ApiCmd::SetConnectionsDialog { open: body.open, reply: reply_tx };
+    let cmd = ApiCmd::SetConnectionsDialog {
+        open: body.open,
+        reply: reply_tx,
+    };
     if state.tx.send(cmd).await.is_err() {
         return HttpResponse::ServiceUnavailable().finish();
     }
@@ -1342,7 +1791,10 @@ async fn export_connections(
     state: web::Data<ApiState>,
 ) -> impl Responder {
     let (reply_tx, reply_rx) = oneshot::channel();
-    let cmd = ApiCmd::ExportConnections { password: body.password.clone(), reply: reply_tx };
+    let cmd = ApiCmd::ExportConnections {
+        password: body.password.clone(),
+        reply: reply_tx,
+    };
     if state.tx.send(cmd).await.is_err() {
         return HttpResponse::ServiceUnavailable().finish();
     }
@@ -1430,7 +1882,11 @@ async fn set_view_mode(
             .json(serde_json::json!({ "error": format!("bad view mode {:?}", body.mode) }));
     }
     let (reply_tx, reply_rx) = oneshot::channel();
-    let cmd = ApiCmd::SetViewMode { side, mode: body.mode.clone(), reply: reply_tx };
+    let cmd = ApiCmd::SetViewMode {
+        side,
+        mode: body.mode.clone(),
+        reply: reply_tx,
+    };
     if state.tx.send(cmd).await.is_err() {
         return HttpResponse::ServiceUnavailable().finish();
     }
@@ -1487,7 +1943,13 @@ async fn set_terminal_expanded(
         Ok(s) => s,
         Err(e) => return HttpResponse::BadRequest().json(serde_json::json!({ "error": e })),
     };
-    let _ = state.tx.send(ApiCmd::SetTerminalExpanded { side, expanded: body.expanded }).await;
+    let _ = state
+        .tx
+        .send(ApiCmd::SetTerminalExpanded {
+            side,
+            expanded: body.expanded,
+        })
+        .await;
     HttpResponse::Ok().json(serde_json::json!({ "ok": true }))
 }
 
@@ -1498,10 +1960,7 @@ struct OpenViewerBody {
     mode: Option<String>,
 }
 
-async fn open_viewer(
-    side: web::Path<String>,
-    body: web::Json<OpenViewerBody>,
-) -> impl Responder {
+async fn open_viewer(side: web::Path<String>, body: web::Json<OpenViewerBody>) -> impl Responder {
     let side = side.into_inner();
     if side.parse::<PanelSide>().is_err() {
         return HttpResponse::BadRequest().json(serde_json::json!({ "error": "bad side" }));
@@ -1533,7 +1992,11 @@ async fn open_native(
         Err(e) => return HttpResponse::BadRequest().json(serde_json::json!({ "error": e })),
     };
     let (reply_tx, reply_rx) = oneshot::channel();
-    let cmd = ApiCmd::OpenNative { side, path: body.path.clone(), reply: reply_tx };
+    let cmd = ApiCmd::OpenNative {
+        side,
+        path: body.path.clone(),
+        reply: reply_tx,
+    };
     if state.tx.send(cmd).await.is_err() {
         return HttpResponse::ServiceUnavailable().finish();
     }
@@ -1559,7 +2022,11 @@ async fn activate_source(
         Err(e) => return HttpResponse::BadRequest().json(serde_json::json!({ "error": e })),
     };
     let (reply_tx, reply_rx) = oneshot::channel();
-    let cmd = ApiCmd::ActivateSource { side, key: body.key.clone(), reply: reply_tx };
+    let cmd = ApiCmd::ActivateSource {
+        side,
+        key: body.key.clone(),
+        reply: reply_tx,
+    };
     if state.tx.send(cmd).await.is_err() {
         return HttpResponse::ServiceUnavailable().finish();
     }
@@ -1570,16 +2037,26 @@ async fn activate_source(
     }
 }
 
+#[derive(Deserialize)]
+struct WsClient {
+    client: Option<String>,
+}
+
+const CLIENT_GRACE: std::time::Duration = std::time::Duration::from_secs(30);
+
 async fn ws_handler(
     req: HttpRequest,
     stream: web::Payload,
     state: web::Data<ApiState>,
 ) -> Result<HttpResponse, actix_web::Error> {
+    let client = web::Query::<WsClient>::from_query(req.query_string())
+        .map(|query| query.into_inner().client.unwrap_or_default())
+        .unwrap_or_default();
     let (res, session, msg_stream) = actix_ws::handle(&req, stream)?;
-    let term = {
+    let (id, term) = {
         let mut reg = state.ws_sessions.lock().unwrap();
-        reg.insert(session.clone());
-        reg.term_open.clone()
+        let id = reg.insert(&client, session.clone());
+        (id, reg.term_open.clone())
     };
     actix_web::rt::spawn(async move {
         let mut s = session;
@@ -1596,7 +2073,18 @@ async fn ws_handler(
     actix_web::rt::spawn(async move {
         let mut stream = msg_stream;
         while let Some(Ok(msg)) = stream.recv().await {
-            if matches!(msg, actix_ws::Message::Close(_)) { break; }
+            if matches!(msg, actix_ws::Message::Close(_)) {
+                break;
+            }
+        }
+        state.ws_sessions.lock().unwrap().remove(id);
+        if client.is_empty() {
+            return;
+        }
+        tokio::time::sleep(CLIENT_GRACE).await;
+        let came_back = state.ws_sessions.lock().unwrap().watched_by(&client);
+        if !came_back {
+            let _ = state.tx.send(ApiCmd::ViewersGone { client }).await;
         }
     });
     Ok(res)
@@ -1649,7 +2137,12 @@ async fn terminal_ws_handler(
         while let Some(Ok(msg)) = msg_stream.recv().await {
             match msg {
                 actix_ws::Message::Binary(b) => {
-                    let _ = tx.send(ApiCmd::TerminalInput { side, data: b.to_vec() }).await;
+                    let _ = tx
+                        .send(ApiCmd::TerminalInput {
+                            side,
+                            data: b.to_vec(),
+                        })
+                        .await;
                 }
                 actix_ws::Message::Text(t) => {
                     let resize = serde_json::from_str::<serde_json::Value>(&t)
@@ -1665,7 +2158,12 @@ async fn terminal_ws_handler(
                             let _ = tx.send(ApiCmd::TerminalResize { side, rows, cols }).await;
                         }
                         None => {
-                            let _ = tx.send(ApiCmd::TerminalInput { side, data: t.into_bytes().to_vec() }).await;
+                            let _ = tx
+                                .send(ApiCmd::TerminalInput {
+                                    side,
+                                    data: t.into_bytes().to_vec(),
+                                })
+                                .await;
                         }
                     }
                 }
@@ -1685,7 +2183,8 @@ async fn health() -> impl Responder {
 async fn webui_index(state: web::Data<ApiState>) -> impl Responder {
     let css = String::from_utf8_lossy(&state.webui_css);
     let js = String::from_utf8_lossy(&state.webui_js);
-    let html = format!(r#"<!DOCTYPE html>
+    let html = format!(
+        r#"<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -1697,7 +2196,8 @@ async fn webui_index(state: web::Data<ApiState>) -> impl Responder {
   <div id="root"></div>
   <script>{js}</script>
 </body>
-</html>"#);
+</html>"#
+    );
     HttpResponse::Ok()
         .content_type("text/html; charset=utf-8")
         .insert_header(("Cache-Control", "no-store"))
@@ -1747,24 +2247,70 @@ pub fn start_api_server(
                     .app_data(web::PayloadConfig::new(512 * 1024 * 1024))
                     .route("/api/health", web::get().to(health))
                     .route("/api/ws", web::get().to(ws_handler))
-                    .route("/api/panel/{side}/terminal/ws", web::get().to(terminal_ws_handler))
-                    .route("/api/panel/{side}/terminal/expand", web::post().to(set_terminal_expanded))
+                    .route(
+                        "/api/panel/{side}/terminal/ws",
+                        web::get().to(terminal_ws_handler),
+                    )
+                    .route(
+                        "/api/panel/{side}/terminal/expand",
+                        web::post().to(set_terminal_expanded),
+                    )
                     .route("/api/panel/{side}/view-mode", web::post().to(set_view_mode))
                     .route("/api/panel/{side}/sort", web::post().to(set_sort))
                     .route("/api/operations", web::get().to(get_operations))
-                    .route("/api/operations/{id}/cancel", web::post().to(cancel_operation))
+                    .route(
+                        "/api/operations/{id}/cancel",
+                        web::post().to(cancel_operation),
+                    )
                     .route("/api/drives", web::get().to(get_drives))
-                    .route("/api/panel/{side}/activate", web::post().to(activate_source))
+                    .route(
+                        "/api/panel/{side}/activate",
+                        web::post().to(activate_source),
+                    )
+                    .route("/api/connections/kinds", web::get().to(connection_kinds))
+                    .route(
+                        "/api/connections/form",
+                        web::post().to(submit_connection_form),
+                    )
+                    .route(
+                        "/api/connections/kinds/{kind}/event",
+                        web::post().to(connection_form_event),
+                    )
+                    .route("/api/views", web::get().to(plugin_views))
+                    .route("/api/views/{id}", web::get().to(open_plugin_view))
+                    .route("/api/views/{id}/event", web::post().to(plugin_view_event))
+                    .route("/api/views/{id}/close", web::post().to(close_plugin_view))
+                    .route("/api/plugin-assets/{name:.*}", web::get().to(plugin_asset))
+                    .route("/api/i18n", web::get().to(translations))
                     .route("/api/connections", web::get().to(get_connections))
                     .route("/api/connections", web::post().to(save_connection))
-                    .route("/api/connections/{name}", web::delete().to(delete_connection))
+                    .route(
+                        "/api/connections/{name}",
+                        web::delete().to(delete_connection),
+                    )
                     .route("/api/panel/{side}/refresh", web::post().to(refresh_panel))
                     .route("/api/settings", web::get().to(get_settings))
                     .route("/api/settings", web::post().to(set_settings))
                     .route("/api/viewer/content", web::get().to(viewer_content))
-                    .route("/api/connections/dialog", web::post().to(set_connections_dialog))
-                    .route("/api/connections/export", web::post().to(export_connections))
-                    .route("/api/connections/import", web::post().to(import_connections))
+                    .route("/api/viewer/open", web::post().to(viewer_open))
+                    .route("/api/viewer/{instance}/event", web::post().to(viewer_event))
+                    .route(
+                        "/api/viewer/{instance}/part/{name:.*}",
+                        web::get().to(viewer_part),
+                    )
+                    .route("/api/viewer/{instance}/close", web::post().to(viewer_close))
+                    .route(
+                        "/api/connections/dialog",
+                        web::post().to(set_connections_dialog),
+                    )
+                    .route(
+                        "/api/connections/export",
+                        web::post().to(export_connections),
+                    )
+                    .route(
+                        "/api/connections/import",
+                        web::post().to(import_connections),
+                    )
                     .route("/api/connect", web::post().to(connect_to))
                     .route("/api/favorites/toggle", web::post().to(toggle_favorite))
                     .route("/api/favorites/only", web::get().to(get_favorites_only))
@@ -1777,8 +2323,14 @@ pub fn start_api_server(
                     .route("/api/panel/{side}/back", web::post().to(go_back))
                     .route("/api/panel/{side}/forward", web::post().to(go_forward))
                     .route("/api/panel/{side}/tabs/add", web::post().to(add_tab))
-                    .route("/api/panel/{side}/tabs/{id}/close", web::post().to(close_tab))
-                    .route("/api/panel/{side}/tabs/{id}/activate", web::post().to(switch_tab))
+                    .route(
+                        "/api/panel/{side}/tabs/{id}/close",
+                        web::post().to(close_tab),
+                    )
+                    .route(
+                        "/api/panel/{side}/tabs/{id}/activate",
+                        web::post().to(switch_tab),
+                    )
                     .route("/api/panel/{side}/delete", web::post().to(delete_entries))
                     .route("/api/panel/{side}/mkdir", web::post().to(mkdir))
                     .route("/api/panel/{side}/rename", web::post().to(rename_entry))
@@ -1789,12 +2341,14 @@ pub fn start_api_server(
                     .route("/api/panel/{side}/view", web::post().to(open_viewer))
                     .route("/api/panel/{side}/open-native", web::post().to(open_native))
                     .route("/api/windows", web::get().to(list_windows))
-                    .route("/api/windows/close-extra", web::post().to(close_extra_windows))
+                    .route(
+                        "/api/windows/close-extra",
+                        web::post().to(close_extra_windows),
+                    )
                     .route("/api/panel/{dst_side}/copy", web::post().to(copy_entries))
                     .route("/api/panel/{dst_side}/move", web::post().to(move_entries));
                 if webui {
-                    app
-                        .route("/", web::get().to(webui_index))
+                    app.route("/", web::get().to(webui_index))
                         .route("/webui/bundle.js", web::get().to(webui_bundle_js))
                         .route("/webui/style.css", web::get().to(webui_style_css))
                 } else {
@@ -1805,7 +2359,11 @@ pub fn start_api_server(
 
             match result {
                 Ok(s) => {
-                    let display_host = if host == "0.0.0.0" { "localhost" } else { &host };
+                    let display_host = if host == "0.0.0.0" {
+                        "localhost"
+                    } else {
+                        &host
+                    };
                     if webui {
                         println!("[API] Web UI available at http://{display_host}:{port}/");
                     }
@@ -1820,7 +2378,12 @@ pub fn start_api_server(
 
 async fn list_windows(state: web::Data<ApiState>) -> impl Responder {
     let (reply_tx, reply_rx) = oneshot::channel();
-    if state.tx.send(ApiCmd::ListWindows { reply: reply_tx }).await.is_err() {
+    if state
+        .tx
+        .send(ApiCmd::ListWindows { reply: reply_tx })
+        .await
+        .is_err()
+    {
         return HttpResponse::ServiceUnavailable().finish();
     }
     match reply_rx.await {
@@ -1832,7 +2395,12 @@ async fn list_windows(state: web::Data<ApiState>) -> impl Responder {
 
 async fn close_extra_windows(state: web::Data<ApiState>) -> impl Responder {
     let (reply_tx, reply_rx) = oneshot::channel();
-    if state.tx.send(ApiCmd::CloseExtraWindows { reply: reply_tx }).await.is_err() {
+    if state
+        .tx
+        .send(ApiCmd::CloseExtraWindows { reply: reply_tx })
+        .await
+        .is_err()
+    {
         return HttpResponse::ServiceUnavailable().finish();
     }
     match reply_rx.await {

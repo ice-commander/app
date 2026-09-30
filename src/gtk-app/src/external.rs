@@ -1,4 +1,3 @@
-
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -65,7 +64,10 @@ pub fn parse_command(template: &str, path: &Path) -> Option<Command> {
     if program.is_empty() {
         return None;
     }
-    Some(Command { program, args: tokens })
+    Some(Command {
+        program,
+        args: tokens,
+    })
 }
 
 pub fn associations(config: &client_config::AppConfig) -> HashMap<String, String> {
@@ -131,7 +133,10 @@ pub async fn stage(
     display_path: &str,
 ) -> Result<Staged, String> {
     if provider.is_local() {
-        return Ok(Staged { path: PathBuf::from(display_path), temporary: false });
+        return Ok(Staged {
+            path: PathBuf::from(display_path),
+            temporary: false,
+        });
     }
 
     let bytes = provider
@@ -141,7 +146,10 @@ pub async fn stage(
 
     let path = temp_path(display_path);
     std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
-    Ok(Staged { path, temporary: true })
+    Ok(Staged {
+        path,
+        temporary: true,
+    })
 }
 
 fn temp_path(display_path: &str) -> PathBuf {
@@ -170,7 +178,9 @@ async fn run(command: &Command) -> Result<(), String> {
 
     let proc = gio::Subprocess::newv(&argv, gio::SubprocessFlags::NONE)
         .map_err(|e| e.message().to_string())?;
-    proc.wait_check_future().await.map_err(|e| e.message().to_string())
+    proc.wait_check_future()
+        .await
+        .map_err(|e| e.message().to_string())
 }
 
 async fn run_default_handler(path: &Path) -> Result<(), String> {
@@ -254,7 +264,10 @@ mod tests {
     fn a_bare_program_gets_the_path_appended() {
         assert_eq!(
             cmd("gedit"),
-            Some(Command { program: "gedit".into(), args: vec!["/tmp/a b.txt".into()] })
+            Some(Command {
+                program: "gedit".into(),
+                args: vec!["/tmp/a b.txt".into()]
+            })
         );
     }
 
@@ -305,8 +318,14 @@ mod tests {
         map.insert("bmp".to_string(), "   ".to_string());
         config.set("ui.custom_associations", map);
 
-        assert_eq!(association_for(&config, "photo.PNG").as_deref(), Some("gimp"));
-        assert_eq!(association_for(&config, "photo.png").as_deref(), Some("gimp"));
+        assert_eq!(
+            association_for(&config, "photo.PNG").as_deref(),
+            Some("gimp")
+        );
+        assert_eq!(
+            association_for(&config, "photo.png").as_deref(),
+            Some("gimp")
+        );
         assert_eq!(association_for(&config, "photo.bmp"), None);
         assert_eq!(association_for(&config, "photo.jpg"), None);
         assert_eq!(association_for(&config, "noextension"), None);

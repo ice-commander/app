@@ -1,4 +1,3 @@
-
 use std::cell::Cell;
 
 thread_local! {
