@@ -37,24 +37,6 @@ pub struct SysInfo {
     pub network_interfaces: Vec<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct RegistryValueInfo {
-    pub name: String,
-    pub data: RegistryValueData,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum RegistryValueData {
-    String(String),
-    MultiString(Vec<String>),
-    DWord(u32),
-    QWord(u64),
-    #[serde(with = "serde_bytes")]
-    Binary(Vec<u8>),
-    ExpandString(String),
-    Unknown,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -328,103 +310,5 @@ mod tests {
         assert_eq!(value["network_interfaces"], json!([]));
         let restored: SysInfo = serde_json::from_value(value).unwrap();
         assert!(restored.network_interfaces.is_empty());
-    }
-
-    #[test]
-    fn registry_value_data_uses_externally_tagged_json() {
-        let cases = vec![
-            (
-                RegistryValueData::String("hello".into()),
-                json!({"String": "hello"}),
-            ),
-            (
-                RegistryValueData::MultiString(vec!["a".into(), "b".into()]),
-                json!({"MultiString": ["a", "b"]}),
-            ),
-            (
-                RegistryValueData::DWord(4_294_967_295),
-                json!({"DWord": 4_294_967_295u32}),
-            ),
-            (
-                RegistryValueData::QWord(18_446_744_073_709_551_615),
-                json!({"QWord": 18_446_744_073_709_551_615u64}),
-            ),
-            (
-                RegistryValueData::ExpandString("%PATH%".into()),
-                json!({"ExpandString": "%PATH%"}),
-            ),
-            (RegistryValueData::Unknown, json!("Unknown")),
-        ];
-        for (data, expected) in cases {
-            assert_eq!(serde_json::to_value(&data).unwrap(), expected);
-        }
-    }
-
-    #[test]
-    fn registry_value_data_round_trips_every_variant() {
-        let cases = vec![
-            RegistryValueData::String(String::new()),
-            RegistryValueData::String("значение".into()),
-            RegistryValueData::MultiString(Vec::new()),
-            RegistryValueData::MultiString(vec!["one".into(), String::new()]),
-            RegistryValueData::DWord(0),
-            RegistryValueData::DWord(u32::MAX),
-            RegistryValueData::QWord(u64::MAX),
-            RegistryValueData::Binary(Vec::new()),
-            RegistryValueData::Binary(vec![0, 1, 127, 128, 255]),
-            RegistryValueData::ExpandString("%SystemRoot%\\System32".into()),
-            RegistryValueData::Unknown,
-        ];
-        for data in cases {
-            let text = serde_json::to_string(&data).unwrap();
-            let restored: RegistryValueData = serde_json::from_str(&text).unwrap();
-            assert_eq!(
-                format!("{:?}", restored),
-                format!("{:?}", data),
-                "variant did not survive {}",
-                text
-            );
-        }
-    }
-
-    #[test]
-    fn registry_binary_data_keeps_high_bytes_and_length() {
-        let bytes: Vec<u8> = (0..=255u8).collect();
-        let text = serde_json::to_string(&RegistryValueData::Binary(bytes.clone())).unwrap();
-        match serde_json::from_str::<RegistryValueData>(&text).unwrap() {
-            RegistryValueData::Binary(restored) => assert_eq!(restored, bytes),
-            other => panic!("expected Binary, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn registry_value_data_rejects_an_unknown_variant() {
-        assert!(serde_json::from_str::<RegistryValueData>(r#"{"Float":1.0}"#).is_err());
-    }
-
-    #[test]
-    fn registry_value_info_json_field_names_are_stable() {
-        let info = RegistryValueInfo {
-            name: "Start".to_string(),
-            data: RegistryValueData::DWord(2),
-        };
-        let value = serde_json::to_value(&info).unwrap();
-        assert_eq!(sorted_keys(&value), vec!["data", "name"]);
-        assert_eq!(value["data"], json!({"DWord": 2}));
-    }
-
-    #[test]
-    fn registry_value_info_round_trips_the_default_unnamed_value() {
-        let info = RegistryValueInfo {
-            name: String::new(),
-            data: RegistryValueData::ExpandString("%TEMP%".into()),
-        };
-        let restored: RegistryValueInfo =
-            serde_json::from_str(&serde_json::to_string(&info).unwrap()).unwrap();
-        assert_eq!(restored.name, "");
-        match restored.data {
-            RegistryValueData::ExpandString(s) => assert_eq!(s, "%TEMP%"),
-            other => panic!("expected ExpandString, got {:?}", other),
-        }
     }
 }

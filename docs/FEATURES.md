@@ -59,11 +59,10 @@ Everything else is a plugin, each in its own repository, and the window is the s
 
 - **Images** (`plugin-images`), and camera RAW through the embedded preview
   (`plugin-cameraraw`)
-- **PDF** (`plugin-pdf`) with lazy page rendering and zoom
+- **Documents** (`ic-documents`), PDF for now, with lazy page rendering and zoom
 - **Audio** (`plugin-audioplayer`) with a playlist of the current folder, cover art and
   ID3 tags
-- **Video** (`plugin-video`), which draws into a canvas the application hands it and
-  decodes through its own LGPL libmpv
+- **Video** (`ic-videocodecs`), which draws into a canvas the application hands it
 
 The viewer works over every filesystem, not only the local one: a remote or in-archive
 file is fetched before it is shown, with a size warning and a cancellable load.

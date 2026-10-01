@@ -8,16 +8,8 @@ This file lists the third-party libraries shipped alongside the application, the
 version of each, and where its corresponding source can be obtained. It exists so that the
 LGPL and GPL requirements on source availability are met.
 
-Linux packages (.deb / .rpm / Arch) bundle only PDFium; GTK and everything else comes from
-the distribution. Only the Windows and macOS bundles contain the components marked
-"Windows" or "macOS" below.
-
-
-PDFium — BSD-3-Clause                                      Windows, macOS, Linux
-    Version:  151.0.7906.0
-    Source:   https://pdfium.googlesource.com/pdfium/
-    Binaries: https://github.com/bblanchon/pdfium-binaries
-    License:  pdfium-BSD-3-Clause.txt
+Linux packages (.deb / .rpm / Arch) bundle none of the libraries below; GTK and everything
+else comes from the distribution.
 
 
 GTK stack — LGPL-2.1-or-later                                       Windows, macOS
@@ -38,35 +30,6 @@ GTK stack — LGPL-2.1-or-later                                       Windows, m
     https://packages.msys2.org/         — search for mingw-w64-x86_64-<name>
 
     License:  LGPL-2.1.txt
-
-
-Video — decoded by the plugin; on Windows the library still travels in this bundle
-    Ice Commander decodes no video. It is played by the video plugin, which is built from
-    its own repository (plugin-video) and lists its own licences.
-
-    Where the library comes from differs by system, and on Windows it is still ours to
-    declare: the installer copies the whole GTK runtime folder beside the application
-    (src/gtk-app/setup.nsi), and libmpv-2.dll is in it. The plugin opens it from there
-    rather than carrying a second copy. On Linux and macOS nothing of the sort is in this
-    bundle — the plugin brings its own.
-
-    One and the same component on all three systems: LGPL libmpv, built decode-only — mpv
-    with meson -Dgpl=false, its FFmpeg without --enable-gpl — so none of the GPL parts (the
-    x264 and x265 encoders, libpostproc, the DVD/CD readers) are present.
-
-        Linux    built by docker-libmpv-multibuild:
-                 mpv v0.41.0, FFmpeg 8.1.2, dav1d 1.5.1, libplacebo v7.349.0
-        macOS    built by builder/build_libmpv_ffmpeg_lgpl.sh in this repository:
-                 mpv v0.41.0, FFmpeg 8.1.2
-        Windows  a prebuilt LGPL libmpv-2.dll — mpv v0.41.0-769-g2d5dfb343, with FFmpeg
-                 linked statically into it, reporting libavcodec 62.36.101 and
-                 libavformat 62.19.101; built by https://github.com/zhongfly/mpv-winbuild
-                 (the "mpv-dev-lgpl" artifact)
-
-    Source:   https://github.com/mpv-player/mpv        (tag v0.41.0 / commit 2d5dfb343)
-              https://git.ffmpeg.org/ffmpeg.git        (8.1.2)
-              https://code.videolan.org/videolan/dav1d (1.5.1)
-    License:  LGPL-2.1.txt for mpv and FFmpeg; dav1d is BSD-2-Clause
 
 
 fakelzo (in place of lzo2) — MIT                                    Windows, macOS

@@ -199,7 +199,12 @@ fn check_node(
     }
     // A slider the plugin moves reads its place out of `data`, so it owes no field. One that
     // names neither falls through to the rule below and is an error.
-    let reads_its_own = node.kind() == NodeKind::Slider && node.value_key.is_some();
+    // A table nobody binds is a readout too: it shows what `rows_key` holds and collects nothing.
+    let reads_its_own = match node.kind() {
+        NodeKind::Slider => node.value_key.is_some(),
+        NodeKind::Table | NodeKind::Tree => node.bind.is_none(),
+        _ => false,
+    };
     if node.takes_value() && !reads_its_own {
         match &node.bind {
             None => issues.push(Issue::error(
@@ -222,10 +227,10 @@ fn check_node(
             "choice node has no options".to_string(),
         ));
     }
-    if node.kind() == NodeKind::Table && node.columns.is_empty() {
+    if matches!(node.kind(), NodeKind::Table | NodeKind::Tree) && node.columns.is_empty() {
         issues.push(Issue::error(
             at.to_string(),
-            "table node has no columns".to_string(),
+            format!("{} node has no columns", node.t),
         ));
     }
     // A picture is named rather than carried, so a node that names nothing is
@@ -347,6 +352,22 @@ pub fn validate(document: &Document) -> Vec<Issue> {
                     "intent is not understood".to_string(),
                 ));
             }
+        }
+    }
+
+    let mut accels = BTreeSet::new();
+    for (index, key) in document.keys.iter().enumerate() {
+        if key.accel.trim().is_empty() || key.node.trim().is_empty() {
+            issues.push(Issue::error(
+                format!("keys[{index}]"),
+                "a key needs both accel and node".to_string(),
+            ));
+        }
+        if !accels.insert(key.accel.to_lowercase()) {
+            issues.push(Issue::error(
+                format!("keys[{index}]"),
+                format!("duplicate key {}", key.accel),
+            ));
         }
     }
 

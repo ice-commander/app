@@ -51,20 +51,14 @@ This section is deliberately blunt. These are current limitations, not a roadmap
 ## Platform
 
 - **The registry editor is Windows-only**; there is no entry point elsewhere.
-- **Video is a plugin, and the same one on every system.** The application decodes no
-  video itself and no longer offers to install codecs for it. The video plugin plays
-  through the LGPL libmpv it carries, on Linux, macOS and Windows alike. Without that
-  plugin installed there is no video at all.
 - **No GPL code ships on any platform.** The one GPL library GTK used to drag in,
   `liblzo2`, is replaced by our own MIT stub ([`src/fakelzo/`](../src/fakelzo/)) in both
-  desktop bundles; Linux links nothing of the sort. The libmpv and FFmpeg that travel with
-  the video plugin are built LGPL and decode-only, so none of the GPL parts (x264, x265,
-  libpostproc) are present there either. This source tree stays MIT OR Apache-2.0 — see
-  [THIRD-PARTY-LICENSES.md](../THIRD-PARTY-LICENSES.md).
+  desktop bundles; Linux links nothing of the sort. This source tree stays MIT OR
+  Apache-2.0 — see [THIRD-PARTY-LICENSES.md](../THIRD-PARTY-LICENSES.md).
 
 ## Incomplete
 
-- **No release package carries a plugin yet.** The installers build the application alone,
+- **No release package carries a plugin.** The installers build the application alone,
   and the application looks for plugins in one folder under the user's data directory, so
   for now they are put there by hand. The settings page lists what a catalogue offers but
   cannot fetch anything — there is no download side to it yet.

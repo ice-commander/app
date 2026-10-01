@@ -13,10 +13,8 @@ src/web-app/dist
 src/gtk-app/assets/webui/bundle.js
 src/gtk-app/assets/webui/style.css
 
-# Prebuilt native libraries for the Windows and macOS bundles (~190 MB, and
-# libmpv-2.dll is a 93 MB GPL build of libmpv). Deliberately kept out of the
-# repository: see THIRD-PARTY-LICENSES.md. Fetch them separately before
-# building those targets; Linux builds do not need them.
+# The prebuilt Windows GTK runtime, kept out of the repository. Fetch it before
+# building for Windows; Linux and macOS builds do not need it.
 artifacts/
 
 # Internal working notes — to be reworked before they are published.

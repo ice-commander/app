@@ -6,8 +6,8 @@ pub mod validate;
 pub use commit::{applicable, commit, immutable_now, render_summary, Commit, CommitProblem};
 pub use doc::{
     Action, Case, Choice, Chrome, Column, Cond, Decode, Derive, Document, Emit, Field, FieldType,
-    Fit, InputVariant, Intent, MediaKind, Node, NodeKind, OnParseError, PickMode, Picker, Pred,
-    PredOp, Scope, Scroll, Series, Summary, Surface, Text, NODE_KINDS, SCHEMA,
+    Fit, InputVariant, Intent, Key, MediaKind, Node, NodeKind, OnParseError, PickMode, Picker,
+    Pred, PredOp, Scope, Scroll, Series, Summary, Surface, Text, NODE_KINDS, SCHEMA,
 };
 pub use expr::{
     as_text, choice_index, display, evaluate, fill_template, is_truthy, resolve, resolve_text,
@@ -1068,6 +1068,62 @@ mod tests {
     }
 
     #[test]
+    fn a_table_that_binds_a_selection_owes_a_field_like_any_other_input() {
+        let bound = |fields: serde_json::Value| {
+            json!({
+                "schema": 1,
+                "data": { "rows": [] },
+                "fields": fields,
+                "form": { "t": "view", "children": [
+                    { "t": "table", "id": "keys", "bind": "chosen", "rows_key": "rows",
+                      "columns": [ { "key": "name" } ] } ] }
+            })
+        };
+
+        let undeclared = Document::parse(&bound(json!([])).to_string()).expect("parses");
+        let complaints: Vec<String> = errors(&undeclared)
+            .into_iter()
+            .map(|issue| issue.message)
+            .collect();
+        assert!(
+            complaints.iter().any(|m| m.contains("not a declared field")),
+            "{complaints:?}"
+        );
+
+        let declared =
+            Document::parse(&bound(json!([ { "bind": "chosen", "type": "text" } ])).to_string())
+                .expect("parses");
+        assert!(errors(&declared).is_empty());
+    }
+
+    #[test]
+    fn a_table_nobody_binds_is_a_readout_and_owes_nothing() {
+        let source = json!({
+            "schema": 1,
+            "data": { "rows": [] },
+            "fields": [],
+            "form": { "t": "view", "children": [
+                { "t": "table", "id": "shelves", "rows_key": "rows",
+                  "columns": [ { "key": "name" } ] } ] }
+        });
+        let document = Document::parse(&source.to_string()).expect("parses");
+        assert!(errors(&document).is_empty());
+    }
+
+    #[test]
+    fn a_hex_input_is_a_variant_the_contract_knows() {
+        let source = json!({
+            "schema": 1,
+            "fields": [ { "bind": "bytes", "type": "text" } ],
+            "form": { "t": "view", "children": [
+                { "t": "input", "id": "bytes", "bind": "bytes", "variant": "hex" } ] }
+        });
+        let document = Document::parse(&source.to_string()).expect("parses");
+        assert!(errors(&document).is_empty());
+        assert_eq!(document.form.children[0].variant, InputVariant::Hex);
+    }
+
+    #[test]
     fn a_document_can_carry_the_values_it_wants_shown() {
         let source = json!({
             "schema": 1,
@@ -1126,6 +1182,50 @@ mod tests {
             .expect("parses"),
         );
         assert!(!first.shows_the_same_tree_as(&grown));
+    }
+
+    #[test]
+    fn a_document_names_keys_that_press_nothing_on_screen() {
+        let source = json!({
+            "schema": 1,
+            "form": { "t": "view", "children": [] },
+            "keys": [ { "accel": "Left", "node": "back" }, { "accel": "Right", "node": "on" } ]
+        })
+        .to_string();
+        let document = Document::parse(&source).expect("parses");
+        assert_eq!(
+            document.keys,
+            vec![
+                Key {
+                    accel: "Left".to_string(),
+                    node: "back".to_string()
+                },
+                Key {
+                    accel: "Right".to_string(),
+                    node: "on".to_string()
+                },
+            ]
+        );
+        assert!(
+            errors(&document).is_empty(),
+            "a key's node need not be drawn"
+        );
+        let mut rebound = document.clone();
+        rebound.keys.pop();
+        assert!(!document.shows_the_same_tree_as(&rebound));
+    }
+
+    #[test]
+    fn a_key_with_nothing_to_press_or_named_twice_is_refused() {
+        let source = json!({
+            "schema": 1,
+            "form": { "t": "view", "children": [] },
+            "keys": [ { "accel": "Left", "node": "" }, { "accel": "left", "node": "back" } ]
+        })
+        .to_string();
+        let found = errors(&Document::parse(&source).expect("parses"));
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert!(found.iter().all(|issue| issue.at.starts_with("keys[")));
     }
 
     #[test]

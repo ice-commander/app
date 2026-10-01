@@ -125,7 +125,9 @@ pub(crate) fn measure(node: &Node, state: &State, tr: &Tr, width: u16) -> u16 {
             }
         }
         NodeKind::Switch | NodeKind::Choice | NodeKind::Button | NodeKind::Slider => 1,
-        NodeKind::Table => {
+        // A terminal draws a tree as the rows it was given: the children are in
+        // the data, and nothing here opens them.
+        NodeKind::Table | NodeKind::Tree => {
             let body = table_rows(node, state).len() as u16;
             let cap = node.height.map(rows).unwrap_or(u16::MAX);
             1 + body.min(cap.saturating_sub(1))

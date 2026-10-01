@@ -391,8 +391,8 @@ pub fn load_chosen_from(folder: &Path, chosen: Chosen) -> Vec<Attempt> {
                     attempt.name
                 ),
                 Outcome::WrongAbi { built_for, ours } => ic_logging::warn!(
-                    "plugin {} was built for contract {built_for} and this application \
-                     speaks {ours}; it was not called at all",
+                    "plugin {} not loaded: built for plugin ABI {built_for}, this application \
+                     speaks ABI {ours}; rebuild it against ic-plugin-api ABI {ours}",
                     attempt.name
                 ),
             }

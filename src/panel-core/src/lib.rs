@@ -150,6 +150,7 @@ mod tests {
             list_rows: None,
             action_state: None,
             cell_clicked: None,
+            set_permissions: None,
         };
         let exts = std::ffi::CString::new(".zip,.tar,.tar.gz,.tgz,.tar.bz2,.tbz2,.tbz").unwrap();
         let lease = fm_core::plugin_fs::lease_registry_for_test();

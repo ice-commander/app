@@ -157,8 +157,8 @@ pub fn host_table() -> IcHost {
         open_view: host_open_view,
         view_invalidate: host_view_invalidate,
         canvas_invalidate: host_canvas_invalidate,
+        ask: host_ask,
         register_locales: host_register_locales,
-        register_asset: host_register_asset,
         register_plugin_asset: host_register_plugin_asset,
         fs_caps: fm_core::host_fs::fs_caps,
         fs_open: fm_core::host_fs::fs_open,
@@ -1796,17 +1796,6 @@ fn keep_asset(under: String, bytes: *const u8, bytes_len: u64) -> c_int {
     IC_OK
 }
 
-extern "C" fn host_register_asset(name: *const c_char, bytes: *const u8, bytes_len: u64) -> c_int {
-    let name = cstr(name);
-    if name.trim().is_empty() {
-        return ic_plugin_api::IC_ERR_INIT_FAILED;
-    }
-    ic_logging::warn!(
-        "plugin: {name} was registered without an owner, so another plugin can take the name"
-    );
-    keep_asset(name, bytes, bytes_len)
-}
-
 extern "C" fn host_register_plugin_asset(
     plugin_id: *const c_char,
     name: *const c_char,
@@ -1990,6 +1979,11 @@ thread_local! {
     static CANVAS_REDRAW_REQUEST: RefCell<Option<std::rc::Rc<dyn Fn(u64)>>> =
         const { RefCell::new(None) };
     static VIEW_INVALIDATE_REQUEST: RefCell<Option<std::rc::Rc<dyn Fn(&str)>>> =
+        const { RefCell::new(None) };
+    /// Puts one question on the screen. The frontend answers by calling the
+    /// closure it is handed; a frontend with nothing to show it never calls.
+    #[allow(clippy::type_complexity)]
+    static ASK_REQUEST: RefCell<Option<std::rc::Rc<dyn Fn(&str, Box<dyn FnOnce(&str)>)>>> =
         const { RefCell::new(None) };
     static HEADER_CHANGED: RefCell<Option<std::rc::Rc<dyn Fn(&str, &str)>>> =
         const { RefCell::new(None) };
@@ -2194,6 +2188,11 @@ fn here_or_hand_over(wanted: Wanted, installed: bool) -> c_int {
     }
 }
 
+#[allow(clippy::type_complexity)]
+pub fn set_ask_handler(handler: std::rc::Rc<dyn Fn(&str, Box<dyn FnOnce(&str)>)>) {
+    ASK_REQUEST.with(|slot| *slot.borrow_mut() = Some(handler));
+}
+
 pub fn set_view_open_handler(handler: std::rc::Rc<dyn Fn(&str, &str)>) {
     VIEW_OPEN_REQUEST.with(|slot| *slot.borrow_mut() = Some(handler));
 }
@@ -2243,6 +2242,48 @@ pub fn set_header_shown_handler(handler: std::rc::Rc<dyn Fn(&str, bool)>) {
 /// Told which header button to draw with a new picture.
 pub fn set_header_repainted_handler(handler: std::rc::Rc<dyn Fn(&str, &[u8])>) {
     HEADER_REPAINTED.with(|slot| *slot.borrow_mut() = Some(handler));
+}
+
+/// One question, put to whichever frontend installed a handler. The plugin is
+/// answered exactly once: a frontend that cannot ask reports the first button,
+/// which the contract says is the way out.
+extern "C" fn host_ask(
+    spec: *const u8,
+    spec_len: u64,
+    answered: ic_plugin_api::IcAnswerFn,
+    user_data: *mut c_void,
+) -> c_int {
+    let sent = if spec.is_null() || spec_len == 0 {
+        String::new()
+    } else {
+        String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(spec, spec_len as usize) })
+            .to_string()
+    };
+    let carried = user_data as usize;
+    let reply = move |answer: &str| {
+        answered(answer.as_ptr(), answer.len() as u64, carried as *mut c_void);
+    };
+    match ASK_REQUEST.with(|slot| slot.borrow().clone()) {
+        Some(show) => show(&sent, Box::new(reply)),
+        None => reply(&way_out(&sent)),
+    }
+    IC_OK
+}
+
+/// What a question falls back to when nobody can show it: the first button.
+pub fn way_out(spec: &str) -> String {
+    let first = serde_json::from_str::<serde_json::Value>(spec)
+        .ok()
+        .and_then(|spec| {
+            spec["buttons"]
+                .as_array()?
+                .first()?
+                .get("id")?
+                .as_str()
+                .map(|id| id.to_string())
+        })
+        .unwrap_or_default();
+    serde_json::json!({ "button": first }).to_string()
 }
 
 extern "C" fn host_open_view(id: *const c_char, arg: *const u8, arg_len: u64) -> c_int {
@@ -3261,6 +3302,7 @@ mod tests {
             list_rows: None,
             action_state: None,
             cell_clicked: None,
+            set_permissions: None,
         }
     }
 
@@ -3353,17 +3395,28 @@ mod tests {
 
     #[test]
     fn a_plugin_can_hand_the_host_a_picture_to_show() {
+        let owner = CString::new("sysinfo").expect("an id without a nul");
         let name = CString::new("os-test").expect("a name without a nul");
         let svg = br#"<svg xmlns="http://www.w3.org/2000/svg"/>"#;
         assert_eq!(
-            host_register_asset(name.as_ptr(), svg.as_ptr(), svg.len() as u64),
+            host_register_plugin_asset(
+                owner.as_ptr(),
+                name.as_ptr(),
+                svg.as_ptr(),
+                svg.len() as u64
+            ),
             IC_OK
         );
-        assert_eq!(asset("os-test").as_deref(), Some(svg.as_slice()));
-        assert!(asset_names().contains(&"os-test".to_string()));
-        assert!(asset("os-missing").is_none());
+        assert_eq!(asset("sysinfo/os-test").as_deref(), Some(svg.as_slice()));
+        assert!(asset_names().contains(&"sysinfo/os-test".to_string()));
+        assert!(asset("sysinfo/os-missing").is_none());
         assert_eq!(
-            host_register_asset(name.as_ptr(), std::ptr::null(), 0),
+            host_register_plugin_asset(
+                owner.as_ptr(),
+                name.as_ptr(),
+                std::ptr::null(),
+                0
+            ),
             ic_plugin_api::IC_ERR_INIT_FAILED
         );
     }

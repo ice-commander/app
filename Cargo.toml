@@ -24,7 +24,6 @@ members = [
     "src/ui-common/fm-core",
     "src/ui-common/fm-ui",
 	"src/ui-common/terminal-ui",
-	"src/ui-common/registry-ui",
 	"src/ui-common/viewer-ui",
 	"src/ui-common/view-gtk",
 	"src/ui-common/canvas-gtk",
@@ -87,7 +86,6 @@ gtk-viewer-ui = { path = "src/ui-common/viewer-ui" }
 gtk-fm-ui = { path = "src/ui-common/fm-ui" }
 ic-i18n = { path = "src/ui-common/i18n" }
 gtk-terminal-ui = { path = "src/ui-common/terminal-ui" }
-gtk-registry-ui = { path = "src/ui-common/registry-ui" }
 gtk-updater-ui = { path = "src/ui-common/updater-ui" }
 
 

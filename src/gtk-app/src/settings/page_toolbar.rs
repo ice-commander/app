@@ -15,13 +15,6 @@ pub const BUTTONS: &[(&str, &str, &str, bool)] = &[
         "settings.desc_toolbar_search",
         true,
     ),
-    #[cfg(target_os = "windows")]
-    (
-        "ui.toolbar.registry",
-        "settings.toolbar_registry",
-        "settings.desc_toolbar_registry",
-        true,
-    ),
 ];
 
 /// A row for every button a plugin put on the toolbar, and for every panel it

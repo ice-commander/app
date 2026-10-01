@@ -11,9 +11,6 @@ revert_version_rs() {
 }
 trap revert_version_rs EXIT
 
-# git reset --hard
-# git clean -fd
-
 rm -rf ./distr
 mkdir -p ./distr
 
@@ -22,6 +19,9 @@ mkdir -p ./distr
 # so it must be regenerated BEFORE any cargo build. The docker builders (linux/win)
 # and osx.sh pick it up from the mounted source tree.
 echo "=== Building web UI (web-app) ==="
+(cd src/web-app && npm install --no-audit --no-fund)
+# A tree carried over from Windows loses the exec bit, and npm install does not restore it.
+find src/web-app/node_modules -path '*/.bin/*' -type l -exec chmod +x {} +
 npm run build-web-app
 
 ./builder/osx.sh

@@ -79,6 +79,7 @@ impl MainWindow {
         );
         root_vbox.append(&bar);
         crate::plugin_view::install(window.upcast_ref::<gtk::Window>());
+        crate::plugin_ask::install(window.upcast_ref::<gtk::Window>());
         {
             // A drive a plugin learns of after the lists were drawn.
             let again = selector_updaters.clone();
@@ -488,13 +489,6 @@ impl MainWindow {
             }
             .help-title {
                 color: @accent_color;
-            }
-            .registry-list-box row {
-                padding: 5px 6px;
-                border-bottom: 1px solid alpha(currentColor, 0.08);
-            }
-            .registry-list-box row:last-child {
-                border-bottom: none;
             }
             /* Address bar: nav buttons and breadcrumbs each in a rounded pill.
                alpha(currentColor) auto-adapts to light/dark like the rest of the app CSS. */

@@ -269,7 +269,7 @@ pub(crate) fn draw_placed(f: &mut Frame, placed: &Placed, surface: &Surface) {
             );
         }
         NodeKind::Slider => draw_slider(f, placed, surface),
-        NodeKind::Table => draw_table(f, placed, surface),
+        NodeKind::Table | NodeKind::Tree => draw_table(f, placed, surface),
         NodeKind::Chart => draw_chart(f, placed, surface),
         NodeKind::View | NodeKind::Column | NodeKind::Row | NodeKind::Icon | NodeKind::Unknown => {}
     }

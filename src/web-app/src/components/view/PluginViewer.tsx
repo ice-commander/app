@@ -192,6 +192,10 @@ export function PluginViewer({ side, path, onClose, onUnclaimed }: Props) {
     void send({ type: 'activate', node: at, values })
   }
 
+  const ended = (node: Node) => {
+    void send({ type: 'ended', node: node.id, values })
+  }
+
   const act = (intent: Intent | undefined, from: Node | Action) => {
     switch (intent?.do) {
       case 'close':
@@ -274,6 +278,7 @@ export function PluginViewer({ side, path, onClose, onUnclaimed }: Props) {
             translate={trOptional}
             assetUrl={(asset) => `/api/plugin-assets/${encodeURIComponent(asset)}`}
             pictureUrl={pictureUrl}
+            onEnded={ended}
           />
         )}
       </div>

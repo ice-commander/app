@@ -19,12 +19,8 @@ pub fn create_source_selector(
     router: Rc<PanelRouter>,
     stack: Stack,
     selector_updaters: Rc<std::cell::RefCell<Vec<Rc<dyn Fn()>>>>,
-    on_open_registry: Rc<dyn Fn()>,
     on_open_panel_source: Rc<dyn Fn(&str)>,
 ) -> Box {
-    #[cfg(not(target_os = "windows"))]
-    let _ = &on_open_registry;
-
     let container = Box::builder()
         .orientation(Orientation::Vertical)
         .hexpand(true)
@@ -54,30 +50,6 @@ pub fn create_source_selector(
     btn_ftp.add_css_class("flat");
     btn_ftp.set_cursor_from_name(Some("pointer"));
     header.pack_start(&btn_ftp);
-
-    #[cfg(target_os = "windows")]
-    let _btn_reg = {
-        let btn_reg_box = Box::new(Orientation::Horizontal, 6);
-        let btn_reg_img = gtk::Image::from_resource("/com/icecommander/gtk/registry.svg");
-        btn_reg_img.set_pixel_size(20);
-        btn_reg_box.append(&btn_reg_img);
-        btn_reg_box.append(&Label::new(Some(&*crate::i18n::tr(
-            "selector.btn_registry",
-        ))));
-
-        let btn_reg = Button::builder()
-            .child(&btn_reg_box)
-            .tooltip_text(&*crate::i18n::tr("selector.tooltip_registry"))
-            .build();
-        btn_reg.add_css_class("flat");
-        btn_reg.set_cursor_from_name(Some("pointer"));
-        let on_open_registry_activated = on_open_registry.clone();
-        btn_reg.connect_clicked(move |_| {
-            on_open_registry_activated();
-        });
-        header.pack_end(&btn_reg);
-        btn_reg
-    };
 
     for source in ic_plugin_host::panel_sources() {
         let shown = Box::new(Orientation::Horizontal, 6);
@@ -239,8 +211,6 @@ pub fn create_source_selector(
         let favorites_only_check = favorites_only_check.clone();
         let favorites_hint_label = favorites_hint_label.clone();
         let selector_updaters_clone = selector_updaters.clone();
-        #[cfg(target_os = "windows")]
-        let on_open_registry_clone = on_open_registry.clone();
         let config = config.clone();
 
         Rc::new(move || {

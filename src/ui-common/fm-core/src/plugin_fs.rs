@@ -136,6 +136,9 @@ impl FsPlugin {
     fn cell_clicked_fn(&self) -> Option<ic_plugin_api::IcFsCellClickedFn> {
         fs_call!(self, cell_clicked, ic_plugin_api::IcFsCellClickedFn)
     }
+    fn set_permissions_fn(&self) -> Option<ic_plugin_api::IcFsPermissionsFn> {
+        fs_call!(self, set_permissions, ic_plugin_api::IcFsPermissionsFn)
+    }
     pub fn carries_a_shell(&self) -> bool {
         self.shell_open_fn().is_some()
             && self.shell_read_fn().is_some()
@@ -836,15 +839,23 @@ impl crate::rpc::FileSystemRpc for PluginFsRpc {
         &self,
         parent_path: String,
         dir_name: String,
-        _permissions: Option<u32>,
+        permissions: Option<u32>,
     ) -> Result<(), common::AppError> {
         let Some(create) = self.plugin.create_dir_fn() else {
             return Err(Self::read_only_error());
         };
         let wanted = CString::new(Self::joined(&parent_path, &dir_name))
             .map_err(|e| common::AppError::Other(e.to_string()))?;
+        let chmod = permissions.zip(self.plugin.set_permissions_fn());
         let done = self
-            .call(move |handle| create(handle, wanted.as_ptr()) == ic_plugin_api::IC_OK)
+            .call(move |handle| {
+                let made = create(handle, wanted.as_ptr()) == ic_plugin_api::IC_OK;
+                if let (true, Some((mode, chmod))) = (made, chmod) {
+                    // Best effort, as the old SFTP setstat after mkdir was.
+                    let _ = chmod(handle, wanted.as_ptr(), mode & 0o7777);
+                }
+                made
+            })
             .await?;
         if !done {
             return Err(self.error_of(self.handle.get()));
@@ -892,7 +903,7 @@ impl crate::rpc::FileSystemRpc for PluginFsRpc {
         &self,
         path: String,
         content: Vec<u8>,
-        _permissions: Option<u32>,
+        permissions: Option<u32>,
         progress_callback: Option<Box<dyn Fn(u64) + 'static>>,
     ) -> Result<(), common::AppError> {
         let Some(write) = self.plugin.write_fn() else {
@@ -900,9 +911,16 @@ impl crate::rpc::FileSystemRpc for PluginFsRpc {
         };
         let wanted = CString::new(path).map_err(|e| common::AppError::Other(e.to_string()))?;
         let written = content.len() as u64;
+        let chmod = permissions.zip(self.plugin.set_permissions_fn());
         let done = self
             .call(move |handle| {
-                write(handle, wanted.as_ptr(), content.as_ptr(), written) == ic_plugin_api::IC_OK
+                let wrote = write(handle, wanted.as_ptr(), content.as_ptr(), written)
+                    == ic_plugin_api::IC_OK;
+                if let (true, Some((mode, chmod))) = (wrote, chmod) {
+                    // Best effort, as the old SFTP setstat after a write was.
+                    let _ = chmod(handle, wanted.as_ptr(), mode & 0o7777);
+                }
+                wrote
             })
             .await?;
         if !done {
@@ -913,6 +931,32 @@ impl crate::rpc::FileSystemRpc for PluginFsRpc {
             report(written);
         }
         Ok(())
+    }
+
+    fn supports_permissions(&self) -> bool {
+        self.plugin.set_permissions_fn().is_some()
+    }
+
+    async fn set_permissions(
+        &self,
+        path: String,
+        permissions: u32,
+    ) -> Result<(), common::AppError> {
+        let Some(chmod) = self.plugin.set_permissions_fn() else {
+            return Err(common::AppError::Other(
+                "this filesystem cannot change permissions".to_string(),
+            ));
+        };
+        let wanted = CString::new(path).map_err(|e| common::AppError::Other(e.to_string()))?;
+        let done = self
+            .call(move |handle| {
+                chmod(handle, wanted.as_ptr(), permissions & 0o7777) == ic_plugin_api::IC_OK
+            })
+            .await?;
+        if !done {
+            return Err(self.error_of(self.handle.get()));
+        }
+        self.put_back().await
     }
 
     fn is_read_only(&self) -> bool {
@@ -1487,6 +1531,7 @@ mod tests {
             list_rows: None,
             action_state: None,
             cell_clicked: None,
+            set_permissions: None,
         }
     }
     struct SlowParent {
@@ -1558,6 +1603,7 @@ mod tests {
         static DIRS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
         static REMOVED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
         static RENAMED: RefCell<Vec<(String, String)>> = const { RefCell::new(Vec::new()) };
+        static CHMODDED: RefCell<Vec<(String, u32)>> = const { RefCell::new(Vec::new()) };
         static REFUSE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
         static REASON: RefCell<Option<CString>> = const { RefCell::new(None) };
     }
@@ -1567,6 +1613,7 @@ mod tests {
         DIRS.with(|d| d.borrow_mut().clear());
         REMOVED.with(|r| r.borrow_mut().clear());
         RENAMED.with(|r| r.borrow_mut().clear());
+        CHMODDED.with(|c| c.borrow_mut().clear());
         REFUSE.with(|r| r.set(false));
     }
 
@@ -1618,6 +1665,19 @@ mod tests {
         to: *const c_char,
     ) -> c_int {
         RENAMED.with(|r| r.borrow_mut().push((cstr(from), cstr(to))));
+        stub_writes_itself_out();
+        ic_plugin_api::IC_OK
+    }
+
+    extern "C" fn stub_chmod(
+        _: ic_plugin_api::IcFsHandle,
+        path: *const c_char,
+        mode: u32,
+    ) -> c_int {
+        if REFUSE.with(|r| r.get()) {
+            return refused();
+        }
+        CHMODDED.with(|c| c.borrow_mut().push((cstr(path), mode)));
         stub_writes_itself_out();
         ic_plugin_api::IC_OK
     }
@@ -1688,6 +1748,7 @@ mod tests {
             create_dir: Some(stub_create_dir),
             remove: Some(stub_remove),
             rename: Some(stub_rename),
+            set_permissions: Some(stub_chmod),
             ..table()
         }
     }
@@ -2614,6 +2675,83 @@ mod tests {
                 "nothing after the refusal runs"
             );
         });
+    }
+
+    #[test]
+    fn a_chmod_reaches_the_plugin_with_the_permission_bits_only() {
+        use crate::rpc::FileSystemRpc;
+        let _lease = lease_registry_for_test();
+        let fs = writable_filesystem(".chprobe");
+        assert!(fs.supports_permissions());
+        futures::executor::block_on(fs.set_permissions("/run.sh".to_string(), 0o100755))
+            .expect("the chmod is accepted");
+        CHMODDED.with(|c| assert_eq!(*c.borrow(), vec![("/run.sh".to_string(), 0o755)]));
+    }
+
+    #[test]
+    fn a_chmod_the_plugin_refuses_carries_its_reason() {
+        use crate::rpc::FileSystemRpc;
+        let _lease = lease_registry_for_test();
+        let fs = writable_filesystem(".chrprobe");
+        REFUSE.with(|r| r.set(true));
+        let failure = futures::executor::block_on(fs.set_permissions("/a".to_string(), 0o600))
+            .expect_err("refused");
+        assert!(failure.to_string().contains("the archive is sealed"));
+    }
+
+    #[test]
+    fn permissions_a_copy_brings_are_applied_once_it_is_written() {
+        use crate::rpc::FileSystemRpc;
+        let _lease = lease_registry_for_test();
+        let fs = writable_filesystem(".cpprobe");
+        futures::executor::block_on(fs.write_file(
+            "/a".to_string(),
+            b"x".to_vec(),
+            Some(0o640),
+            None,
+        ))
+        .expect("written");
+        futures::executor::block_on(fs.create_directory(
+            "/".to_string(),
+            "d".to_string(),
+            Some(0o40750),
+        ))
+        .expect("made");
+        futures::executor::block_on(fs.write_file("/b".to_string(), b"y".to_vec(), None, None))
+            .expect("written");
+        CHMODDED.with(|c| {
+            assert_eq!(
+                *c.borrow(),
+                vec![("/a".to_string(), 0o640), ("/d".to_string(), 0o750)],
+                "nothing is changed where nothing was asked for"
+            )
+        });
+    }
+
+    #[test]
+    fn a_filesystem_without_the_slot_offers_no_chmod() {
+        use crate::rpc::FileSystemRpc;
+        let _lease = lease_registry_for_test();
+        let exts = CString::new(".nochprobe").unwrap();
+        let without = ic_plugin_api::IcFsVTable {
+            set_permissions: None,
+            ..writable_table()
+        };
+        assert_eq!(
+            register(exts.as_ptr(), &without, std::ptr::null_mut()),
+            ic_plugin_api::IC_OK
+        );
+        forget_recorded_calls();
+        let plugin = filesystem_for("x.nochprobe").expect("registered");
+        let parent: std::rc::Rc<dyn crate::rpc::FileSystemRpc> = std::rc::Rc::new(SlowParent {
+            opened: std::rc::Rc::new(std::cell::Cell::new(0)),
+        });
+        let fs = PluginFsRpc::new(plugin, "x.nochprobe".to_string(), parent);
+        assert!(!fs.supports_permissions());
+        assert!(futures::executor::block_on(fs.set_permissions("/a".to_string(), 0o644)).is_err());
+        futures::executor::block_on(fs.write_file("/a".to_string(), Vec::new(), Some(0o644), None))
+            .expect("a write still goes through");
+        CHMODDED.with(|c| assert!(c.borrow().is_empty()));
     }
 
     #[test]
