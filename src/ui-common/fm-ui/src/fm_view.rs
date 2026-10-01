@@ -24,6 +24,7 @@ pub struct SourceInfo {
     pub columns_replace_defaults: bool,
     pub is_read_only: bool,
     pub wants_quick_filter: bool,
+    pub can_change_permissions: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -66,6 +67,7 @@ pub struct Shared {
 #[derive(Clone)]
 struct Views {
     write_buttons: Vec<gtk::Widget>,
+    chmod: gtk::Button,
     /// Kept apart: it is the panel's own and sits at the far end, so hiding
     /// the rest does not reach it.
     view_switcher: gtk::Widget,
@@ -1662,6 +1664,7 @@ impl SimpleComponent for FmPanelModel {
 
         let views = Views {
             write_buttons,
+            chmod: btn_chmod.clone(),
             view_switcher: view_switcher.clone().upcast(),
             rendered_crumbs: std::cell::RefCell::new((String::new(), Vec::new())),
             stack,
@@ -1803,6 +1806,7 @@ impl SimpleComponent for FmPanelModel {
                 let replace_defaults = source.columns_replace_defaults;
                 let read_only = source.is_read_only;
                 let wants_filter = source.wants_quick_filter;
+                let can_chmod = source.can_change_permissions;
                 *self.shared.source.borrow_mut() = source;
                 crate::view_factories::sync_extra_columns(
                     &self.views.list_view,
@@ -1826,6 +1830,7 @@ impl SimpleComponent for FmPanelModel {
                 for w in &self.views.write_buttons {
                     w.set_visible(show_writing);
                 }
+                self.views.chmod.set_visible(show_writing && can_chmod);
                 if wants_filter {
                     self.views.filter_bar.set_visible(true);
                 }

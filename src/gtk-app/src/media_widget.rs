@@ -13,7 +13,7 @@ use std::time::Duration;
 const TICK: Duration = Duration::from_millis(500);
 
 /// The transport for one file, playing through the application's one player.
-pub fn sound(path: &str, autoplay: bool) -> gtk::Widget {
+pub fn sound(path: &str, autoplay: bool, ended: Rc<dyn Fn()>) -> gtk::Widget {
     let player = crate::player::the_one();
     let name = std::path::Path::new(path)
         .file_name()
@@ -25,6 +25,8 @@ pub fn sound(path: &str, autoplay: bool) -> gtk::Widget {
         failed.set_wrap(true);
         return failed.upcast();
     }
+    // The viewer follows this track now; the panel bar must not advance its playlist over it.
+    player.set_current_idx(None);
     if !autoplay && player.is_playing() {
         player.toggle_play();
     }
@@ -119,6 +121,7 @@ pub fn sound(path: &str, autoplay: bool) -> gtk::Widget {
     let holding = moved.clone();
     let still_playing = playing.clone();
     let face = play.downgrade();
+    let ours = path.to_string();
     let tick = gtk::glib::timeout_add_local(TICK, move || {
         let (Some(moving), Some(counting), Some(face)) =
             (moving.upgrade(), counting.upgrade(), face.upgrade())
@@ -145,6 +148,11 @@ pub fn sound(path: &str, autoplay: bool) -> gtk::Widget {
         if still_playing.get() && ticking.is_finished() {
             still_playing.set(false);
             face.set_icon_name("media-playback-start-symbolic");
+            if ticking.now_playing().as_deref() == Some(ours.as_str()) {
+                // Idle: the answer may rebuild the window this tick belongs to.
+                let ended = ended.clone();
+                gtk::glib::idle_add_local_once(move || ended());
+            }
         }
         gtk::glib::ControlFlow::Continue
     });

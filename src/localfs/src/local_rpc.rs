@@ -439,6 +439,10 @@ impl fm_core::rpc::FileSystemRpc for LocalFileSystemRpc {
         }
     }
 
+    fn supports_permissions(&self) -> bool {
+        true
+    }
+
     async fn set_permissions(&self, path: String, permissions: u32) -> Result<(), AppError> {
         let path = sanitize_windows_path(std::path::Path::new(&path));
         #[cfg(unix)]

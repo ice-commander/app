@@ -1,7 +1,9 @@
 use gtk::glib;
 use gtk_updater_ui::{UpdaterInit, UpdaterInput, UpdaterModel, UpdaterOutput};
+use ic_plugin_host::updates::{self, Fetch, OfferedPlugin};
 use relm4::prelude::*;
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -53,7 +55,7 @@ fn run_check(parent: gtk::Window, on_complete: Option<Box<dyn Fn()>>) {
                 }
             };
             match rx.await {
-                Ok(Ok(Some(found))) => {
+                Ok(Ok((Some(found), plugins))) => {
                     finish(&on_complete);
                     let version = found.pkg.version.clone();
                     let notes = found.notes;
@@ -61,11 +63,33 @@ fn run_check(parent: gtk::Window, on_complete: Option<Box<dyn Fn()>>) {
                     let _ = ctrl
                         .sender()
                         .send(UpdaterInput::UpdateAvailable { version, notes });
+                    // Quietly: the restart after installing the application puts them in place, and one dialog is enough.
+                    tokio::spawn(async move {
+                        if let Err(e) = stage_plugin_updates(plugins).await {
+                            eprintln!("[updater] plugin updates: {e}");
+                        }
+                    });
                 }
-                Ok(Ok(None)) => {
+                Ok(Ok((None, plugins))) => {
+                    let staged = spawn_on_tokio(stage_plugin_updates(plugins)).await;
                     finish(&on_complete);
-                    if manual {
-                        let _ = ctrl.sender().send(UpdaterInput::UpToDate);
+                    match staged {
+                        Ok(Ok(names)) if !names.is_empty() => {
+                            let _ = ctrl.sender().send(UpdaterInput::PluginsReady(names));
+                        }
+                        Ok(Ok(_)) => {
+                            if manual {
+                                let _ = ctrl.sender().send(UpdaterInput::UpToDate);
+                            }
+                        }
+                        Ok(Err(e)) => {
+                            if manual {
+                                let _ = ctrl.sender().send(UpdaterInput::Failed(e));
+                            } else {
+                                eprintln!("[updater] plugin updates: {e}");
+                            }
+                        }
+                        Err(_) => {}
                     }
                 }
                 Ok(Err(e)) => {
@@ -184,7 +208,45 @@ struct AvailableUpdate {
     notes: String,
 }
 
-async fn perform_update_check() -> Result<Option<AvailableUpdate>, String> {
+/// What `POST /api/checkUpdates` answers: the application's update, as the old check did, and the plugins that go
+/// with this version, each with every file this system needs.
+#[derive(serde::Deserialize, Default)]
+struct Checked {
+    #[serde(default)]
+    update: bool,
+    #[serde(default)]
+    version: String,
+    #[serde(default)]
+    notes: String,
+    #[serde(default)]
+    url: String,
+    #[serde(default)]
+    md5: String,
+    #[serde(default)]
+    plugins: BTreeMap<String, OfferedPlugin>,
+}
+
+async fn ask_site() -> Result<Checked, String> {
+    let asked = serde_json::json!({
+        "version": common::version::APP_VERSION,
+        "app_type": common::version::APP_TYPE,
+        "build_type": common::version::BUILD_TYPE,
+        "platform": updates::platform(),
+    });
+    let resp = reqwest::Client::new()
+        .post(format!("{}/api/checkUpdates", update_server()))
+        .json(&asked)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let status = resp.status();
+    if status.is_success() {
+        return resp.json::<Checked>().await.map_err(|e| e.to_string());
+    }
+    if status != reqwest::StatusCode::NOT_FOUND && status != reqwest::StatusCode::METHOD_NOT_ALLOWED {
+        return Err(format!("HTTP status {status}"));
+    }
+    // A site from before the version registry knows the application alone.
     let url = format!(
         "{}/api/checkUpdate?app_type={}&build_type={}&version={}",
         update_server(),
@@ -196,17 +258,31 @@ async fn perform_update_check() -> Result<Option<AvailableUpdate>, String> {
     if !resp.status().is_success() {
         return Err(format!("HTTP status {}", resp.status()));
     }
-    let check = resp
+    let old = resp
         .json::<common::UpdateCheck>()
         .await
         .map_err(|e| e.to_string())?;
+    Ok(Checked {
+        update: old.update,
+        version: old.version,
+        notes: old.notes,
+        url: old.url,
+        md5: old.md5,
+        plugins: BTreeMap::new(),
+    })
+}
+
+async fn perform_update_check(
+) -> Result<(Option<AvailableUpdate>, BTreeMap<String, OfferedPlugin>), String> {
+    let check = ask_site().await?;
+    let plugins = check.plugins;
 
     if !check.update || check.url.is_empty() {
-        return Ok(None);
+        return Ok((None, plugins));
     }
     // The server compares versions too; this refuses a downgrade should the two ever disagree.
     if !is_newer_version(common::version::APP_VERSION, &check.version) {
-        return Ok(None);
+        return Ok((None, plugins));
     }
 
     let pkg = common::UpdatePackage {
@@ -216,10 +292,102 @@ async fn perform_update_check() -> Result<Option<AvailableUpdate>, String> {
         url: check.url,
         md5: check.md5,
     };
-    Ok(Some(AvailableUpdate {
-        pkg,
-        notes: check.notes,
-    }))
+    Ok((
+        Some(AvailableUpdate {
+            pkg,
+            notes: check.notes,
+        }),
+        plugins,
+    ))
+}
+
+/// Fetches what differs for the installed plugins and leaves it beside the old files as `<path>.new`, put in place at
+/// the next start. A plugin's files are written all or none: half of them would pair a new plugin with old codecs.
+/// Answers the names of the plugins that will change.
+async fn stage_plugin_updates(offered: BTreeMap<String, OfferedPlugin>) -> Result<Vec<String>, String> {
+    if offered.is_empty() {
+        return Ok(Vec::new());
+    }
+    let folder = ic_plugin_host::loader::plugin_directory().ok_or("no plugin folder on this system")?;
+    let (fetches, names) = {
+        let folder = folder.clone();
+        tokio::task::spawn_blocking(move || {
+            let installed = ic_plugin_host::loader::installed_with_about();
+            let names: BTreeMap<String, String> = installed
+                .iter()
+                .map(|held| {
+                    let name = held
+                        .about
+                        .as_ref()
+                        .map(|about| about.name.clone())
+                        .filter(|name| !name.is_empty())
+                        .unwrap_or_else(|| held.library.clone());
+                    (held.library.clone(), name)
+                })
+                .collect();
+            let versions: Vec<(String, Option<String>)> = installed
+                .iter()
+                .map(|held| {
+                    (
+                        held.library.clone(),
+                        held.about.as_ref().map(|about| about.version.clone()),
+                    )
+                })
+                .collect();
+            (updates::plan(&folder, &offered, &versions), names)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    };
+
+    let mut by_plugin: BTreeMap<String, Vec<Fetch>> = BTreeMap::new();
+    for fetch in fetches {
+        by_plugin.entry(fetch.plugin.clone()).or_default().push(fetch);
+    }
+    let mut staged = Vec::new();
+    let mut failed = Vec::new();
+    for (plugin, fetches) in by_plugin {
+        let mut arrived = Vec::new();
+        for fetch in &fetches {
+            match fetch_bytes(&fetch.file.url).await {
+                Ok(bytes) => arrived.push((fetch.file.clone(), bytes)),
+                Err(e) => {
+                    failed.push(format!("{plugin}: {e}"));
+                    break;
+                }
+            }
+        }
+        if arrived.len() != fetches.len() {
+            continue;
+        }
+        let folder = folder.clone();
+        let written = tokio::task::spawn_blocking(move || {
+            arrived
+                .iter()
+                .try_for_each(|(file, bytes)| updates::stage(&folder, file, bytes))
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+        match written {
+            Ok(()) => staged.push(names.get(&plugin).cloned().unwrap_or(plugin)),
+            Err(e) => failed.push(format!("{plugin}: {e}")),
+        }
+    }
+    if staged.is_empty() && !failed.is_empty() {
+        return Err(failed.join("; "));
+    }
+    for why in &failed {
+        eprintln!("[updater] plugin update: {why}");
+    }
+    Ok(staged)
+}
+
+async fn fetch_bytes(url: &str) -> Result<Vec<u8>, String> {
+    let resp = reqwest::get(url).await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("{url}: HTTP status {}", resp.status()));
+    }
+    Ok(resp.bytes().await.map_err(|e| e.to_string())?.to_vec())
 }
 
 fn is_newer_version(current: &str, latest: &str) -> bool {
@@ -283,7 +451,32 @@ async fn download_update_package(
 
 #[cfg(test)]
 mod tests {
-    use super::{is_newer_version, verify_checksum};
+    use super::{is_newer_version, verify_checksum, Checked};
+
+    /// What the site answered for 0.8.130 on macOS, from the registry of the real builds, two plugins kept.
+    const ANSWERED: &str = r#"{"latest_version": "0.8.130", "plugins": {"ic_video_view": {"files": [{"md5": "c97a69f257e4fe68aaf2a128ee6c43bf", "path": "libic_video_view.dylib", "size": 419200, "url": "https://github.com/ice-commander/ic-plugin-videocodecs/releases/download/v0.1.0/libic_video_view.dylib"}, {"md5": "4edba30dc8f6e4ba8297047a2eb27396", "path": "video-codecs/THIRD-PARTY-macos.txt", "size": 48798, "url": "https://github.com/ice-commander/ic-plugin-videocodecs/releases/download/v0.1.0/THIRD-PARTY-macos.txt"}, {"md5": "0a5d046cd4d7b150d4127f4ae1a22e80", "path": "video-codecs/libmpv.2.dylib", "size": 26892608, "url": "https://github.com/ice-commander/ic-plugin-videocodecs/releases/download/v0.1.0/libmpv.2.dylib"}], "version": "0.1.0"}, "ic_sftp_fs": {"files": [{"md5": "c0baa9cbd8bcf96510898a45ce930146", "path": "libic_sftp_fs.dylib", "size": 3774320, "url": "https://github.com/ice-commander/ic-plugin-sftp/releases/download/v0.1.0/libic_sftp_fs.dylib"}], "version": "0.1.0"}}, "plugins_of": "0.8.130", "update": false}"#;
+
+    #[test]
+    fn the_sites_answer_reads_and_only_an_installed_plugin_is_fetched() {
+        let checked: Checked = serde_json::from_str(ANSWERED).unwrap();
+        assert!(!checked.update);
+        let video = &checked.plugins["ic_video_view"];
+        assert_eq!(video.version, "0.1.0");
+        assert_eq!(video.files.len(), 3);
+        assert_eq!(video.files[2].path, "video-codecs/libmpv.2.dylib");
+
+        let folder = std::env::temp_dir().join(format!("ic-updater-answer-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("libic_sftp_fs.dylib"), b"an older build").unwrap();
+        let installed = [("ic_sftp_fs".to_string(), Some("0.0.9".to_string()))];
+        let fetch = ic_plugin_host::updates::plan(&folder, &checked.plugins, &installed);
+        let _ = std::fs::remove_dir_all(&folder);
+
+        assert_eq!(fetch.len(), 1, "{fetch:?}");
+        assert_eq!(fetch[0].plugin, "ic_sftp_fs");
+        assert!(fetch[0].file.url.starts_with(ic_plugin_host::updates::TRUSTED));
+    }
 
     #[test]
     fn a_matching_checksum_passes_and_case_does_not_matter() {

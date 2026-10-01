@@ -91,6 +91,9 @@ impl FileSystemRpc for RoutingProvider {
             .set_permissions(self.resolve(&path), permissions)
             .await
     }
+    fn supports_permissions(&self) -> bool {
+        self.provider.supports_permissions()
+    }
     async fn read_file(
         &self,
         path: String,

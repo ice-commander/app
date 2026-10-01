@@ -15,6 +15,8 @@ pub enum UpdaterInput {
     Downloading { version: String },
     Installing,
     Installed,
+    /// New versions of these plugins wait beside the old ones and take their place at the next start.
+    PluginsReady(Vec<String>),
     Failed(String),
     DialogClosed,
 }
@@ -32,6 +34,7 @@ enum UpdaterPhase {
     Downloading { version: String },
     Installing,
     Installed,
+    PluginsReady(Vec<String>),
     UpToDate,
     Error(String),
 }
@@ -132,6 +135,7 @@ impl SimpleComponent for UpdaterModel {
             }
             UpdaterInput::Installing => self.set_phase(UpdaterPhase::Installing),
             UpdaterInput::Installed => self.set_phase(UpdaterPhase::Installed),
+            UpdaterInput::PluginsReady(names) => self.set_phase(UpdaterPhase::PluginsReady(names)),
             UpdaterInput::Failed(error) => self.set_phase(UpdaterPhase::Error(error)),
             UpdaterInput::DialogClosed => self.set_phase(UpdaterPhase::Idle),
         }
@@ -181,6 +185,10 @@ impl SimpleComponent for UpdaterModel {
             UpdaterPhase::Installed => {
                 widgets.progress_window.set_visible(false);
                 present_success_dialog(&self.parent, &sender);
+            }
+            UpdaterPhase::PluginsReady(names) => {
+                widgets.progress_window.set_visible(false);
+                present_plugins_ready_dialog(&self.parent, names, &sender);
             }
             UpdaterPhase::Error(error) => {
                 widgets.progress_window.set_visible(false);
@@ -282,6 +290,37 @@ fn present_error_dialog(parent: &gtk::Window, error: &str, sender: &ComponentSen
     let sender = sender.clone();
     dialog.connect_response(None, move |dlg, _| {
         dlg.close();
+        sender.input(UpdaterInput::DialogClosed);
+    });
+    dialog.present();
+}
+
+fn present_plugins_ready_dialog(
+    parent: &gtk::Window,
+    names: &[String],
+    sender: &ComponentSender<UpdaterModel>,
+) {
+    let dialog = adw::MessageDialog::builder()
+        .heading(&*crate::i18n::tr("updater.plugins_title"))
+        .body(format!(
+            "{}\n\n{}",
+            crate::i18n::tr("updater.plugins_body"),
+            names.join(", ")
+        ))
+        .transient_for(parent)
+        .build();
+
+    dialog.add_response("later", &crate::i18n::tr("updater.later_btn"));
+    dialog.add_response("restart", &crate::i18n::tr("updater.restart_btn"));
+    dialog.set_response_appearance("restart", adw::ResponseAppearance::Suggested);
+    dialog.set_default_response(Some("restart"));
+
+    let sender = sender.clone();
+    dialog.connect_response(None, move |dlg, response| {
+        dlg.close();
+        if response == "restart" {
+            let _ = sender.output(UpdaterOutput::Restart);
+        }
         sender.input(UpdaterInput::DialogClosed);
     });
     dialog.present();

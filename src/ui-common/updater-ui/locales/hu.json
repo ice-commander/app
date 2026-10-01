@@ -19,5 +19,7 @@
   "updater.up_to_date_body_2": "A(z)",
   "updater.up_to_date_body_3": "verzió a legújabb.",
   "updater.up_to_date_title": "Naprakész",
-  "updater.whats_new": "Újdonságok:"
+  "updater.whats_new": "Újdonságok:",
+  "updater.plugins_title": "Bővítmények frissítve",
+  "updater.plugins_body": "Letöltöttük ezeknek a bővítményeknek az új verzióit, újraindítás után lépnek életbe:"
 }

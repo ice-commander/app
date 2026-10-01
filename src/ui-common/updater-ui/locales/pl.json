@@ -19,5 +19,7 @@
   "updater.up_to_date_body_2": "Wersja",
   "updater.up_to_date_body_3": "jest najnowsza.",
   "updater.up_to_date_title": "Oprogramowanie aktualne",
-  "updater.whats_new": "Co nowego:"
+  "updater.whats_new": "Co nowego:",
+  "updater.plugins_title": "Wtyczki zaktualizowane",
+  "updater.plugins_body": "Pobrano nowe wersje tych wtyczek, zaczną działać po ponownym uruchomieniu:"
 }

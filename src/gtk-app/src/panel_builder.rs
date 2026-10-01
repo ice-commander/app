@@ -14,8 +14,6 @@ pub struct PanelInfo {
     #[allow(clippy::type_complexity)]
     add_tab_fn: std::rc::Rc<dyn Fn(Option<String>, bool)>,
     pub router: std::rc::Rc<panel_router::PanelRouter>,
-    #[allow(dead_code)]
-    pub registry_manager: crate::registry_panel::RegistryPanel,
     pub paned: gtk::Paned,
     pub terminal_view: crate::terminal::TerminalView,
     pub expand_btn: gtk::Button,
@@ -34,7 +32,6 @@ struct TabInfo {
     tab_header: gtk::DropDown,
     tab_switch: Box,
     router: std::rc::Rc<panel_router::PanelRouter>,
-    registry_manager: crate::registry_panel::RegistryPanel,
     paned: gtk::Paned,
     terminal_view: crate::terminal::TerminalView,
     expand_btn: gtk::Button,
@@ -297,7 +294,6 @@ pub fn build_panel(
         tabs,
         add_tab_fn,
         router: first.router,
-        registry_manager: first.registry_manager,
         paned: first.paned,
         terminal_view: first.terminal_view,
         expand_btn: first.expand_btn,
@@ -561,8 +557,6 @@ fn build_tab(
         std::cell::RefCell<Option<std::rc::Rc<dyn Fn(Vec<std::path::PathBuf>)>>>,
     >,
 ) -> TabInfo {
-    let registry_manager = crate::registry_panel::RegistryPanel::new();
-
     let panel_id = if name.to_lowercase().contains("left") {
         "left"
     } else if name.to_lowercase().contains("right") {
@@ -577,16 +571,6 @@ fn build_tab(
         as std::rc::Rc<dyn FileSystemRpc>;
     #[cfg(not(target_os = "windows"))]
     let base_rpc = local_rpc.clone() as std::rc::Rc<dyn FileSystemRpc>;
-
-    #[cfg(target_os = "windows")]
-    let reg_btn = {
-        let reg_btn = Button::builder()
-            .child(&toolbar_icon("/com/icecommander/gtk/registry.svg"))
-            .tooltip_text("Open Registry Editor")
-            .build();
-        reg_btn.set_cursor_from_name(Some("pointer"));
-        reg_btn
-    };
 
     let term_btn = Button::builder()
         .child(&toolbar_icon("/com/icecommander/gtk/unix-console.svg"))
@@ -632,8 +616,6 @@ fn build_tab(
     };
     let term_sep = vsep();
     let search_sep = vsep();
-    #[cfg(target_os = "windows")]
-    let reg_sep = vsep();
 
     let shown = |key: &str| crate::settings::page_toolbar::shown(&config, key);
 
@@ -647,13 +629,6 @@ fn build_tab(
     let mut fs_action_clicks: Vec<(gtk::Widget, crate::plugin_host::FsAction)> = Vec::new();
     #[allow(unused_mut)]
     let mut header_hide_widgets: Vec<gtk::Widget> = Vec::new();
-    #[cfg(target_os = "windows")]
-    if shown("ui.toolbar.registry") {
-        toolbar_end_extras.push(reg_sep.clone().upcast());
-        toolbar_end_extras.push(reg_btn.clone().upcast());
-        header_hide_widgets.push(reg_sep.clone().upcast());
-        header_hide_widgets.push(reg_btn.clone().upcast());
-    }
     if shown("ui.toolbar.terminal") {
         toolbar_end_extras.push(term_sep.clone().upcast());
         toolbar_end_extras.push(expand_btn.clone().upcast());
@@ -826,13 +801,39 @@ fn build_tab(
         }
     }
 
+    // Filled in once the stack below exists, so a plugin pressed from this
+    // panel's toolbar can be shown inside this panel rather than in a window.
+    let panel_stack: std::rc::Rc<std::cell::RefCell<Option<Stack>>> =
+        std::rc::Rc::new(std::cell::RefCell::new(None));
+
     for (btn, entry) in plugin_clicks {
         let target = router.clone();
         let acting = acting.clone();
+        let holder = panel_stack.clone();
         btn.connect_clicked(move |b| {
             let Some(window) = b.root().and_downcast::<gtk::Window>() else {
                 return;
             };
+            let into = holder.clone();
+            crate::plugin_view::set_panel_host(std::rc::Rc::new(
+                move |slot: &str, shown: &gtk::Widget| {
+                    let stack = into.borrow().clone()?;
+                    let previous = stack
+                        .visible_child_name()
+                        .map(|name| name.to_string())
+                        .unwrap_or_else(|| "filemanager".to_string());
+                    let page = format!("plugin:{slot}");
+                    if let Some(stale) = stack.child_by_name(&page) {
+                        stack.remove(&stale);
+                    }
+                    stack.add_named(shown, Some(&page));
+                    stack.set_visible_child_name(&page);
+                    let back = stack.clone();
+                    Some(std::rc::Rc::new(move || {
+                        back.set_visible_child_name(&previous);
+                    }) as std::rc::Rc<dyn Fn()>)
+                },
+            ));
             let opener = target.clone();
             crate::plugin_host::set_open_handler(std::rc::Rc::new(move |id: &str| {
                 let Some(source) = crate::plugin_host::panel_source(id) else {
@@ -911,32 +912,6 @@ fn build_tab(
         nav_hook,
     );
 
-    stack.add_named(&registry_manager.container, Some("registry"));
-    let on_open_registry = {
-        let registry_manager = registry_manager.clone();
-        let stack = stack.clone();
-        std::rc::Rc::new(move || {
-            let previous_page = stack
-                .visible_child_name()
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "selector".to_string());
-            let stack_back = stack.clone();
-            registry_manager.set_back_callback(move || {
-                stack_back.set_visible_child_name(&previous_page);
-            });
-            registry_manager.open_local();
-            stack.set_visible_child_name("registry");
-        })
-    };
-
-    #[cfg(target_os = "windows")]
-    {
-        let on_open_registry_clone = on_open_registry.clone();
-        reg_btn.connect_clicked(move |_| {
-            on_open_registry_clone();
-        });
-    }
-
     let on_open_panel_source: std::rc::Rc<dyn Fn(&str)> = {
         let stack = stack.clone();
         let router_for_source = router.clone();
@@ -970,12 +945,12 @@ fn build_tab(
         router.clone(),
         stack.clone(),
         selector_updaters,
-        on_open_registry,
         on_open_panel_source,
     );
     stack.add_named(&selector_box, Some("selector"));
 
     stack.add_named(router.fm.widget(), Some("filemanager"));
+    *panel_stack.borrow_mut() = Some(stack.clone());
 
     {
         let stack_fn = stack.clone();
@@ -1217,7 +1192,6 @@ fn build_tab(
         tab_header,
         tab_switch,
         router,
-        registry_manager,
         paned,
         terminal_view,
         expand_btn,

@@ -21,7 +21,6 @@ they are not covered by the generated section — this list is maintained by han
 | fakelzo (our stand-in for lzo2) | MIT | Windows, macOS | dynamic |
 | fakejbig (our stand-in for libjbig) | MIT | Windows, macOS | dynamic |
 | FreeType | FTL (used under FTL, not the GPL-2.0 alternative) | Windows, macOS | dynamic |
-| PDFium | BSD-3-Clause | all platforms | dynamic |
 | libssh2 | BSD-3-Clause | Windows bundle, arriving with curl in the MSYS2 GTK tree | dynamic |
 | OpenSSL 3.x | Apache-2.0 | Windows bundle, same tree | dynamic |
 
@@ -35,17 +34,6 @@ library from a separate repository — what it links is listed there, not here.
 **LGPL components** are linked dynamically and shipped as separate shared
 libraries, so they may be replaced by the user. Their license texts are
 included in the release packages.
-
-**Video is not decoded here.** The application plays no video at all; the video plugin
-does, from its own repository (`plugin-video`), through the LGPL libmpv it carries — one and
-the same component on Linux, macOS and Windows. What the plugin links is listed with the
-plugin.
-
-mpv is built with `-Dgpl=false` and its FFmpeg without `--enable-gpl`, so the GPL parts —
-the x264 and x265 encoders, libpostproc, the DVD/CD readers — are not built. The builds are
-`docker-libmpv-multibuild` for Linux and
-[`builder/build_libmpv_ffmpeg_lgpl.sh`](builder/build_libmpv_ffmpeg_lgpl.sh) for macOS;
-Windows uses a prebuilt LGPL `libmpv-2.dll`.
 
 **Sound is the application's own.** Audio plays through the `rodio` crate, listed with the
 rest of the Rust dependencies below. Nothing here uses the toolkit's media stack.
@@ -77,7 +65,7 @@ real DLLs from the installer archive entirely rather than overwriting them after
 The cost is that cairo-script serialisation does not work in these builds. Nothing the
 application offers uses it.
 
-Per-component versions, build configuration and the location of the corresponding source
+Per-component versions and the location of the corresponding source
 for everything shipped in a bundle are listed in
 [`assets/licenses/BUNDLED-COMPONENTS.txt`](assets/licenses/BUNDLED-COMPONENTS.txt).
 

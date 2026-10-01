@@ -36,7 +36,6 @@ package() {
     install -Dm755 "/home/builder/workdir/bin/distr/zst/target/release/ice-commander" "\$pkgdir/usr/bin/ice-commander"
     install -Dm644 "/home/builder/workdir/src/gtk-app/assets/com.icecommander.gtkapp.desktop" "\$pkgdir/usr/share/applications/com.icecommander.gtkapp.desktop"
     install -Dm644 "/home/builder/workdir/src/gtk-app/assets/app-logo-512.png" "\$pkgdir/usr/share/icons/hicolor/512x512/apps/com.icecommander.gtkapp.png"
-    install -Dm644 "/home/builder/workdir/artifacts/libpdfium.so" "\$pkgdir/usr/lib/ice-commander/libpdfium.so"
     for lic in /home/builder/workdir/assets/licenses/*.txt; do
         install -Dm644 "\$lic" "\$pkgdir/usr/share/doc/ice-commander/licenses/\$(basename "\$lic")"
     done

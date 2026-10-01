@@ -2,7 +2,7 @@
 name = "ic-platform"
 version = "0.1.0"
 edition = "2021"
-description = "Local platform services: filesystem, pseudo-terminal, registry"
+description = "Local platform services: filesystem, pseudo-terminal"
 license = "MIT OR Apache-2.0"
 publish = false
 
@@ -13,7 +13,6 @@ portable-pty = "0.9.0"
 chrono = "0.4"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-winreg = "0.52"
 
 [dev-dependencies]
 tempfile = "3"

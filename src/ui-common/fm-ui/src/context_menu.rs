@@ -190,14 +190,16 @@ pub fn create_context_menu(
     });
     vbox.append(&btn_del);
 
-    let btn_chm = create_btn_with_label("Permissions / Chmod", "dialog-password-symbolic", "");
-    let pop_chm = popover.clone();
-    let btn_chmod_clone = btn_chmod.clone();
-    btn_chm.connect_clicked(move |_| {
-        pop_chm.popdown();
-        btn_chmod_clone.activate();
-    });
-    vbox.append(&btn_chm);
+    if shared.source.borrow().can_change_permissions {
+        let btn_chm = create_btn_with_label("Permissions / Chmod", "dialog-password-symbolic", "");
+        let pop_chm = popover.clone();
+        let btn_chmod_clone = btn_chmod.clone();
+        btn_chm.connect_clicked(move |_| {
+            pop_chm.popdown();
+            btn_chmod_clone.activate();
+        });
+        vbox.append(&btn_chm);
+    }
 
     {
         let is_archive = !is_dir && fm_core::plugin_fs::handles_extension(&name_clone);

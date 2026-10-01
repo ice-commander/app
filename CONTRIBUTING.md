@@ -39,9 +39,7 @@ same terms as the project — **MIT OR Apache-2.0**, at the user's option. See
 Note on binaries: the release bundles carry no GPL code. `liblzo2`
 (GPL-2.0-or-later), which GTK drags in through the cairo script interpreter, is
 replaced in both desktop bundles by our own MIT stub (`src/fakelzo/`); the Linux
-build uses neither. Video is not decoded here at all — it travels with the video
-plugin, whose `libmpv` and FFmpeg are built LGPL and decode-only. See
-[THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md).
+build uses neither. See [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md).
 
 The name "Ice Commander" and the project logo are not covered by the code
 license.
@@ -65,9 +63,9 @@ npm run build-webserver # headless web server
 ```
 
 Release packages (deb / rpm / zst / exe / dmg) are produced by the container
-recipes in [builder/](builder/) — see `builder/build-all.sh`. The Windows and
-macOS bundles additionally need prebuilt native libraries (GTK4 for MinGW,
-PDFium) which are not kept in this repository; Linux builds need nothing extra.
+recipes in [builder/](builder/) — see `builder/build-all.sh`. The Windows
+bundle additionally needs a prebuilt GTK4 runtime for MinGW, which is not kept in
+this repository.
 
 This repository is the application only. Connections, archives and the extra
 windows are plugins, built from

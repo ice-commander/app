@@ -798,15 +798,28 @@ impl ViewPane {
     /// Reached only after whatever is being typed into has had the key.
     fn accelerated(&mut self, key: KeyEvent) -> Option<Step> {
         let pressed = pressed_as_written(key)?;
-        let (id, resolved) = {
-            let found = node_by_accel(&self.session.document.form, &pressed, &self.session.state)?;
-            let resolved = found
-                .intent
-                .as_ref()
-                .and_then(|intent| ic_view::resolve(intent, &self.session.state));
-            (found.id.clone(), resolved)
-        };
-        Some(self.follow(resolved, id.as_deref()))
+        let found = node_by_accel(&self.session.document.form, &pressed, &self.session.state).map(
+            |found| {
+                let resolved = found
+                    .intent
+                    .as_ref()
+                    .and_then(|intent| ic_view::resolve(intent, &self.session.state));
+                (found.id.clone(), resolved)
+            },
+        );
+        if let Some((id, resolved)) = found {
+            return Some(self.follow(resolved, id.as_deref()));
+        }
+        let node = self
+            .session
+            .document
+            .keys
+            .iter()
+            .find(|held| held.accel.to_lowercase() == pressed)?
+            .node
+            .clone();
+        self.deliver(ic_plugin_api::IC_EVENT_ACTIVATE, Some(&node), None, None);
+        Some(Step::Stay)
     }
 
     fn act(&mut self, code: KeyCode) -> Step {
@@ -1857,7 +1870,8 @@ mod tests {
         "form": { "t": "view", "surface": "window", "children": [
             { "t": "text", "id": "head", "text": "the first line" },
             { "t": "button", "id": "next", "title": "Next", "accel": "Right",
-              "intent": { "do": "emit", "node": "next" } } ] }
+              "intent": { "do": "emit", "node": "next" } } ] },
+        "keys": [ { "accel": "Left", "node": "back" } ]
     }"#;
 
     struct Watched {
@@ -2018,6 +2032,21 @@ mod tests {
             pressed["node"],
             serde_json::json!("next"),
             "the key the document named does what pressing the button would"
+        );
+
+        assert!(matches!(pane.on_key(press(KeyCode::Left)), Step::Stay));
+        let keyed = watched
+            .seen
+            .lock()
+            .expect("the viewer")
+            .last()
+            .cloned()
+            .expect("an event");
+        assert_eq!(keyed["type"], serde_json::json!("activate"));
+        assert_eq!(
+            keyed["node"],
+            serde_json::json!("back"),
+            "a key with no button on screen still reaches the plugin"
         );
 
         watched

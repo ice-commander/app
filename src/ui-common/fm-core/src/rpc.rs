@@ -128,6 +128,10 @@ pub trait FileSystemRpc {
         Err(AppError::Other("Not implemented".to_string()))
     }
 
+    fn supports_permissions(&self) -> bool {
+        false
+    }
+
     async fn read_file(
         &self,
         _path: String,

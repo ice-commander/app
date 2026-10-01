@@ -6,7 +6,6 @@ impl Application {
     pub fn init_resources() {
         gtk_fm_ui::init_resources();
         gtk_terminal_ui::init_resources();
-        gtk_registry_ui::init_resources();
     }
 
     pub fn run(app: &adw::Application, config: client_config::AppConfig) {

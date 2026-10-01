@@ -74,6 +74,7 @@ impl LocalFm {
                 columns_replace_defaults: false,
                 is_read_only: false,
                 wants_quick_filter: false,
+                can_change_permissions: true,
             },
             select_name: None,
         });

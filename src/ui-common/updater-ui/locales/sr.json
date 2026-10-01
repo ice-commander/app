@@ -19,5 +19,7 @@
   "updater.up_to_date_body_2": "Верзија",
   "updater.up_to_date_body_3": "је најновија верзија.",
   "updater.up_to_date_title": "Ажурно",
-  "updater.whats_new": "Šta je novo:"
+  "updater.whats_new": "Šta je novo:",
+  "updater.plugins_title": "Прикључци ажурирани",
+  "updater.plugins_body": "Преузете су нове верзије ових прикључака, почеће да раде након поновног покретања:"
 }

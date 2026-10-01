@@ -156,6 +156,12 @@ export interface Action {
   intent?: Cond<Intent>
 }
 
+/** A key that reaches the plugin as `activate` of `node`, with nothing on screen to press. */
+export interface Key {
+  accel: string
+  node: string
+}
+
 export interface Document {
   schema: number
   kind: string
@@ -167,6 +173,7 @@ export interface Document {
   data?: Record<string, Json>
   form: Node
   actions?: Action[]
+  keys?: Key[]
 }
 
 /** The namespaces a reference may address, as `ic-view` names them. */

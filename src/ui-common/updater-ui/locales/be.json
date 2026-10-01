@@ -19,5 +19,7 @@
   "updater.up_to_date_body_2": "Версія",
   "updater.up_to_date_body_3": "з'яўляецца самай апошняй.",
   "updater.up_to_date_title": "Абнаўленне не патрабуецца",
-  "updater.whats_new": "Што новага:"
+  "updater.whats_new": "Што новага:",
+  "updater.plugins_title": "Плагіны абноўлены",
+  "updater.plugins_body": "Загружаны новыя версіі плагінаў, яны пачнуць працаваць пасля перазапуску:"
 }
