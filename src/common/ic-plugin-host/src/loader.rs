@@ -354,6 +354,7 @@ pub fn load_from_directory(folder: &Path) -> Vec<Attempt> {
 /// Loads the libraries `chosen` admits. One left out is not opened at all, so
 /// nothing of it runs and nothing of it is registered.
 pub fn load_chosen_from(folder: &Path, chosen: Chosen) -> Vec<Attempt> {
+    crate::updates::apply_pending(folder);
     libraries_in(folder)
         .iter()
         .filter(|path| {
@@ -391,8 +392,8 @@ pub fn load_chosen_from(folder: &Path, chosen: Chosen) -> Vec<Attempt> {
                     attempt.name
                 ),
                 Outcome::WrongAbi { built_for, ours } => ic_logging::warn!(
-                    "plugin {} was built for contract {built_for} and this application \
-                     speaks {ours}; it was not called at all",
+                    "plugin {} not loaded: built for plugin ABI {built_for}, this application \
+                     speaks ABI {ours}; rebuild it against ic-plugin-api ABI {ours}",
                     attempt.name
                 ),
             }

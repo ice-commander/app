@@ -9,6 +9,7 @@ services:
     tty: true
     volumes:
       - ../:/home/builder/workdir
+      - ../../plugin-api:/home/builder/plugin-api:ro
   deb-webserver:
     image: debian13-builder
     working_dir: /home/builder/
@@ -18,6 +19,7 @@ services:
     tty: true
     volumes:
       - ../:/home/builder/workdir
+      - ../../plugin-api:/home/builder/plugin-api:ro
   deb-console:
     image: debian13-builder
     working_dir: /home/builder/
@@ -27,6 +29,7 @@ services:
     tty: true
     volumes:
       - ../:/home/builder/workdir
+      - ../../plugin-api:/home/builder/plugin-api:ro
   apt:
     image: debian13-builder
     working_dir: /home/builder
@@ -36,6 +39,7 @@ services:
     tty: true
     volumes:
       - ../:/home/builder/workdir
+      - ../../plugin-api:/home/builder/plugin-api:ro
   rpm:
     image: fedora41-builder
     working_dir: /home/builder
@@ -45,6 +49,7 @@ services:
     tty: true
     volumes:
       - ../:/home/builder/workdir
+      - ../../plugin-api:/home/builder/plugin-api:ro
   rpm-webserver:
     image: fedora41-builder
     working_dir: /home/builder
@@ -54,6 +59,7 @@ services:
     tty: true
     volumes:
       - ../:/home/builder/workdir
+      - ../../plugin-api:/home/builder/plugin-api:ro
   rpm-console:
     image: fedora41-builder
     working_dir: /home/builder
@@ -63,6 +69,7 @@ services:
     tty: true
     volumes:
       - ../:/home/builder/workdir
+      - ../../plugin-api:/home/builder/plugin-api:ro
   zst:
     image: arch-builder
     working_dir: /home/builder
@@ -72,6 +79,7 @@ services:
     tty: true
     volumes:
       - ../:/home/builder/workdir
+      - ../../plugin-api:/home/builder/plugin-api:ro
   zst-webserver:
     image: arch-builder
     working_dir: /home/builder
@@ -81,6 +89,7 @@ services:
     tty: true
     volumes:
       - ../:/home/builder/workdir
+      - ../../plugin-api:/home/builder/plugin-api:ro
   zst-console:
     image: arch-builder
     working_dir: /home/builder
@@ -90,6 +99,7 @@ services:
     tty: true
     volumes:
       - ../:/home/builder/workdir
+      - ../../plugin-api:/home/builder/plugin-api:ro
   exe:
     image: msys-builder
     working_dir: /home/builder
@@ -99,6 +109,7 @@ services:
     tty: true
     volumes:
       - ../:/home/builder/workdir/
+      - ../../plugin-api:/home/builder/plugin-api:ro
   exe-webserver:
     image: msys-builder
     working_dir: /home/builder
@@ -108,6 +119,7 @@ services:
     tty: true
     volumes:
       - ../:/home/builder/workdir/
+      - ../../plugin-api:/home/builder/plugin-api:ro
   exe-console:
     image: msys-builder
     working_dir: /home/builder
@@ -117,3 +129,4 @@ services:
     tty: true
     volumes:
       - ../:/home/builder/workdir/
+      - ../../plugin-api:/home/builder/plugin-api:ro

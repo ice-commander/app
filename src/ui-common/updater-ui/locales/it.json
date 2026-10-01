@@ -19,5 +19,7 @@
   "updater.up_to_date_body_2": "La versione",
   "updater.up_to_date_body_3": "è la più recente.",
   "updater.up_to_date_title": "Aggiornato",
-  "updater.whats_new": "Novità:"
+  "updater.whats_new": "Novità:",
+  "updater.plugins_title": "Estensioni aggiornate",
+  "updater.plugins_body": "Sono state scaricate nuove versioni di queste estensioni, saranno attive dopo il riavvio:"
 }

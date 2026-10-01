@@ -30,6 +30,7 @@ fn push_listing(state: &Rc<RouterState>, sender: &relm4::Sender<FmPanelInput>) {
         columns_replace_defaults,
         nav_read_only,
         wants_filter,
+        can_change_permissions,
     ) = {
         let nav = state.path.borrow();
         let root = &nav.levels()[0];
@@ -42,6 +43,7 @@ fn push_listing(state: &Rc<RouterState>, sender: &relm4::Sender<FmPanelInput>) {
             nav.active().shown_as().columns_replace_defaults,
             nav.active().shown_as().read_only,
             nav.active().shown_as().wants_quick_filter,
+            nav.active().fs.supports_permissions(),
         )
     };
     let breadcrumb: Vec<BreadcrumbSegment> = {
@@ -79,6 +81,7 @@ fn push_listing(state: &Rc<RouterState>, sender: &relm4::Sender<FmPanelInput>) {
         columns_replace_defaults,
         is_read_only: nav_read_only,
         wants_quick_filter: wants_filter,
+        can_change_permissions,
     };
     let select_name = {
         let nav = state.path.borrow();

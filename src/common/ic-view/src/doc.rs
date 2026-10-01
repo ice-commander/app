@@ -195,6 +195,10 @@ pub enum InputVariant {
     Integer,
     Path,
     Multiline,
+    /// Bytes written as hex. The control keeps to `0-9 a-f A-F` and spaces and
+    /// shows them in a fixed-width face, so what the user types is already the
+    /// shape the plugin parses.
+    Hex,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -216,11 +220,18 @@ pub enum Scroll {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// Where the host puts the document.
 pub enum Surface {
+    /// Inside whatever asked for it: a viewer in its frame, a connection page.
     #[default]
     Embedded,
+    /// A window of its own, held above the one that opened it.
     Dialog,
+    /// A window of its own that the user can leave and come back to.
     Window,
+    /// In the panel the plugin was pressed from, in place of the file list.
+    /// `{ "do": "close" }` puts the panel back to what it was showing. A host
+    /// with no panel — a terminal, a browser — gives it a window instead.
     Panel,
 }
 
@@ -340,6 +351,15 @@ pub struct Node {
     pub options: Vec<Choice>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub columns: Vec<Column>,
+    /// Where a `table` reads its rows, in `data`. The plugin replaces them with
+    /// `{"set": {"data.<key>": [...]}}` and the table redraws.
+    ///
+    /// A table that also carries a `bind` lets the user pick a row, and the
+    /// whole row object comes back under that bind in the event's `values` —
+    /// so the bind has to name a declared field, as for any other input.
+    /// `"emit": "change"` reports the moment the selection moves; an
+    /// `{ "do": "emit" }` intent reports a row being opened. A table with
+    /// neither is a readout and stays unselectable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rows_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -437,6 +457,13 @@ pub enum NodeKind {
     Choice,
     Button,
     Table,
+    /// Rows that hold rows: the same columns as a `table`, with the children of
+    /// a row under `children` and an expander in front of it.
+    ///
+    /// A row that says `"expandable": true` with no `children` yet is one the
+    /// plugin fills when it is opened: expanding it reports `expand` with the
+    /// row, and the plugin answers by putting the children into `data`.
+    Tree,
     Chart,
     Image,
     Media,
@@ -462,6 +489,7 @@ pub const NODE_KINDS: &[&str] = &[
     "choice",
     "button",
     "table",
+    "tree",
     "chart",
     "image",
     "media",
@@ -484,6 +512,7 @@ impl Node {
             "choice" => NodeKind::Choice,
             "button" => NodeKind::Button,
             "table" => NodeKind::Table,
+            "tree" => NodeKind::Tree,
             "chart" => NodeKind::Chart,
             "image" => NodeKind::Image,
             "media" => NodeKind::Media,
@@ -496,7 +525,12 @@ impl Node {
     pub fn takes_value(&self) -> bool {
         matches!(
             self.kind(),
-            NodeKind::Input | NodeKind::Switch | NodeKind::Choice | NodeKind::Slider
+            NodeKind::Input
+                | NodeKind::Switch
+                | NodeKind::Choice
+                | NodeKind::Slider
+                | NodeKind::Table
+                | NodeKind::Tree
         )
     }
 
@@ -556,6 +590,13 @@ pub enum MediaKind {
     Unknown,
 }
 
+/// A key that reaches the plugin as `activate` of `node`, with nothing on screen to press.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Key {
+    pub accel: String,
+    pub node: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Document {
     pub schema: u32,
@@ -582,6 +623,8 @@ pub struct Document {
     pub form: Node,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<Action>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keys: Vec<Key>,
 }
 
 impl Document {
@@ -598,7 +641,7 @@ impl Document {
     }
 
     pub fn shows_the_same_tree_as(&self, other: &Document) -> bool {
-        self.form == other.form && self.actions == other.actions
+        self.form == other.form && self.actions == other.actions && self.keys == other.keys
     }
 }
 

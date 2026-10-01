@@ -19,5 +19,7 @@
   "updater.up_to_date_body_2": "Versiune",
   "updater.up_to_date_body_3": "este cea mai recentă versiune.",
   "updater.up_to_date_title": "La zi",
-  "updater.whats_new": "Noutăți:"
+  "updater.whats_new": "Noutăți:",
+  "updater.plugins_title": "Extensii actualizate",
+  "updater.plugins_body": "Au fost descărcate versiuni noi ale acestor extensii, vor funcționa după repornire:"
 }

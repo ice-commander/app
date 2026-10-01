@@ -38,6 +38,7 @@ export interface DocumentViewProps {
    * something the plugin makes. Undefined when there is nothing to show.
    */
   pictureUrl?: (src: string) => string | undefined
+  onEnded?: (node: Node) => void
   disabled?: boolean
 }
 
@@ -127,6 +128,11 @@ function useAccelerators(props: DocumentViewProps) {
       if (!visible(node.visible, state) || !visible(node.sensitive, state)) return
       bound.set(node.accel.toLowerCase(), node)
     })
+    for (const key of doc.keys ?? []) {
+      const accel = key.accel.toLowerCase()
+      if (bound.has(accel)) continue
+      bound.set(accel, { t: 'button', id: key.node, intent: { do: 'emit', node: key.node } })
+    }
     if (bound.size === 0) return
     const onKey = (e: KeyboardEvent) => {
       if (disabled === true || beingTypedInto()) return
@@ -174,7 +180,7 @@ export function DocumentView(props: DocumentViewProps) {
 }
 
 function NodeView({ node, ...rest }: DocumentViewProps & { node: Node }) {
-  const { state, values, translate, onChange, onIntent, assetUrl, pictureUrl } = rest
+  const { state, values, translate, onChange, onIntent, assetUrl, pictureUrl, onEnded } = rest
   if (!visible(node.visible, state)) return null
   const live = !rest.disabled && visible(node.sensitive, state)
   const text = (conditional: Parameters<typeof resolveText>[0]) =>
@@ -314,10 +320,17 @@ function NodeView({ node, ...rest }: DocumentViewProps & { node: Node }) {
         height: px(node.height),
       }
       if (node.t === 'media') {
+        const ended = () => onEnded?.(node)
         return node.media === 'audio' ? (
-          <audio src={where} controls autoPlay={node.autoplay} style={{ ...lead, width: '100%' }} />
+          <audio
+            src={where}
+            controls
+            autoPlay={node.autoplay}
+            onEnded={ended}
+            style={{ ...lead, width: '100%' }}
+          />
         ) : (
-          <video src={where} controls autoPlay={node.autoplay} style={room} />
+          <video src={where} controls autoPlay={node.autoplay} onEnded={ended} style={room} />
         )
       }
       return <img src={where} alt="" style={room} />

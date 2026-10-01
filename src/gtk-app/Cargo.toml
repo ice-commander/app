@@ -38,7 +38,6 @@ ic-i18n = { workspace = true }
 fm-core = { workspace = true }
 relm4 = { workspace = true }
 gtk-terminal-ui = { workspace = true }
-gtk-registry-ui = { workspace = true }
 gtk-updater-ui = { workspace = true }
 gtk-viewer-ui = { workspace = true }
 panel-router = { path = "../panel-router" }
@@ -84,7 +83,6 @@ assets = [
     ["../../bin/gtk-app/release/ice-commander", "/usr/bin/ice-commander", "755" ],
     ["assets/com.icecommander.gtkapp.desktop", "usr/share/applications/com.icecommander.gtkapp.desktop", "644"],
     ["assets/app-logo-512.png", "usr/share/icons/hicolor/512x512/apps/com.icecommander.gtkapp.png", "644"],
-    ["../../artifacts/libpdfium.so", "/usr/lib/ice-commander/libpdfium.so", "644"],
     ["../../assets/licenses/*", "/usr/share/doc/ice-commander/licenses/", "644"]
 ]
 
@@ -93,7 +91,6 @@ assets = [
     { source = "../../bin/gtk-app/release/ice-commander", dest = "/usr/bin/ice-commander", mode = "755" },
     { source = "assets/com.icecommander.gtkapp.desktop", dest = "/usr/share/applications/com.icecommander.gtkapp.desktop", mode = "644" },
     { source = "assets/app-logo-512.png", dest = "/usr/share/icons/hicolor/512x512/apps/com.icecommander.gtkapp.png", mode = "644" },
-    { source = "../../artifacts/libpdfium.so", dest = "/usr/lib/ice-commander/libpdfium.so", mode = "644" },
     { source = "../../assets/licenses/*", dest = "/usr/share/doc/ice-commander/licenses/", mode = "644" }
 ]
 

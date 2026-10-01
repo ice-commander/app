@@ -21,18 +21,6 @@ echo "=== Building web UI (web-app) ==="
 npm run build-web-app
 
 # 2. Run Cargo bundle to compile and create the .app structure
-#
-# The application links no mpv and no FFmpeg any more: video moved out to plugin-video,
-# which carries its own LGPL libmpv. builder/build_libmpv_ffmpeg_lgpl.sh still builds that
-# stack into artifacts/lgpl-media, but it is the PLUGIN's to carry, not this bundle's —
-# nothing here needs it and nothing here links it.
-#
-# STILL OPEN, and it decides whether video works on macOS at all: the plugin opens libmpv
-# with dlopen, looking beside itself first and then by bare name (plugin-video/src/
-# video-view/src/mpv.rs, fn candidates). A bare name is not searched for inside an .app,
-# so the dylibs have to end up beside the plugin — which is what plugin-video/build.sh
-# does with IC_VIDEO_CODECS. Check that on a Mac before trusting it.
-
 echo "=== Building application bundle ==="
 cd ./src/gtk-app
 CARGO_TARGET_DIR=../../bin/distr/gtkapp-darwin cargo bundle --release
@@ -48,7 +36,7 @@ mkdir -p "$APP_BUNDLE/Contents/Resources/share/glib-2.0/schemas"
 cp "$BREW_PREFIX/share/glib-2.0/schemas/org.gtk.gtk4.Settings"*.xml "$APP_BUNDLE/Contents/Resources/share/glib-2.0/schemas/"
 glib-compile-schemas "$APP_BUNDLE/Contents/Resources/share/glib-2.0/schemas"
 
-# 4. Bundle main binary dependencies (GTK and its own; no mpv or FFmpeg is linked any more)
+# 4. Bundle main binary dependencies
 echo "=== Bundling main binary dependencies ==="
 dylibbundler -s /Library/Developer/CommandLineTools/usr/lib/swift-5.0/macosx \
              -s /Library/Developer/CommandLineTools/usr/lib/swift-5.5/macosx \
@@ -58,10 +46,6 @@ dylibbundler -s /Library/Developer/CommandLineTools/usr/lib/swift-5.0/macosx \
              -od -b -x "$APP_BUNDLE/Contents/MacOS/ice-commander" \
              -d "$APP_BUNDLE/Contents/Libs/" \
              -p @executable_path/../Libs/
-
-# Copy libpdfium.dylib into bundle's Libs directory
-echo "=== Bundling libpdfium.dylib ==="
-cp ./artifacts/libpdfium.dylib "$APP_BUNDLE/Contents/Libs/libpdfium.dylib"
 
 # Replace liblzo2 (GPL-2.0-or-later) with fakelzo, our own two-symbol stand-in — see
 # src/fakelzo/README.md for the reasoning and the measurement behind it. dylibbundler has just

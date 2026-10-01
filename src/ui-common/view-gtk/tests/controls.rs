@@ -135,6 +135,76 @@ fn a_canvas_asks_the_host_once_and_keeps_the_place_across_a_rebuild() {
     );
 }
 
+fn a_player_is_handed_the_media_node_so_its_end_can_be_reported() {
+    let document: Document = serde_json::from_value(json!({
+        "schema": 1,
+        "kind": "example",
+        "fields": [],
+        "form": { "t": "column", "children": [
+            { "t": "media", "id": "track", "media": "audio", "src": "file:one.mp3", "autoplay": true },
+        ]},
+    }))
+    .expect("a document");
+    let handed = Rc::new(std::cell::RefCell::new(
+        Vec::<(String, Option<String>, bool)>::new(),
+    ));
+    let seen = handed.clone();
+    let renderer = Renderer::new(Rc::new(|_: &str| None))
+        .with_media(Rc::new(|named: &str| {
+            named
+                .strip_prefix("file:")
+                .map(|path| format!("/played/{path}"))
+        }))
+        .with_player(Rc::new(move |at: &str, node: &ic_view::Node| {
+            seen.borrow_mut()
+                .push((at.to_string(), node.id.clone(), node.autoplay));
+            Some(gtk::Box::new(gtk::Orientation::Vertical, 0).upcast())
+        }));
+    renderer.build(&document, &State::for_document(&document));
+    assert_eq!(
+        handed.borrow().clone(),
+        vec![(
+            "/played/one.mp3".to_string(),
+            Some("track".to_string()),
+            true
+        )]
+    );
+}
+
+fn a_declared_key_reaches_the_plugin_without_a_control_and_the_player_is_found_by_its_widget() {
+    let document: Document = serde_json::from_value(json!({
+        "schema": 1,
+        "kind": "example",
+        "fields": [],
+        "form": { "t": "column", "children": [
+            { "t": "media", "id": "track", "media": "audio", "src": "file:one.mp3" },
+        ]},
+        "keys": [ { "accel": "Left", "node": "back" }, { "accel": "ctrl+Right", "node": "skip" } ],
+    }))
+    .expect("a document");
+    let handed: Rc<std::cell::RefCell<Option<gtk::Widget>>> = Rc::default();
+    let giving = handed.clone();
+    let renderer = renderer()
+        .with_media(Rc::new(|named: &str| Some(named.to_string())))
+        .with_player(Rc::new(move |_: &str, _: &ic_view::Node| {
+            let widget: gtk::Widget = gtk::Box::new(gtk::Orientation::Vertical, 0).upcast();
+            *giving.borrow_mut() = Some(widget.clone());
+            Some(widget)
+        }));
+    let built = renderer.build(&document, &State::for_document(&document));
+    let pressed = Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+    let seen = pressed.clone();
+    built.on_key(move |node| seen.borrow_mut().push(node));
+    let keys = built.document_keys();
+    let none = gtk::gdk::ModifierType::empty();
+    assert!(keys.press(gtk::gdk::Key::Left, none));
+    assert!(!keys.press(gtk::gdk::Key::Right, none));
+    assert!(keys.press(gtk::gdk::Key::Right, gtk::gdk::ModifierType::CONTROL_MASK));
+    assert_eq!(pressed.borrow().clone(), vec!["back", "skip"]);
+    let player = handed.borrow().clone().expect("the player was asked for");
+    assert_eq!(built.id_holding(&player).as_deref(), Some("track"));
+}
+
 fn main() {
     if adw::init().is_err() {
         eprintln!("controls: no display, nothing checked");
@@ -168,6 +238,14 @@ fn main() {
         (
             "a_canvas_asks_the_host_once_and_keeps_the_place_across_a_rebuild",
             a_canvas_asks_the_host_once_and_keeps_the_place_across_a_rebuild,
+        ),
+        (
+            "a_player_is_handed_the_media_node_so_its_end_can_be_reported",
+            a_player_is_handed_the_media_node_so_its_end_can_be_reported,
+        ),
+        (
+            "a_declared_key_reaches_the_plugin_without_a_control_and_the_player_is_found_by_its_widget",
+            a_declared_key_reaches_the_plugin_without_a_control_and_the_player_is_found_by_its_widget,
         ),
     ];
     for (name, check) in checks {

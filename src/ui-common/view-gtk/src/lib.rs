@@ -1,8 +1,9 @@
 use adw::prelude::*;
 use ic_view::{
     as_text, choice_index, is_truthy, resolve, resolve_text, visible, Chrome, Cond, Document, Fit,
-    InputVariant, InputVariant as Variant, MediaKind, Node, NodeKind, Scroll, State, Text,
+    InputVariant, InputVariant as Variant, Node, NodeKind, Scroll, State, Text,
 };
+use gtk::glib;
 use serde_json::Value;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
@@ -18,15 +19,141 @@ pub type PictureSource = Rc<dyn Fn(&str) -> Option<Vec<u8>>>;
 /// A path on this machine for something a player opens itself. A file on a
 /// server has to be copied first, and that too belongs to the host.
 pub type MediaSource = Rc<dyn Fn(&str) -> Option<String>>;
-/// The application's own player, for when it has one. It is handed the path,
-/// whether it is moving pictures, and whether to start playing; what comes
-/// back is the whole transport as a widget.
-///
-/// Without it a `media` node falls back to the toolkit's own player, which is
-/// a second decoder stack and on some desktops a slow one to start.
-pub type PlayerSource = Rc<dyn Fn(&str, MediaKind, bool) -> Option<gtk::Widget>>;
+/// The application's own player, handed the local path and the `media` node; without it the toolkit's player is used.
+pub type PlayerSource = Rc<dyn Fn(&str, &Node) -> Option<gtk::Widget>>;
 /// Answers with the widget a `canvas` node draws in, by the node's id.
 pub type CanvasSource = Rc<dyn Fn(&str) -> Option<gtk::Widget>>;
+
+/// A table the user can pick a row in. The rows are kept beside the widget
+/// because a selection answers with the row as the plugin wrote it, not with
+/// the strings the cells happen to show.
+#[derive(Clone)]
+struct TableView {
+    header: gtk::Box,
+    list: gtk::ListBox,
+    widths: Rc<RefCell<Vec<gtk::SizeGroup>>>,
+    rows: Rc<RefCell<Vec<Value>>>,
+}
+
+impl TableView {
+    fn selected_row(&self) -> Option<Value> {
+        let index = self.list.selected_row()?.index();
+        usize::try_from(index)
+            .ok()
+            .and_then(|at| self.rows.borrow().get(at).cloned())
+    }
+}
+
+/// A table whose rows hold rows. `ListBox` has no expanders, so this is the one
+/// control built on `ListView`: a `TreeListModel` makes the children, and a
+/// `TreeExpander` in front of each line draws the arrow and the indent.
+///
+/// Which rows are open is not kept here. The plugin says so in the data, and
+/// the renderer puts the arrows back where the data says after every refresh —
+/// the same rule as everything else on screen, and it survives a rebuild.
+#[derive(Clone)]
+struct TreeView {
+    header: gtk::Box,
+    view: gtk::ListView,
+    root: gtk::gio::ListStore,
+    rows: Rc<RefCell<Vec<Value>>>,
+    widths: Rc<RefCell<Vec<gtk::SizeGroup>>>,
+    /// Filled in by `on_expand` after the factory was already built, which is
+    /// why it is a slot rather than a plain field.
+    opening: Rc<RefCell<Option<Rc<dyn Fn(Value, bool)>>>>,
+    /// Held while the arrows are being put back from the data, so restoring
+    /// them is not reported as the user opening something.
+    restoring: Rc<std::cell::Cell<bool>>,
+    /// The child store built for each branch that has been opened. A refresh
+    /// puts new children into the branch already on screen through this, rather
+    /// than emptying the whole tree — which used to cost every row its
+    /// expansion and the reader their place in the list.
+    kids: Rc<RefCell<HashMap<String, gtk::gio::ListStore>>>,
+}
+
+/// One row of a tree, as the plugin wrote it.
+struct Held {
+    id: String,
+    row: Value,
+}
+
+/// What makes a row the same row across refreshes. The plugin's `path` when it
+/// has one: names repeat at every depth, so matching on a name alone would
+/// confuse two branches the moment they sit under different parents.
+fn identity(row: &Value, under: &str) -> String {
+    match row.get("path").and_then(Value::as_str) {
+        Some(path) => path.to_string(),
+        None => format!(
+            "{under}/{}",
+            row.get("name").and_then(Value::as_str).unwrap_or_default()
+        ),
+    }
+}
+
+fn boxed_row(id: String, row: Value) -> glib::BoxedAnyObject {
+    glib::BoxedAnyObject::new(Held { id, row })
+}
+
+fn held(item: &glib::Object) -> Option<Value> {
+    let row = item.downcast_ref::<gtk::TreeListRow>()?;
+    carried_in(&row.item()?)
+}
+
+fn carried_in(carried: &glib::Object) -> Option<Value> {
+    let boxed = carried.downcast_ref::<glib::BoxedAnyObject>()?;
+    let inside: std::cell::Ref<Held> = boxed.borrow();
+    Some(inside.row.clone())
+}
+
+fn id_in(carried: &glib::Object) -> Option<String> {
+    let boxed = carried.downcast_ref::<glib::BoxedAnyObject>()?;
+    let inside: std::cell::Ref<Held> = boxed.borrow();
+    Some(inside.id.clone())
+}
+
+/// Whether two versions of a row would draw the same cells. `children` and
+/// `expanded` are deliberately left out: they move the rows below, not the row
+/// itself, and rebinding for them is what threw the tree about.
+fn same_cells(before: &Value, after: &Value) -> bool {
+    let (Some(was), Some(now)) = (before.as_object(), after.as_object()) else {
+        return before == after;
+    };
+    let shown = |key: &str| key != "children" && key != "expanded";
+    let count = |map: &serde_json::Map<String, Value>| {
+        map.keys().filter(|key| shown(key)).count()
+    };
+    count(was) == count(now)
+        && was
+            .iter()
+            .filter(|(key, _)| shown(key))
+            .all(|(key, value)| now.get(key) == Some(value))
+}
+
+fn kids_of(value: &Value) -> Option<Vec<Value>> {
+    let listed = value.get("children")?.as_array()?;
+    Some(listed.clone())
+}
+
+/// Whether a row can be opened at all: either it already holds children, or it
+/// says it has some and is waiting to be asked.
+fn opens(value: &Value) -> bool {
+    value
+        .get("expandable")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        || kids_of(value).is_some_and(|kids| !kids.is_empty())
+}
+
+impl TreeView {
+    fn selection(&self) -> Option<gtk::SingleSelection> {
+        self.view.model()?.downcast::<gtk::SingleSelection>().ok()
+    }
+
+    fn selected_row(&self) -> Option<Value> {
+        let chosen = self.selection()?.selected_item()?;
+        held(&chosen)
+    }
+}
 
 #[derive(Clone)]
 enum Control {
@@ -38,7 +165,8 @@ enum Control {
     Choice(gtk::DropDown, Rc<Vec<Value>>),
     Label(gtk::Label),
     Multiline(gtk::TextView),
-    Table(gtk::Grid),
+    Table(TableView),
+    Tree(TreeView),
     Chart(
         gtk::DrawingArea,
         Rc<RefCell<Vec<ic_view::Series>>>,
@@ -79,7 +207,11 @@ pub struct BuiltView {
     playing: Vec<(String, gtk::Widget)>,
     canvases: Vec<(String, gtk::Widget)>,
     icons: Option<IconSource>,
+    keys: Vec<(String, String)>,
+    key_pressed: KeyPressed,
 }
+
+type KeyPressed = Rc<RefCell<Option<Rc<dyn Fn(String)>>>>;
 
 pub struct Renderer {
     translate: Translate,
@@ -167,6 +299,12 @@ impl Renderer {
             }),
             canvases: canvases_in(before),
             icons: self.icons.clone(),
+            keys: document
+                .keys
+                .iter()
+                .map(|key| (key.accel.to_lowercase(), key.node.clone()))
+                .collect(),
+            key_pressed: Rc::new(RefCell::new(None)),
         };
         let root = self.node(&document.form, document, state, &mut built);
         built.root = root;
@@ -223,6 +361,7 @@ impl Renderer {
             NodeKind::Choice => self.choice(node, state),
             NodeKind::Button => self.button(node, state),
             NodeKind::Table => self.table(node, state),
+            NodeKind::Tree => self.tree(node, state),
             NodeKind::Chart => self.chart(node, state),
             NodeKind::Image => self.picture(node, state),
             NodeKind::Media => self.player(node, state, built),
@@ -438,11 +577,7 @@ impl Renderer {
             return (held, Control::Plain);
         }
         // Playing belongs to whoever holds this view, not to a widget builder.
-        let Some(ours) = self
-            .player
-            .as_ref()
-            .and_then(|source| source(&local, node.media, node.autoplay))
-        else {
+        let Some(ours) = self.player.as_ref().and_then(|source| source(&local, node)) else {
             return (self.nothing_to_show(&named), Control::Plain);
         };
         (ours, Control::Plain)
@@ -537,6 +672,7 @@ impl Renderer {
                 entry.set_input_purpose(gtk::InputPurpose::Password);
             }
             Variant::Integer => entry.set_input_purpose(gtk::InputPurpose::Digits),
+            Variant::Hex => keep_to_hex(&entry),
             _ => {}
         }
         if secret && node.variant == InputVariant::Text {
@@ -698,17 +834,182 @@ impl Renderer {
         )
     }
 
-    fn table(&self, node: &Node, state: &State) -> (gtk::Widget, Control) {
-        let grid = gtk::Grid::builder()
-            .column_spacing(12)
-            .row_spacing(2)
+    fn tree(&self, node: &Node, state: &State) -> (gtk::Widget, Control) {
+        let header = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .spacing(12)
             .build();
-        // Without this a weightless grid pins its rows to the top and reads as misaligned.
-        if !node.weight.is_some_and(|weight| weight > 0) {
-            grid.set_valign(gtk::Align::Center);
+        let root = gtk::gio::ListStore::new::<glib::BoxedAnyObject>();
+        // Children are made on demand: a row that says it can open gets an
+        // empty store, so the arrow is there before the plugin has filled it.
+        let kids: Rc<RefCell<HashMap<String, gtk::gio::ListStore>>> =
+            Rc::new(RefCell::new(HashMap::new()));
+        let branches = {
+            let kids = kids.clone();
+            gtk::TreeListModel::new(root.clone(), false, false, move |item| {
+                let boxed = item.downcast_ref::<glib::BoxedAnyObject>()?;
+                let (id, value) = {
+                    let inside: std::cell::Ref<Held> = boxed.borrow();
+                    (inside.id.clone(), inside.row.clone())
+                };
+                if !opens(&value) {
+                    return None;
+                }
+                let store = gtk::gio::ListStore::new::<glib::BoxedAnyObject>();
+                for kid in kids_of(&value).unwrap_or_default() {
+                    let named = identity(&kid, &id);
+                    store.append(&boxed_row(named, kid));
+                }
+                kids.borrow_mut().insert(id, store.clone());
+                Some(store.upcast())
+            })
+        };
+        let selection = gtk::SingleSelection::builder()
+            .model(&branches)
+            .autoselect(false)
+            .can_unselect(true)
+            .build();
+
+        let widths: Rc<RefCell<Vec<gtk::SizeGroup>>> = Rc::new(RefCell::new(Vec::new()));
+        let opening: Rc<RefCell<Option<Rc<dyn Fn(Value, bool)>>>> = Rc::new(RefCell::new(None));
+        let restoring = Rc::new(std::cell::Cell::new(false));
+        // The expansion handler of each bound list item, kept beside the row it
+        // was connected to. Taking it off whatever `item.item()` holds at unbind
+        // time is how this crashed: list items are recycled, and by then that is
+        // a different row.
+        let watched: Rc<RefCell<HashMap<usize, (gtk::TreeListRow, glib::SignalHandlerId)>>> =
+            Rc::new(RefCell::new(HashMap::new()));
+        let factory = gtk::SignalListItemFactory::new();
+        factory.connect_setup(|_, item| {
+            let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+                return;
+            };
+            item.set_child(Some(&gtk::TreeExpander::new()));
+        });
+        {
+            let shape = node.clone();
+            let widths = widths.clone();
+            let told = opening.clone();
+            let quiet = restoring.clone();
+            let watched = watched.clone();
+            factory.connect_bind(move |_, item| {
+                let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+                    return;
+                };
+                let Some(expander) = item.child().and_downcast::<gtk::TreeExpander>() else {
+                    return;
+                };
+                let Some(row) = item.item().and_downcast::<gtk::TreeListRow>() else {
+                    return;
+                };
+                expander.set_list_row(Some(&row));
+                if let Some(value) = held(row.upcast_ref::<glib::Object>()) {
+                    expander.set_child(Some(&cells_of(&value, &shape, &widths.borrow())));
+                }
+                let told = told.clone();
+                let quiet = quiet.clone();
+                let watch = row.connect_expanded_notify(move |row| {
+                    if quiet.get() {
+                        return;
+                    }
+                    let Some(say) = told.borrow().clone() else {
+                        return;
+                    };
+                    let Some(value) = held(row.upcast_ref::<glib::Object>()) else {
+                        return;
+                    };
+                    let said = value
+                        .get("expanded")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    if said != row.is_expanded() {
+                        // Out of the click: the plugin answers by refilling this
+                        // very model, and tearing it down inside GTK's own
+                        // expansion bookkeeping is what crashed before.
+                        let open = row.is_expanded();
+                        glib::idle_add_local_once(move || say(value, open));
+                    }
+                });
+                let before = watched.borrow_mut().insert(item.as_ptr() as usize, (row, watch));
+                if let Some((was, old)) = before {
+                    was.disconnect(old);
+                }
+            });
         }
-        fill_table(&grid, node, state, &|key| (self.translate)(key));
-        (grid.clone().upcast(), Control::Table(grid))
+        {
+            let watched = watched.clone();
+            factory.connect_unbind(move |_, item| {
+                let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+                    return;
+                };
+                let gone = watched.borrow_mut().remove(&(item.as_ptr() as usize));
+                if let Some((row, watch)) = gone {
+                    row.disconnect(watch);
+                }
+            });
+        }
+
+        let view = gtk::ListView::builder()
+            .model(&selection)
+            .factory(&factory)
+            .single_click_activate(false)
+            .build();
+        let holder = gtk::ScrolledWindow::builder()
+            .child(&view)
+            .hexpand(true)
+            .vexpand(true)
+            .build();
+        let whole = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(2)
+            .build();
+        whole.append(&header);
+        whole.append(&holder);
+
+        let tree = TreeView {
+            header,
+            view,
+            root,
+            rows: Rc::new(RefCell::new(Vec::new())),
+            widths,
+            opening,
+            restoring,
+            kids,
+        };
+        fill_tree(&tree, node, state, &|key| (self.translate)(key));
+        (whole.upcast(), Control::Tree(tree))
+    }
+
+    fn table(&self, node: &Node, state: &State) -> (gtk::Widget, Control) {
+        let header = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .spacing(12)
+            .build();
+        let list = gtk::ListBox::builder()
+            .selection_mode(if picks_rows(node) {
+                gtk::SelectionMode::Single
+            } else {
+                gtk::SelectionMode::None
+            })
+            .build();
+        let root = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(2)
+            .build();
+        root.append(&header);
+        root.append(&list);
+        // Without this a weightless table pins its rows to the top and reads as misaligned.
+        if !node.weight.is_some_and(|weight| weight > 0) {
+            root.set_valign(gtk::Align::Center);
+        }
+        let table = TableView {
+            header,
+            list,
+            widths: Rc::new(RefCell::new(Vec::new())),
+            rows: Rc::new(RefCell::new(Vec::new())),
+        };
+        fill_table(&table, node, state, &|key| (self.translate)(key));
+        (root.upcast(), Control::Table(table))
     }
 }
 
@@ -780,42 +1081,278 @@ fn multiline_text(area: &gtk::TextView) -> String {
         .to_string()
 }
 
-fn fill_table(
-    grid: &gtk::Grid,
+/// What a `hex` input is allowed to hold. Spaces are kept so bytes can be
+/// grouped; everything else is dropped as it is typed or pasted.
+pub fn hex_only(text: &str) -> String {
+    text.chars()
+        .filter(|c| c.is_ascii_hexdigit() || *c == ' ')
+        .collect()
+}
+
+fn keep_to_hex(entry: &gtk::Entry) {
+    entry.add_css_class("monospace");
+    // Rewriting the text inside `changed` fires it again, so the guard stops
+    // the second pass rather than letting it chase its own tail.
+    let fixing = Rc::new(std::cell::Cell::new(false));
+    entry.clone().connect_changed(move |widget| {
+        if fixing.get() {
+            return;
+        }
+        let shown = widget.text().to_string();
+        let kept = hex_only(&shown);
+        if kept == shown {
+            return;
+        }
+        let at = widget.position();
+        fixing.set(true);
+        widget.set_text(&kept);
+        widget.set_position(at.min(kept.chars().count() as i32));
+        fixing.set(false);
+    });
+}
+
+/// Column headings shared by `table` and `tree`, each heading joined to the
+/// cells under it by a size group so the columns line up.
+/// One size group per column, shared by the heading and every cell under it, so
+/// the columns line up across rows that know nothing about each other.
+fn fill_headings(
+    header: &gtk::Box,
+    node: &Node,
+    widths: &mut Vec<gtk::SizeGroup>,
+    translate: &dyn Fn(&str) -> Option<String>,
+) {
+    if widths.len() != node.columns.len() {
+        *widths = node
+            .columns
+            .iter()
+            .map(|_| gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal))
+            .collect();
+    }
+    while let Some(child) = header.first_child() {
+        header.remove(&child);
+    }
+    let mut any = false;
+    for (column, spec) in node.columns.iter().enumerate() {
+        let heading = gtk::Label::builder()
+            .label(
+                spec.title
+                    .as_ref()
+                    .map(|title| title.resolve(translate))
+                    .unwrap_or_default(),
+            )
+            .xalign(0.0)
+            .ellipsize(gtk::pango::EllipsizeMode::End)
+            .max_width_chars(CELL_CHARS)
+            .build();
+        heading.add_css_class("heading");
+        if let Some(width) = spec.width {
+            heading.set_width_request(width as i32);
+        }
+        if let Some(group) = widths.get(column) {
+            group.add_widget(&heading);
+        }
+        any |= spec.title.is_some();
+        header.append(&heading);
+    }
+    header.set_visible(any);
+}
+
+/// How much room a cell may ask for. One long value used to widen its column —
+/// and with it the whole panel — past anything useful, so cells are cut with an
+/// ellipsis instead and the full text stays in the tooltip.
+const CELL_CHARS: i32 = 40;
+
+/// A row's cells, as one line. The tree indents this; the table does not.
+fn cells_of(row: &Value, node: &Node, widths: &[gtk::SizeGroup]) -> gtk::Box {
+    let line = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(12)
+        .build();
+    for (column, spec) in node.columns.iter().enumerate() {
+        let cell = row.get(&spec.key).map(as_text).unwrap_or_default();
+        let label = gtk::Label::builder()
+            .label(&cell)
+            .xalign(0.0)
+            .selectable(node.selectable)
+            .ellipsize(gtk::pango::EllipsizeMode::End)
+            .max_width_chars(CELL_CHARS)
+            .build();
+        if cell.chars().count() as i32 > CELL_CHARS {
+            label.set_tooltip_text(Some(&cell));
+        }
+        if let Some(width) = spec.width {
+            label.set_width_request(width as i32);
+        }
+        if let Some(group) = widths.get(column) {
+            group.add_widget(&label);
+        }
+        line.append(&label);
+    }
+    line
+}
+
+fn rows_in(node: &Node, state: &State) -> Vec<Value> {
+    node.rows_key
+        .as_ref()
+        .and_then(|key| state.data.get(key))
+        .and_then(|value| value.as_array().cloned())
+        .unwrap_or_default()
+}
+
+fn fill_tree(
+    tree: &TreeView,
     node: &Node,
     state: &State,
     translate: &dyn Fn(&str) -> Option<String>,
 ) {
-    while let Some(child) = grid.first_child() {
-        grid.remove(&child);
+    {
+        let mut widths = tree.widths.borrow_mut();
+        fill_headings(&tree.header, node, &mut widths, translate);
     }
-    for (column, spec) in node.columns.iter().enumerate() {
-        if let Some(title) = spec.title.as_ref() {
-            let heading = gtk::Label::builder()
-                .label(title.resolve(translate))
-                .xalign(0.0)
-                .build();
-            heading.add_css_class("heading");
-            grid.attach(&heading, column as i32, 0, 1, 1);
+    // Held across the whole update: putting arrows back is the host writing,
+    // not the user opening anything.
+    tree.restoring.set(true);
+    let rows = rows_in(node, state);
+    let mut still_there = std::collections::HashSet::new();
+    sync_level(&tree.root, &rows, "", &tree.kids, &mut still_there);
+    tree.kids
+        .borrow_mut()
+        .retain(|branch, _| still_there.contains(branch));
+    *tree.rows.borrow_mut() = rows;
+    open_what_the_data_says(tree);
+    tree.restoring.set(false);
+}
+
+/// Brings one level of the tree to what the data says, touching only what
+/// actually differs.
+///
+/// Rebuilding instead would be two lines, and it is what this used to do: every
+/// row destroyed and made again, so the arrows closed and the list jumped back
+/// to the top each time a branch was opened. Rows that are still there are left
+/// alone — the ones that disappeared go, the new ones are put in beside them,
+/// and a branch that is already open has its children brought up to date in the
+/// store it is already showing.
+fn sync_level(
+    store: &gtk::gio::ListStore,
+    rows: &[Value],
+    under: &str,
+    kids: &Rc<RefCell<HashMap<String, gtk::gio::ListStore>>>,
+    still_there: &mut std::collections::HashSet<String>,
+) {
+    let named: Vec<String> = rows.iter().map(|row| identity(row, under)).collect();
+    still_there.extend(named.iter().cloned());
+    let wanted: std::collections::HashSet<&str> =
+        named.iter().map(String::as_str).collect();
+
+    // Backwards, so the places of the rows not yet looked at keep their numbers.
+    for at in (0..store.n_items()).rev() {
+        let gone = store
+            .item(at)
+            .and_then(|carried| id_in(&carried))
+            .is_none_or(|id| !wanted.contains(id.as_str()));
+        if gone {
+            store.remove(at);
         }
     }
-    let rows = node
-        .rows_key
-        .as_ref()
-        .and_then(|key| state.data.get(key))
-        .and_then(|value| value.as_array().cloned())
-        .unwrap_or_default();
-    for (index, row) in rows.iter().enumerate() {
-        for (column, spec) in node.columns.iter().enumerate() {
-            let cell = row.get(&spec.key).map(as_text).unwrap_or_default();
-            let label = gtk::Label::builder()
-                .label(cell)
-                .xalign(0.0)
-                .selectable(node.selectable)
-                .build();
-            grid.attach(&label, column as i32, index as i32 + 1, 1, 1);
+
+    // What is left is in the same order as the data, so one pass settles it.
+    for (at, (row, id)) in rows.iter().zip(named.iter()).enumerate() {
+        let at = at as u32;
+        let standing = store
+            .item(at)
+            .and_then(|carried| id_in(&carried).map(|had| (carried, had)));
+        match standing {
+            Some((carried, had)) if had == *id => reseat(&carried, store, at, id, row),
+            _ => store.splice(at, 0, &[boxed_row(id.clone(), row.clone())]),
+        }
+        let opened = kids.borrow().get(id).cloned();
+        if let Some(opened) = opened {
+            let children = kids_of(row).unwrap_or_default();
+            sync_level(&opened, &children, id, kids, still_there);
         }
     }
+}
+
+/// Puts the newest version of a row into the one already on screen. Quietly
+/// when only its children or its arrow changed: saying so would have the list
+/// drop the row and build it again, taking the branch's open state with it.
+fn reseat(carried: &glib::Object, store: &gtk::gio::ListStore, at: u32, id: &str, row: &Value) {
+    let Some(boxed) = carried.downcast_ref::<glib::BoxedAnyObject>() else {
+        return;
+    };
+    let same = {
+        let inside: std::cell::Ref<Held> = boxed.borrow();
+        same_cells(&inside.row, row)
+    };
+    if same {
+        let mut inside: std::cell::RefMut<Held> = boxed.borrow_mut();
+        inside.row = row.clone();
+    } else {
+        store.splice(at, 1, &[boxed_row(id.to_string(), row.clone())]);
+    }
+}
+
+/// Puts the arrows back where the plugin says they belong. Walking the rows
+/// while expanding them is deliberate: opening one makes its children appear
+/// further down the same list, so the count grows as we go.
+fn open_what_the_data_says(tree: &TreeView) {
+    let Some(selection) = tree.selection() else {
+        return;
+    };
+    let Some(model) = selection.model() else {
+        return;
+    };
+    let mut at = 0;
+    while at < model.n_items() {
+        if let Some(row) = model.item(at).and_downcast::<gtk::TreeListRow>() {
+            let wants = row
+                .item()
+                .and_then(|carried| carried_in(&carried))
+                .and_then(|value| value.get("expanded").and_then(Value::as_bool))
+                .unwrap_or(false);
+            if wants != row.is_expanded() {
+                row.set_expanded(wants);
+            }
+        }
+        at += 1;
+    }
+}
+
+/// Whether a table answers back. A table nobody listens to stays as it was:
+/// plain cells, nothing to select, no row under the pointer lighting up.
+fn picks_rows(node: &Node) -> bool {
+    node.bind.is_some() || matches!(node.intent.as_ref(), Some(Cond::Fixed(ic_view::Intent::Emit { .. })))
+}
+
+fn fill_table(
+    table: &TableView,
+    node: &Node,
+    state: &State,
+    translate: &dyn Fn(&str) -> Option<String>,
+) {
+    {
+        let mut widths = table.widths.borrow_mut();
+        fill_headings(&table.header, node, &mut widths, translate);
+    }
+
+    while let Some(child) = table.list.first_child() {
+        table.list.remove(&child);
+    }
+    let rows = rows_in(node, state);
+    let interactive = picks_rows(node);
+    {
+        let widths = table.widths.borrow();
+        for row in &rows {
+            table.list.append(
+                &gtk::ListBoxRow::builder()
+                    .child(&cells_of(row, node, &widths))
+                    .activatable(interactive)
+                    .selectable(interactive)
+                    .build(),
+            );
+        }
+    }
+    *table.rows.borrow_mut() = rows;
 }
 
 fn select_index(node: &Node, current: &Value) -> u32 {
@@ -867,6 +1404,19 @@ fn bind_keys(built: &BuiltView) {
             bound.push((accel.to_lowercase(), button.clone()));
         }
     }
+    if !built.keys.is_empty() {
+        let pressing = built.document_keys();
+        // Bubble, so a focused slider or list inside the view keeps its arrows.
+        let controller = gtk::EventControllerKey::new();
+        controller.connect_key_pressed(move |_, key, _, state| {
+            if pressing.press(key, state) {
+                gtk::glib::Propagation::Stop
+            } else {
+                gtk::glib::Propagation::Proceed
+            }
+        });
+        built.root.add_controller(controller);
+    }
     if bound.is_empty() {
         return;
     }
@@ -889,6 +1439,41 @@ fn bind_keys(built: &BuiltView) {
         }
     });
     built.root.add_controller(keys);
+}
+
+/// The document's `keys`, pressable from outside the view, such as from the window holding it.
+#[derive(Clone)]
+pub struct DocumentKeys {
+    keys: Vec<(String, String)>,
+    handler: KeyPressed,
+    root: gtk::glib::WeakRef<gtk::Widget>,
+}
+
+impl DocumentKeys {
+    /// Hands the key's node to the `on_key` handler; false when the document did not declare it.
+    pub fn press(&self, key: gtk::gdk::Key, state: gtk::gdk::ModifierType) -> bool {
+        if self.keys.is_empty() {
+            return false;
+        }
+        if self
+            .root
+            .upgrade()
+            .is_some_and(|root| being_typed_into(&root))
+        {
+            return false;
+        }
+        let Some(pressed) = pressed_as_written(key, state) else {
+            return false;
+        };
+        let Some((_, node)) = self.keys.iter().find(|(named, _)| *named == pressed) else {
+            return false;
+        };
+        let Some(handler) = self.handler.borrow().clone() else {
+            return false;
+        };
+        handler(node.clone());
+        true
+    }
 }
 
 /// Whether the keyboard belongs to something the user is writing in.
@@ -1202,9 +1787,38 @@ fn write_control(bound: &Bound, value: &Value) -> bool {
                 }
             }
         }
-        Control::Plain | Control::Button(_) | Control::Table(_) | Control::Chart(_, _, _) => {
-            return false
+        Control::Table(table) => {
+            let wanted = table
+                .rows
+                .borrow()
+                .iter()
+                .position(|row| row == value || row.get("key").is_some_and(|key| key == value));
+            match wanted.and_then(|at| i32::try_from(at).ok()) {
+                Some(at) => table.list.select_row(table.list.row_at_index(at).as_ref()),
+                None => table.list.unselect_all(),
+            }
         }
+        Control::Tree(tree) => {
+            let Some(selection) = tree.selection() else {
+                return false;
+            };
+            // Walking the rows to find the one the host named: a tree has no
+            // index into the data, only the rows it is showing right now.
+            let mut at = 0;
+            let mut found = false;
+            while let Some(row) = selection.item(at) {
+                if held(&row).as_ref() == Some(value) {
+                    selection.set_selected(at);
+                    found = true;
+                    break;
+                }
+                at += 1;
+            }
+            if !found {
+                selection.set_selected(gtk::INVALID_LIST_POSITION);
+            }
+        }
+        Control::Plain | Control::Button(_) | Control::Chart(_, _, _) => return false,
     }
     true
 }
@@ -1302,10 +1916,30 @@ impl BuiltView {
                     handler(bind.clone(), number(widget.value()));
                 });
             }
+            Control::Table(table) => {
+                let table = table.clone();
+                table.list.clone().connect_selected_rows_changed(move |_| {
+                    if !note(&bind) {
+                        return;
+                    }
+                    handler(bind.clone(), table.selected_row().unwrap_or(Value::Null));
+                });
+            }
+            Control::Tree(tree) => {
+                let Some(selection) = tree.selection() else {
+                    return false;
+                };
+                let tree = tree.clone();
+                selection.connect_selected_item_notify(move |_| {
+                    if !note(&bind) {
+                        return;
+                    }
+                    handler(bind.clone(), tree.selected_row().unwrap_or(Value::Null));
+                });
+            }
             Control::Plain
             | Control::Button(_)
             | Control::Label(_)
-            | Control::Table(_)
             | Control::Chart(_, _, _) => return false,
         }
         true
@@ -1335,8 +1969,54 @@ impl BuiltView {
                     .connect_activate(move |_| handler(owned.clone()));
                 true
             }
+            Control::Table(table) => {
+                table
+                    .list
+                    .clone()
+                    .connect_row_activated(move |_, _| handler(owned.clone()));
+                true
+            }
+            Control::Tree(tree) => {
+                tree.view
+                    .clone()
+                    .connect_activate(move |_, _| handler(owned.clone()));
+                true
+            }
             _ => false,
         }
+    }
+
+    /// A row of a tree was opened or closed. Answers false for anything that
+    /// is not a tree, so the caller can offer it to every node it watches.
+    pub fn on_expand(&self, id: &str, handler: impl Fn(Value, bool) + 'static) -> bool {
+        let Some(bound) = self.slot(id) else {
+            return false;
+        };
+        let Control::Tree(tree) = &bound.control else {
+            return false;
+        };
+        *tree.opening.borrow_mut() = Some(Rc::new(handler));
+        true
+    }
+
+    pub fn on_key(&self, handler: impl Fn(String) + 'static) {
+        *self.key_pressed.borrow_mut() = Some(Rc::new(handler));
+    }
+
+    pub fn document_keys(&self) -> DocumentKeys {
+        DocumentKeys {
+            keys: self.keys.clone(),
+            handler: self.key_pressed.clone(),
+            root: self.root.downgrade(),
+        }
+    }
+
+    /// The id of the node a widget handed out by the `PlayerSource` stands for in this build.
+    pub fn id_holding(&self, widget: &gtk::Widget) -> Option<String> {
+        self.bound
+            .iter()
+            .find(|held| held.frame == *widget)
+            .and_then(|held| held.node.id.clone())
     }
 
     pub fn on_action(&self, id: &str, handler: impl Fn(String) + 'static) -> bool {
@@ -1423,7 +2103,12 @@ impl BuiltView {
                         text(bound.node.role.as_ref()).as_deref(),
                     );
                 }
-                Control::Table(grid) => fill_table(grid, &bound.node, state, &|key| translate(key)),
+                Control::Table(table) => {
+                    fill_table(table, &bound.node, state, &|key| translate(key))
+                }
+                Control::Tree(tree) => {
+                    fill_tree(tree, &bound.node, state, &|key| translate(key))
+                }
                 Control::Chart(area, samples, caption) => {
                     if let Some(key) = bound.node.series_key.as_deref() {
                         *samples.borrow_mut() = ic_view::series_of(state, key);
@@ -1494,11 +2179,9 @@ fn read_control(control: &Control) -> Option<Value> {
                 .unwrap_or(Value::Null),
         ),
         Control::Slider(scale, _) => Some(number(scale.value())),
-        Control::Plain
-        | Control::Label(_)
-        | Control::Button(_)
-        | Control::Table(_)
-        | Control::Chart(_, _, _) => None,
+        Control::Table(table) => table.selected_row(),
+        Control::Tree(tree) => tree.selected_row(),
+        Control::Plain | Control::Label(_) | Control::Button(_) | Control::Chart(_, _, _) => None,
     }
 }
 
@@ -1517,5 +2200,151 @@ impl ic_view_session::ViewSurface for BuiltView {
 
     fn refresh(&self, state: &State) {
         BuiltView::refresh(self, state);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::hex_only;
+
+    #[test]
+    fn a_hex_field_keeps_digits_and_the_spaces_that_group_them() {
+        assert_eq!(hex_only("00 1f ff"), "00 1f ff");
+        assert_eq!(hex_only("DEADbeef"), "DEADbeef");
+    }
+
+    #[test]
+    fn a_hex_field_drops_everything_that_is_not_hex() {
+        assert_eq!(hex_only("0x1f"), "01f");
+        assert_eq!(hex_only("zz"), "");
+        assert_eq!(hex_only("00-1f"), "001f");
+        assert_eq!(hex_only("ф0"), "0");
+        assert_eq!(hex_only("00\n1f\t2a"), "001f2a");
+    }
+}
+
+#[cfg(test)]
+mod tree_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn branch(name: &str, children: Value) -> Value {
+        json!({ "name": name, "path": name, "expandable": true, "children": children })
+    }
+
+    fn store_of(rows: &[Value]) -> (gtk::gio::ListStore, Rc<RefCell<HashMap<String, gtk::gio::ListStore>>>) {
+        let store = gtk::gio::ListStore::new::<glib::BoxedAnyObject>();
+        let kids = Rc::new(RefCell::new(HashMap::new()));
+        let mut seen = std::collections::HashSet::new();
+        sync_level(&store, rows, "", &kids, &mut seen);
+        (store, kids)
+    }
+
+    fn names_in(store: &gtk::gio::ListStore) -> Vec<String> {
+        (0..store.n_items())
+            .filter_map(|at| store.item(at).and_then(|held| id_in(&held)))
+            .collect()
+    }
+
+    fn marks(store: &gtk::gio::ListStore) -> Vec<usize> {
+        (0..store.n_items())
+            .filter_map(|at| store.item(at).map(|held| held.as_ptr() as usize))
+            .collect()
+    }
+
+    #[test]
+    fn a_level_that_did_not_change_keeps_the_very_same_rows() {
+        let rows = vec![branch("HKLM", json!([])), branch("HKCU", json!([]))];
+        let (store, kids) = store_of(&rows);
+        let before = marks(&store);
+
+        let mut seen = std::collections::HashSet::new();
+        sync_level(&store, &rows, "", &kids, &mut seen);
+
+        assert_eq!(marks(&store), before, "rows were rebuilt for nothing");
+    }
+
+    #[test]
+    fn opening_a_branch_leaves_every_row_above_it_alone() {
+        let rows = vec![branch("HKLM", json!([])), branch("HKCU", json!([]))];
+        let (store, kids) = store_of(&rows);
+        let before = marks(&store);
+
+        // What the tree model does when the arrow is first worked.
+        let under = gtk::gio::ListStore::new::<glib::BoxedAnyObject>();
+        kids.borrow_mut().insert("HKLM".to_string(), under.clone());
+
+        let opened = vec![
+            branch("HKLM", json!([branch("SOFTWARE", json!([]))])),
+            branch("HKCU", json!([])),
+        ];
+        let mut seen = std::collections::HashSet::new();
+        sync_level(&store, &opened, "", &kids, &mut seen);
+
+        assert_eq!(marks(&store), before, "the top level was rebuilt");
+        assert_eq!(names_in(&under), vec!["SOFTWARE".to_string()]);
+    }
+
+    #[test]
+    fn a_row_that_went_away_goes_and_a_new_one_arrives_in_its_place() {
+        let rows = vec![
+            branch("a", json!([])),
+            branch("b", json!([])),
+            branch("c", json!([])),
+        ];
+        let (store, kids) = store_of(&rows);
+        let kept = store.item(0).map(|held| held.as_ptr() as usize);
+
+        let next = vec![
+            branch("a", json!([])),
+            branch("b2", json!([])),
+            branch("c", json!([])),
+        ];
+        let mut seen = std::collections::HashSet::new();
+        sync_level(&store, &next, "", &kids, &mut seen);
+
+        assert_eq!(names_in(&store), vec!["a", "b2", "c"]);
+        assert_eq!(store.item(0).map(|held| held.as_ptr() as usize), kept);
+    }
+
+    #[test]
+    fn a_renamed_cell_is_redrawn_while_a_new_arrow_state_is_not() {
+        let rows = vec![branch("one", json!([]))];
+        let (store, kids) = store_of(&rows);
+        let before = marks(&store);
+
+        let mut arrow = branch("one", json!([]));
+        arrow["expanded"] = json!(true);
+        let mut seen = std::collections::HashSet::new();
+        sync_level(&store, &[arrow], "", &kids, &mut seen);
+        assert_eq!(marks(&store), before, "an arrow must not redraw the row");
+
+        let mut shown = branch("one", json!([]));
+        shown["name"] = json!("ONE");
+        let mut seen = std::collections::HashSet::new();
+        sync_level(&store, &[shown], "", &kids, &mut seen);
+        assert_ne!(marks(&store), before, "a changed cell must be redrawn");
+    }
+
+    #[test]
+    fn branches_nobody_is_showing_any_more_are_forgotten() {
+        let rows = vec![branch("HKLM", json!([]))];
+        let (store, kids) = store_of(&rows);
+        kids.borrow_mut().insert(
+            "HKLM".to_string(),
+            gtk::gio::ListStore::new::<glib::BoxedAnyObject>(),
+        );
+
+        let mut seen = std::collections::HashSet::new();
+        sync_level(&store, &[branch("HKCU", json!([]))], "", &kids, &mut seen);
+        kids.borrow_mut().retain(|branch, _| seen.contains(branch));
+
+        assert!(!kids.borrow().contains_key("HKLM"));
+    }
+
+    #[test]
+    fn two_branches_sharing_a_name_under_different_parents_stay_apart() {
+        let kid = json!({ "name": "Run", "expandable": true, "children": [] });
+        assert_ne!(identity(&kid, "HKLM"), identity(&kid, "HKCU"));
     }
 }

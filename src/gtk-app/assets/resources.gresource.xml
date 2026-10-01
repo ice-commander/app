@@ -34,7 +34,6 @@
     <file compressed="true" preprocess="xml-stripblanks">prev.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">paste.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">refresh.svg</file>
-    <file compressed="true" preprocess="xml-stripblanks">registry.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">print.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">edit-property.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">cellular-network.svg</file>

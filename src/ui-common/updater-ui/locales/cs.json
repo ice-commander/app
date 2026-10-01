@@ -19,5 +19,7 @@
   "updater.up_to_date_body_2": "Verze",
   "updater.up_to_date_body_3": "je nejnovější.",
   "updater.up_to_date_title": "Aktuální",
-  "updater.whats_new": "Co je nového:"
+  "updater.whats_new": "Co je nového:",
+  "updater.plugins_title": "Zásuvné moduly aktualizovány",
+  "updater.plugins_body": "Byly staženy nové verze zásuvných modulů, projeví se po restartu:"
 }

@@ -9,7 +9,7 @@ Note that `.cargo/config.toml` sets `target-dir = "bin/target"` — build output
 `bin/target`, not `./target`.
 
 This repository builds the application only. The plugins are built from their own
-repositories, and a release packaged from here carries none of them yet.
+repositories, and a release packaged from here carries none of them.
 
 ## Linux
 
@@ -45,8 +45,7 @@ cargo build --release -p webserver-app         # webserver application
 
 The ALSA headers are for sound, which only the desktop binary has. The two headless
 binaries need neither GTK nor ALSA — build them with `-p console-app` / `-p webserver-app`
-and none of it is pulled in. Nothing here is needed for video: the application does not
-decode it, see [Video](#video-libmpv-for-the-plugin) below.
+and none of it is pulled in.
 
 ## macOS
 
@@ -68,9 +67,8 @@ npm run build-distr-osx
 ```
 
 That builds the web UI, produces the bundle, copies and compiles the GTK GSettings schemas
-into it, rewrites the dynamic library paths with `dylibbundler`, adds `libpdfium.dylib`
-from `artifacts/` and signs the result ad-hoc. `builder/osx.sh` wraps the same steps and
-also produces a `.dmg`.
+into it, rewrites the dynamic library paths with `dylibbundler` and signs the result ad-hoc.
+`builder/osx.sh` wraps the same steps and also produces a `.dmg`.
 
 Note that `.cargo/config.toml` adds Swift runtime rpaths for both `aarch64-apple-darwin`
 and `x86_64-apple-darwin`, pointing at the Command Line Tools and Xcode toolchain
@@ -90,40 +88,6 @@ cargo build --release -p ice-commander-gtk
 ```
 
 Use the `x86_64-pc-windows-gnu` Rust target. MSVC is not what the release builds use.
-
-## Video (libmpv for the plugin)
-
-The application plays no video and links nothing that decodes it. Video is the video
-plugin's, built from its own repository, and the LGPL libmpv it carries is the same
-component on Linux, macOS and Windows.
-
-The macOS copy of that library is built by a script that still lives **in this
-repository**. It builds nothing the application itself needs — it produces
-`artifacts/lgpl-media`, the macOS libmpv the plugin is shipped with:
-
-```sh
-brew install meson ninja nasm pkg-config libplacebo dav1d libass little-cms2
-./builder/build_libmpv_ffmpeg_lgpl.sh      # -> artifacts/lgpl-media
-```
-
-The Linux copy is built by `docker-libmpv-multibuild`, and Windows uses a prebuilt LGPL
-`libmpv-2.dll`. Both are decode-only: mpv with `-Dgpl=false`, FFmpeg without
-`--enable-gpl`.
-
-## PDF support
-
-PDF rendering uses PDFium, which is **not** built from this repository and is **not** in
-it — `artifacts/` is gitignored. Place a prebuilt library there before building the
-desktop application:
-
-| Platform | File                                    |
-| -------- | --------------------------------------- |
-| Linux    | `artifacts/libpdfium.so`                |
-| macOS    | `artifacts/libpdfium.dylib`             |
-| Windows  | `artifacts/gtk4-win32-x64/…/pdfium.dll` |
-
-Prebuilt binaries are published by the `pdfium-binaries` project. Without it the
-application still builds; opening a PDF fails at runtime.
 
 ## Web interface
 

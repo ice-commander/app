@@ -71,6 +71,19 @@ struct OpenView {
 
 thread_local! {
     static OPEN: RefCell<HashMap<String, OpenView>> = RefCell::new(HashMap::new());
+    /// Where a document asking for `surface: panel` is put, and how to leave it
+    /// again. Set by whichever panel's toolbar was last pressed, the same way
+    /// the panel-source opener is.
+    static PANEL_HOST: RefCell<Option<PanelHost>> = const { RefCell::new(None) };
+    /// What to show again when a view embedded in a panel closes itself.
+    static RESTORE: RefCell<HashMap<String, Rc<dyn Fn()>>> = RefCell::new(HashMap::new());
+}
+
+/// Hands a built view to a panel and answers with how to put the panel back.
+pub type PanelHost = Rc<dyn Fn(&str, &gtk::Widget) -> Option<Rc<dyn Fn()>>>;
+
+pub fn set_panel_host(host: PanelHost) {
+    PANEL_HOST.with(|slot| *slot.borrow_mut() = Some(host));
 }
 
 pub(crate) fn facts() -> HostFacts {
@@ -126,11 +139,36 @@ fn renderer_for(
                 .into_owned()
         })
     });
-    let player: ic_view_gtk::PlayerSource = Rc::new(|at: &str, kind, autoplay| {
-        // Sound is ours to play; moving pictures are left to the toolkit until
-        // there is a plugin that does them better.
-        (kind == ic_view::MediaKind::Audio).then(|| crate::media_widget::sound(at, autoplay))
-    });
+    let player: ic_view_gtk::PlayerSource = {
+        let slot = viewer_slot(viewer, instance);
+        Rc::new(move |at: &str, node: &ic_view::Node| {
+            // Sound is ours to play; moving pictures are left to the toolkit until
+            // there is a plugin that does them better.
+            if node.media != ic_view::MediaKind::Audio {
+                return None;
+            }
+            let slot = slot.clone();
+            let shown: Rc<RefCell<Option<gtk::glib::WeakRef<gtk::Widget>>>> = Rc::default();
+            let finding = shown.clone();
+            let ended: Rc<dyn Fn()> = Rc::new(move || {
+                // At fire time: the widget moves across rebuilds, under whatever id the node has now.
+                let playing = finding.borrow().as_ref().and_then(|held| held.upgrade());
+                let named = playing.and_then(|widget| {
+                    OPEN.with(|open| open.borrow().get(&slot)?.built.id_holding(&widget))
+                });
+                send(
+                    &slot,
+                    ic_plugin_api::IC_EVENT_ENDED,
+                    named.as_deref(),
+                    None,
+                    None,
+                )
+            });
+            let widget = crate::media_widget::sound(at, node.autoplay, ended);
+            *shown.borrow_mut() = Some(widget.downgrade());
+            Some(widget)
+        })
+    };
     let canvas: ic_view_gtk::CanvasSource = {
         let viewer = viewer.to_string();
         Rc::new(move |_named: &str| crate::plugin_canvas::place(&viewer, instance))
@@ -338,7 +376,7 @@ pub fn embed_viewer(viewer: &str, source: ic_plugin_api::IcFsSource, path: &str)
         .build();
     frame.append(&built.root);
 
-    let slot = format!("viewer:{viewer}:{instance}");
+    let slot = viewer_slot(viewer, instance);
     keep_answered(
         &slot,
         viewer,
@@ -350,6 +388,7 @@ pub fn embed_viewer(viewer: &str, source: ic_plugin_api::IcFsSource, path: &str)
     send(&slot, "opened", None, None, None);
     tick(&slot, every);
     hide_while_still(&slot, &frame);
+    keys_from_window(&slot, &frame);
 
     let closing = slot.clone();
     let named = viewer.to_string();
@@ -391,6 +430,54 @@ pub struct Shown {
     pub close: Box<dyn Fn()>,
     /// The window is about to go: may it?
     pub may_close: Box<dyn Fn() -> bool>,
+}
+
+/// Document `keys` from anywhere in the window, as the old video window had them: focus need not be inside the view.
+fn document_keys(slot: &str, shown: impl Fn() -> bool + 'static) -> gtk::EventControllerKey {
+    let controller = gtk::EventControllerKey::new();
+    let slot = slot.to_string();
+    controller.connect_key_pressed(move |_, key, _, state| {
+        if !shown() {
+            return gtk::glib::Propagation::Proceed;
+        }
+        // Cloned out first: the handler sends, and sending borrows OPEN again.
+        let keys = OPEN.with(|open| Some(open.borrow().get(&slot)?.built.document_keys()));
+        if keys.is_some_and(|keys| keys.press(key, state)) {
+            gtk::glib::Propagation::Stop
+        } else {
+            gtk::glib::Propagation::Proceed
+        }
+    });
+    controller
+}
+
+fn keys_from_window(slot: &str, frame: &gtk::Box) {
+    let held: Rc<RefCell<Option<(gtk::Window, gtk::EventControllerKey)>>> = Rc::default();
+    let attaching = held.clone();
+    let slot = slot.to_string();
+    frame.connect_realize(move |frame| {
+        let Some(window) = frame.root().and_downcast::<gtk::Window>() else {
+            return;
+        };
+        // A tab in the background stays realized but unmapped, and must not take the window's keys.
+        let showing = frame.downgrade();
+        let controller = document_keys(&slot, move || {
+            showing.upgrade().is_some_and(|frame| frame.is_mapped())
+        });
+        window.add_controller(controller.clone());
+        if let Some((window, gone)) = attaching.replace(Some((window, controller))) {
+            window.remove_controller(&gone);
+        }
+    });
+    frame.connect_unrealize(move |_| {
+        if let Some((window, controller)) = held.take() {
+            window.remove_controller(&controller);
+        }
+    });
+}
+
+fn viewer_slot(viewer: &str, instance: u64) -> String {
+    format!("viewer:{viewer}:{instance}")
 }
 
 /// One number per window, so a plugin showing two files at once can tell them
@@ -444,6 +531,21 @@ fn open(parent: &gtk::Window, id: &str, argument: &str) {
     let Some(document) = ic_plugin_host::describe_view(id, &context) else {
         return;
     };
+    // A document that asks for the panel is embedded there instead of being
+    // given a window of its own. `embed` describes it a second time, which the
+    // plugin answers from memory; the alternative is duplicating all of it here.
+    if document.form.surface == ic_view::Surface::Panel {
+        if let Some(host) = PANEL_HOST.with(|slot| slot.borrow().clone()) {
+            let slot = format!("embedded:{id}");
+            if let Some(shown) = embed(id, argument) {
+                if let Some(back) = host(&slot, &shown) {
+                    RESTORE.with(|held| held.borrow_mut().insert(slot, back));
+                }
+                return;
+            }
+        }
+    }
+
     let session = Session::open(id, document, argument, &facts);
     let built = renderer().build(&session.document, &session.state);
     let named = ic_plugin_host::view_title(id).unwrap_or_default();
@@ -477,6 +579,7 @@ fn open(parent: &gtk::Window, id: &str, argument: &str) {
     });
 
     tick(id, session.document.form.refresh_ms);
+    window.add_controller(document_keys(id, || true));
 
     keep(id, id, Holder::Window(window.clone()), built, session);
     window.present();
@@ -583,6 +686,20 @@ fn follow(id: &str, built: &ic_view_gtk::BuiltView, applying: &Applying) {
 }
 
 fn wire(id: &str, built: &ic_view_gtk::BuiltView, watched: Vec<Watch>, applying: &Applying) {
+    let pressing = id.to_string();
+    let held = applying.clone();
+    built.on_key(move |node| {
+        if held.is_set() {
+            return;
+        }
+        send(
+            &pressing,
+            ic_plugin_api::IC_EVENT_ACTIVATE,
+            Some(&node),
+            None,
+            None,
+        );
+    });
     for watch in watched {
         let view = id.to_string();
         let target = watch.node.clone();
@@ -603,6 +720,22 @@ fn wire(id: &str, built: &ic_view_gtk::BuiltView, watched: Vec<Watch>, applying:
                 send(&view, "activate", Some(&target), None, None);
             });
         }
+        // Only a tree answers this; everything else turns it down.
+        let opened = id.to_string();
+        let branch = watch.node.clone();
+        let held = applying.clone();
+        built.on_expand(&watch.node, move |row, open| {
+            if held.is_set() {
+                return;
+            }
+            send(
+                &opened,
+                if open { "expand" } else { "collapse" },
+                Some(&branch),
+                None,
+                Some(row),
+            );
+        });
     }
 }
 
@@ -680,6 +813,16 @@ fn send(id: &str, kind: &str, node: Option<&str>, bind: Option<&str>, value: Opt
         );
         if let Some(window) = window {
             window.close();
+        }
+        // One embedded in a panel has no window to close: the panel goes back
+        // to whatever it was showing, and the view goes with it. `id` here is
+        // the slot, which is not the view's own name on the embedded path.
+        if let Some(back) = RESTORE.with(|held| held.borrow_mut().remove(id)) {
+            back();
+            let named = OPEN.with(|open| open.borrow_mut().remove(id).map(|held| held.view));
+            if let Some(view) = named {
+                ic_plugin_host::view_closed(&view, 1);
+            }
         }
     }
 }

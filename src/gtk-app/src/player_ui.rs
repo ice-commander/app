@@ -187,25 +187,13 @@ impl AudioPlayerView {
             }
             let p = &view_timer_clone.player;
             // Run out, not merely paused: pausing must not jump to the next track.
-            if p.is_finished() && !p.current_title().is_empty() {
-                if let Some(idx) = p.current_idx() {
-                    let playlist = p.playlist();
-                    if idx + 1 < playlist.len() {
-                        view_timer_clone.play_track_at(idx + 1);
-                    } else {
-                        p.stop();
-                        view_timer_clone
-                            .play_btn
-                            .set_child(Some(&gtk::Image::from_resource(
-                                "/com/icecommander/gtk/play.svg",
-                            )));
-                        view_timer_clone
-                            .title_label
-                            .set_text(&*crate::i18n::tr("player.playback_finished"));
-                        if let Some(ref cb) = *view_timer_clone.on_hide.borrow() {
-                            cb();
-                        }
-                    }
+            if let Some(idx) = p
+                .current_idx()
+                .filter(|_| p.is_finished() && !p.current_title().is_empty())
+            {
+                let playlist = p.playlist();
+                if idx + 1 < playlist.len() {
+                    view_timer_clone.play_track_at(idx + 1);
                 } else {
                     p.stop();
                     view_timer_clone

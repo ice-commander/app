@@ -472,6 +472,7 @@ mod tests {
             list_rows: None,
             action_state: None,
             cell_clicked: None,
+            set_permissions: None,
         };
         let lease = fm_core::plugin_fs::lease_registry_for_test();
         let declared = std::ffi::CString::new(extensions).unwrap();

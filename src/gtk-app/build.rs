@@ -38,31 +38,4 @@ fn main() {
 
         res.compile().expect("Failed to compile Windows resources");
     }
-
-    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-    let src_lib_path = if target_os == "windows" {
-        std::path::PathBuf::from("../../artifacts/gtk4-win32-x64/pdfium.dll")
-    } else if target_os == "macos" {
-        std::path::PathBuf::from("../../artifacts/libpdfium.dylib")
-    } else {
-        std::path::PathBuf::from("../../artifacts/libpdfium.so")
-    };
-
-    if src_lib_path.exists() {
-        let out_dir = std::env::var("OUT_DIR").unwrap();
-        let out_path = std::path::Path::new(&out_dir);
-        if let Some(target_dir) = out_path.ancestors().nth(4) {
-            let dest_filename = if target_os == "windows" {
-                "pdfium.dll"
-            } else if target_os == "macos" {
-                "libpdfium.dylib"
-            } else {
-                "libpdfium.so"
-            };
-            let _ = std::fs::copy(&src_lib_path, target_dir.join(dest_filename));
-            if let Some(deps_dir) = out_path.ancestors().nth(3) {
-                let _ = std::fs::copy(&src_lib_path, deps_dir.join(dest_filename));
-            }
-        }
-    }
 }

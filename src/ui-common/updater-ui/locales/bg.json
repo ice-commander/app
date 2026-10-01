@@ -19,5 +19,7 @@
   "updater.up_to_date_body_2": "Версия",
   "updater.up_to_date_body_3": "е най-новата.",
   "updater.up_to_date_title": "Актуален софтуер",
-  "updater.whats_new": "Какво ново:"
+  "updater.whats_new": "Какво ново:",
+  "updater.plugins_title": "Приставките са обновени",
+  "updater.plugins_body": "Изтеглени са нови версии на приставките, те ще влязат в сила след рестартиране:"
 }
