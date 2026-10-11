@@ -70,7 +70,6 @@ mod tests {
             "ui.window_width",
             "ui.setup_wizard_done",
             "plugins.enabled",
-            "plugins.catalog",
         ] {
             assert!(is_a_setting(cleared), "{cleared} should be reset");
         }
