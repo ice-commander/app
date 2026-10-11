@@ -1,6 +1,6 @@
 [package]
 name = "webserver-app"
-version = "0.8.130"
+version = "0.8.133"
 edition = "2021"
 publish = false
 description = "Ice Commander Web Server - Headless Dual-Pane File Manager (browser is the client)"

@@ -577,6 +577,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_local_disk_allows_a_terminal_and_leaves_the_shell_to_the_application() {
+        use fm_core::rpc::FileSystemRpc;
+        let local = LocalFileSystemRpc::new(client_config::AppConfig::new(
+            "ice-commander-local-terminal-probe",
+        ));
+        assert!(local.supports_terminal());
+        assert!(
+            !local.carries_shell(),
+            "F9 on a local panel would ask the disk for a shell it has not got"
+        );
+    }
+
+    #[test]
     fn valid_date_returns_nonzero_timestamp() {
         let ts = parse_date_str("2024-01-15 10:30:00");
         assert!(ts > 0, "expected nonzero timestamp, got {}", ts);

@@ -1060,6 +1060,10 @@ impl crate::rpc::FileSystemRpc for PluginFsRpc {
         }
     }
 
+    fn carries_shell(&self) -> bool {
+        self.supports_terminal()
+    }
+
     fn open_shell(
         &self,
         cwd: &str,

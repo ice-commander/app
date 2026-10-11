@@ -220,6 +220,9 @@ impl FileSystemRpc for RoutingProvider {
     fn supports_terminal(&self) -> bool {
         self.provider.supports_terminal()
     }
+    fn carries_shell(&self) -> bool {
+        self.provider.carries_shell()
+    }
     fn open_shell(
         &self,
         cwd: &str,
@@ -227,5 +230,45 @@ impl FileSystemRpc for RoutingProvider {
         cols: u16,
     ) -> Option<ic_platform::terminal::PtySession> {
         self.provider.open_shell(cwd, rows, cols)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A filesystem with a shell of its own, the way SFTP and Node In Net are.
+    struct Shelled;
+    #[async_trait::async_trait(?Send)]
+    impl FileSystemRpc for Shelled {
+        fn supports_terminal(&self) -> bool {
+            true
+        }
+        fn carries_shell(&self) -> bool {
+            true
+        }
+    }
+
+    /// A filesystem that allows a terminal and leaves the shell to the application, the way the local disk does.
+    struct Allowed;
+    #[async_trait::async_trait(?Send)]
+    impl FileSystemRpc for Allowed {
+        fn supports_terminal(&self) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn whether_the_shell_is_the_filesystems_own_passes_through_the_router() {
+        let routed =
+            |fs: Rc<dyn FileSystemRpc>| RoutingProvider::from_parts(fs, "/".into(), String::new());
+        let shelled = routed(Rc::new(Shelled));
+        assert!(shelled.supports_terminal() && shelled.carries_shell());
+        let allowed = routed(Rc::new(Allowed));
+        assert!(allowed.supports_terminal());
+        assert!(
+            !allowed.carries_shell(),
+            "F9 here starts the user's shell, not the filesystem's"
+        );
     }
 }

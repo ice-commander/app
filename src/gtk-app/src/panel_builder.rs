@@ -1333,7 +1333,7 @@ fn build_bottom_pane(
             };
             let provider = router.state.active_provider();
             // Asking, not opening: a trial open started a second shell on the far side.
-            if provider.supports_terminal() {
+            if provider.carries_shell() {
                 let opener = provider.clone();
                 let where_from = cwd.clone();
                 term_view.start_session_with(std::rc::Rc::new(move || {
