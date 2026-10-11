@@ -522,6 +522,11 @@ impl LocalFileSystemRpc {
                         })
                         .and_then(|pb| pb.save_to_bufferv("png", &[]).ok())
                         .unwrap_or_default()
+                } else if ext == "svg" {
+                    std::fs::read(&path_decode)
+                        .ok()
+                        .and_then(|svg| ic_svg_gtk::thumbnail_png(&svg, 256))
+                        .unwrap_or_default()
                 } else {
                     gtk::gdk_pixbuf::Pixbuf::from_file_at_scale(&path_decode, 256, 256, true)
                         .ok()

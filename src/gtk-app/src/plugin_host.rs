@@ -1,40 +1,17 @@
 pub use ic_plugin_host::*;
 
+// A plugin's icons are SVG text: drawn and kept by the one SVG renderer the application has.
+
 pub fn image_from_svg(svg: &[u8]) -> Option<gtk::Image> {
     image_from_svg_at(svg, 24)
 }
 
 pub fn texture_from_svg(svg: &[u8], size: u32) -> Option<gtk::gdk::Texture> {
-    let bytes = gtk::glib::Bytes::from(svg);
-    let stream = gtk::gio::MemoryInputStream::from_bytes(&bytes);
-    let side = size.max(1) as i32;
-    let pixbuf = gtk::gdk_pixbuf::Pixbuf::from_stream_at_scale(
-        &stream,
-        side,
-        side,
-        true,
-        None::<&gtk::gio::Cancellable>,
-    )
-    .ok()?;
-    Some(gtk::gdk::Texture::for_pixbuf(&pixbuf))
+    ic_svg_gtk::icon(svg, size)
 }
 
 pub fn image_from_svg_at(svg: &[u8], size: u32) -> Option<gtk::Image> {
-    let bytes = gtk::glib::Bytes::from(svg);
-    let stream = gtk::gio::MemoryInputStream::from_bytes(&bytes);
-    let side = size.max(1) as i32;
-    let pixbuf = gtk::gdk_pixbuf::Pixbuf::from_stream_at_scale(
-        &stream,
-        side,
-        side,
-        true,
-        None::<&gtk::gio::Cancellable>,
-    )
-    .ok()?;
-    let texture = gtk::gdk::Texture::for_pixbuf(&pixbuf);
-    let image = gtk::Image::from_paintable(Some(&texture));
-    image.set_pixel_size(side);
-    Some(image)
+    ic_svg_gtk::icon_image(svg, size)
 }
 
 /// Loads what is installed and switched on. A plugin the user disabled is not

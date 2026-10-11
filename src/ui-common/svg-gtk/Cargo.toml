@@ -1,0 +1,11 @@
+[package]
+name = "ic-svg-gtk"
+version = "0.1.0"
+edition = "2021"
+description = "Every SVG the application shows, drawn one way on every system, icons kept once drawn"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+gtk = { package = "gtk4", version = "0.9", features = ["v4_12"] }
+resvg = "0.47"

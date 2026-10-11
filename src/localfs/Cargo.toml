@@ -13,6 +13,7 @@ publish = false
 [dependencies]
 gtk = { package = "gtk4", version = "0.9", features = ["v4_12"], optional = true }
 adw = { package = "libadwaita", version = "0.7", features = ["v1_6"], optional = true }
+ic-svg-gtk = { workspace = true, optional = true }
 common = { workspace = true }
 client-config = { workspace = true }
 ic-platform = { workspace = true }
@@ -30,4 +31,4 @@ default = ["gtk"]
 # GTK presentation half: the `gtk_fm_ui::FileSystemRpc` impls (thumbnails,
 # on_item_bound, mount dialogs) and the gio-backed drive enumeration. Off = the
 # providers expose only the GTK-free `fm_core` data trait (headless).
-gtk = ["dep:gtk", "dep:adw"]
+gtk = ["dep:gtk", "dep:adw", "dep:ic-svg-gtk"]
