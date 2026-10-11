@@ -20,15 +20,18 @@ manager that simply works.
 
 **0.8 is under active development.** The application keeps the panels, the copy engine, the
 viewer and the keyboard, and knows one filesystem — the local disk. The rest is plugins,
-switched on in **Settings → Plugins**:
+installed and updated from **Settings → Plugins** or the setup wizard:
 
 - **filesystems** — archives, FTP, SFTP, WebDAV, torrent, peer-to-peer between your own devices etc
 - **viewers** — images, PDF, camera raw, audio, video
 - **tools** — processes, system information, developer tools, registry
 
-An SDK is being prepared, and more of what is still built in will move out. Until then a
-feature whose plugin is not installed is simply absent, and the plugin interface still
-changes between releases — sorry for the rough edges. **0.9 will carry a stable plugin API.**
+An SDK is being prepared, and more of what is still built in will move out. A feature
+whose plugin is not installed is simply absent. Throughout 0.8 the plugins are being
+stabilised and the plugin interface still changes between releases — sorry for the rough
+edges.
+
+**0.9 will carry a stable plugin API, and with it we plan to present an Android version.**
 
 | | |
 | --- | --- |

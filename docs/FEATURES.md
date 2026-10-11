@@ -57,12 +57,11 @@ One window with pluggable format handlers (`src/ui-common/viewer-ui`):
 
 Everything else is a plugin, each in its own repository, and the window is the same one:
 
-- **Images** (`plugin-images`), and camera RAW through the embedded preview
-  (`plugin-cameraraw`)
-- **Documents** (`ic-documents`), PDF for now, with lazy page rendering and zoom
-- **Audio** (`plugin-audioplayer`) with a playlist of the current folder, cover art and
-  ID3 tags
-- **Video** (`ic-videocodecs`), which draws into a canvas the application hands it
+- **Pictures** (`ic-plugin-imgviewer`), camera RAW included through the embedded preview
+- **Documents** (`ic-plugin-documents`), PDF for now, with lazy page rendering and zoom
+- **Music** (`ic-plugin-audioplayer`) with a playlist of the current folder, cover art and
+  tags
+- **Video** (`ic-plugin-videocodecs`), which draws into a canvas the application hands it
 
 The viewer works over every filesystem, not only the local one: a remote or in-archive
 file is fetched before it is shown, with a size warning and a cancellable load.
@@ -78,8 +77,8 @@ On a local panel the terminal is your shell. On a panel standing in a filesystem
 plugin carries a shell — SFTP does — it is a shell on that server instead, opened through
 the same login and starting in the directory the panel shows.
 
-The process list with kill and the system-information window are plugins
-(`processes`, `sysinfo`); the registry editor is still in the application, on Windows.
+The process list with kill, the system-information window and, on Windows, the registry
+editor are plugins (`ic-plugin-processes`, `ic-plugin-sysinfo`, `ic-plugin-registry`).
 
 ## Web UI and headless mode
 
@@ -112,30 +111,32 @@ repository.
 
 A plugin is one shared library — `.so`, `.dll` or `.dylib` — that the application loads at
 startup from `<data directory>/ice-commander/plugins` (`IC_PLUGIN_DIR` overrides the
-folder). Nothing loads by itself: a library is only opened once it is switched on in
-**Settings → Plugins**, which is the `plugins.enabled` list in the configuration, and the
-change takes effect on the next start.
+folder). None comes with the application: the setup wizard and **Settings → Plugins** list
+the plugins published for this version, download the ones you pick with everything they
+carry (the video plugin its libmpv, the documents plugin its PDFium), and switch them on —
+the `plugins.enabled` list in the configuration. Installed plugins update along with the
+application's own update check. Every change takes effect on the next start.
 
-The boundary is plain C, with no Rust types crossing it, so a plugin built against an older
-release keeps working: the table of functions the application offers only ever grows at the
-end, and a plugin says which part of it it needs. Nothing draws: a plugin *describes* what
+The boundary is plain C, with no Rust types crossing it. Throughout 0.8 it is being
+stabilised and may still break: the application refuses a plugin built for another ABI
+version rather than calling into it. Within one ABI version the table of functions the
+application offers only ever grows at the end, and a plugin says which part of it it needs.
+**0.9 will carry a stable plugin API**, and with it we plan to present an Android version.
+Nothing draws: a plugin *describes* what
 it offers — a filesystem, a connection kind and the form behind it, a window, a panel, a
 column, a toolbar button, an icon — and whichever frontend is running builds that, GTK or
 the browser, from the same description.
 
 | Repository | What is in it |
 | --- | --- |
-| [`plugins`](https://github.com/ice-commander/plugins) | the plugins that ship with a release: archives, FTP, SFTP, WebDAV, processes, system information, developer tools |
-| [`ice-commander-plugin-sdk`](https://github.com/savchenko-igor/ice-commander-plugin-sdk) | the interface itself, documented, with small worked examples to start from |
-
-Two more are being moved out of what used to be separate builds of the whole application
-and are not published yet: `node-in-net` (peer-to-peer between your own machines) and
-`torrent` (downloading straight into a panel).
+| [`plugin-api`](https://github.com/ice-commander/plugin-api) | the interface itself: the C header and the Rust crate a plugin depends on |
+| [`plugin-sdk`](https://github.com/ice-commander/plugin-sdk) | small worked examples to start from |
+| `ic-plugin-*` | one repository per plugin: archives, FTP, SFTP, WebDAV, torrent, Node In Net, pictures, documents, music, video, processes, system information, developer tools, registry — all listed on [icecommander.com/plugins](https://icecommander.com/plugins) |
 
 
 ## Peer-to-peer
 
-Point the second panel at another machine you own — the `node-in-net` plugin adds a
+Point the second panel at another machine you own — the `ic-plugin-nodeinnet` plugin adds a
 node.in.net account, finds your devices and moves files straight between them, with the
 same two panels and the same keys. It used to be a separate build of the whole
 application; it is a plugin now, and the forks it needed are gone.
