@@ -286,6 +286,13 @@ pub trait FileSystemRpc {
         false
     }
 
+    /// Whether a terminal here is a shell of the filesystem's own, opened through `open_shell` — one on the server
+    /// an SFTP or a peer-to-peer panel reaches. The local disk allows a terminal yet has none of its own: there the
+    /// application starts the user's shell.
+    fn carries_shell(&self) -> bool {
+        false
+    }
+
     fn open_shell(
         &self,
         _cwd: &str,
@@ -316,6 +323,7 @@ mod tests {
     #[test]
     fn a_filesystem_carries_no_terminal_unless_it_says_so() {
         assert!(!rpc().supports_terminal());
+        assert!(!rpc().carries_shell());
     }
 
     #[test]

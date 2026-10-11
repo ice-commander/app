@@ -1,6 +1,6 @@
 [package]
 name = "console-app"
-version = "0.8.130"
+version = "0.8.133"
 edition = "2021"
 publish = false
 description = "Ice Commander Console - Dual-Pane Terminal File Manager (TUI, à la Midnight Commander)"
