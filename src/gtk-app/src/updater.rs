@@ -1,6 +1,6 @@
 use gtk::glib;
 use gtk_updater_ui::{UpdaterInit, UpdaterInput, UpdaterModel, UpdaterOutput};
-use ic_plugin_host::updates::{self, Fetch, OfferedPlugin};
+use ic_plugin_host::updates::{self, Fetch, Offered, OfferedPlugin};
 use relm4::prelude::*;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -191,7 +191,7 @@ async fn install_downloaded(ctrl: &Rc<Controller<UpdaterModel>>, path: PathBuf) 
     }
 }
 
-fn spawn_on_tokio<F, T>(future: F) -> tokio::sync::oneshot::Receiver<T>
+pub(crate) fn spawn_on_tokio<F, T>(future: F) -> tokio::sync::oneshot::Receiver<T>
 where
     F: std::future::Future<Output = T> + Send + 'static,
     T: Send + 'static,
@@ -243,7 +243,8 @@ async fn ask_site() -> Result<Checked, String> {
     if status.is_success() {
         return resp.json::<Checked>().await.map_err(|e| e.to_string());
     }
-    if status != reqwest::StatusCode::NOT_FOUND && status != reqwest::StatusCode::METHOD_NOT_ALLOWED {
+    if status != reqwest::StatusCode::NOT_FOUND && status != reqwest::StatusCode::METHOD_NOT_ALLOWED
+    {
         return Err(format!("HTTP status {status}"));
     }
     // A site from before the version registry knows the application alone.
@@ -270,6 +271,46 @@ async fn ask_site() -> Result<Checked, String> {
         md5: old.md5,
         plugins: BTreeMap::new(),
     })
+}
+
+/// The plugins the site offers this version on this system, by the name each is enabled under.
+pub(crate) fn offered_plugins(
+) -> tokio::sync::oneshot::Receiver<Result<BTreeMap<String, OfferedPlugin>, String>> {
+    spawn_on_tokio(async { Ok(ask_site().await?.plugins) })
+}
+
+/// Installs or updates one plugin: what differs of it — all of it when it is not there — is fetched and left as
+/// `<path>.new` for the next start.
+pub(crate) fn fetch_plugin(
+    offer: OfferedPlugin,
+) -> tokio::sync::oneshot::Receiver<Result<(), String>> {
+    spawn_on_tokio(async move {
+        let folder =
+            ic_plugin_host::loader::plugin_directory().ok_or("no plugin folder on this system")?;
+        let files = {
+            let folder = folder.clone();
+            tokio::task::spawn_blocking(move || updates::missing(&folder, &offer))
+                .await
+                .map_err(|e| e.to_string())?
+        };
+        download_and_stage(folder, files).await
+    })
+}
+
+/// A plugin's files are written all or none: half of them would pair a new plugin with old codecs.
+async fn download_and_stage(folder: PathBuf, files: Vec<Offered>) -> Result<(), String> {
+    let mut arrived = Vec::new();
+    for file in files {
+        let bytes = fetch_bytes(&file.url).await?;
+        arrived.push((file, bytes));
+    }
+    tokio::task::spawn_blocking(move || {
+        arrived
+            .iter()
+            .try_for_each(|(file, bytes)| updates::stage(&folder, file, bytes))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 async fn perform_update_check(
@@ -302,13 +343,15 @@ async fn perform_update_check(
 }
 
 /// Fetches what differs for the installed plugins and leaves it beside the old files as `<path>.new`, put in place at
-/// the next start. A plugin's files are written all or none: half of them would pair a new plugin with old codecs.
-/// Answers the names of the plugins that will change.
-async fn stage_plugin_updates(offered: BTreeMap<String, OfferedPlugin>) -> Result<Vec<String>, String> {
+/// the next start. Answers the names of the plugins that will change.
+async fn stage_plugin_updates(
+    offered: BTreeMap<String, OfferedPlugin>,
+) -> Result<Vec<String>, String> {
     if offered.is_empty() {
         return Ok(Vec::new());
     }
-    let folder = ic_plugin_host::loader::plugin_directory().ok_or("no plugin folder on this system")?;
+    let folder =
+        ic_plugin_host::loader::plugin_directory().ok_or("no plugin folder on this system")?;
     let (fetches, names) = {
         let folder = folder.clone();
         tokio::task::spawn_blocking(move || {
@@ -342,33 +385,16 @@ async fn stage_plugin_updates(offered: BTreeMap<String, OfferedPlugin>) -> Resul
 
     let mut by_plugin: BTreeMap<String, Vec<Fetch>> = BTreeMap::new();
     for fetch in fetches {
-        by_plugin.entry(fetch.plugin.clone()).or_default().push(fetch);
+        by_plugin
+            .entry(fetch.plugin.clone())
+            .or_default()
+            .push(fetch);
     }
     let mut staged = Vec::new();
     let mut failed = Vec::new();
     for (plugin, fetches) in by_plugin {
-        let mut arrived = Vec::new();
-        for fetch in &fetches {
-            match fetch_bytes(&fetch.file.url).await {
-                Ok(bytes) => arrived.push((fetch.file.clone(), bytes)),
-                Err(e) => {
-                    failed.push(format!("{plugin}: {e}"));
-                    break;
-                }
-            }
-        }
-        if arrived.len() != fetches.len() {
-            continue;
-        }
-        let folder = folder.clone();
-        let written = tokio::task::spawn_blocking(move || {
-            arrived
-                .iter()
-                .try_for_each(|(file, bytes)| updates::stage(&folder, file, bytes))
-        })
-        .await
-        .map_err(|e| e.to_string())?;
-        match written {
+        let files = fetches.into_iter().map(|fetch| fetch.file).collect();
+        match download_and_stage(folder.clone(), files).await {
             Ok(()) => staged.push(names.get(&plugin).cloned().unwrap_or(plugin)),
             Err(e) => failed.push(format!("{plugin}: {e}")),
         }
@@ -475,7 +501,10 @@ mod tests {
 
         assert_eq!(fetch.len(), 1, "{fetch:?}");
         assert_eq!(fetch[0].plugin, "ic_sftp_fs");
-        assert!(fetch[0].file.url.starts_with(ic_plugin_host::updates::TRUSTED));
+        assert!(fetch[0]
+            .file
+            .url
+            .starts_with(ic_plugin_host::updates::TRUSTED));
     }
 
     #[test]

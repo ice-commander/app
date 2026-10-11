@@ -25,7 +25,25 @@ pub struct Offered {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct OfferedPlugin {
     pub version: String,
+    /// What the plugin calls itself, for one that is not installed and so cannot be asked.
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
     pub files: Vec<Offered>,
+}
+
+/// Where a plugin the site offers stands in the plugin folder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Standing {
+    /// Not there: it can be installed.
+    Absent,
+    /// There, and some of its files differ from the offer: it can be updated.
+    Behind,
+    /// There and the same as offered, or newer — a developer's own build.
+    Current,
+    /// Downloaded, put in place at the next start.
+    Waiting,
 }
 
 /// One file to fetch, and the plugin it belongs to.
@@ -104,6 +122,46 @@ pub fn md5_of(path: &Path) -> Option<String> {
     Some(format!("{:x}", context.finalize()))
 }
 
+/// The files of `offer` whose bytes are neither in `folder` nor waiting there, the ones from elsewhere left out.
+pub fn missing(folder: &Path, offer: &OfferedPlugin) -> Vec<Offered> {
+    offer
+        .files
+        .iter()
+        .filter(|file| inside(&file.path) && file.url.starts_with(TRUSTED))
+        .filter(|file| {
+            let at = folder.join(&file.path);
+            let matches =
+                |path: &Path| md5_of(path).is_some_and(|held| held.eq_ignore_ascii_case(&file.md5));
+            !matches(&at) && !matches(&with_suffix(&at, WAITING))
+        })
+        .cloned()
+        .collect()
+}
+
+/// `installed` is none for a plugin not in the folder, else the version it reports, none when it could not be asked.
+pub fn standing(folder: &Path, offer: &OfferedPlugin, installed: Option<Option<&str>>) -> Standing {
+    if let Some(Some(version)) = installed {
+        if order(version, &offer.version) == Ordering::Greater {
+            return Standing::Current;
+        }
+    }
+    if !missing(folder, offer).is_empty() {
+        return match installed {
+            Some(_) => Standing::Behind,
+            None => Standing::Absent,
+        };
+    }
+    let waits = offer
+        .files
+        .iter()
+        .any(|file| inside(&file.path) && with_suffix(&folder.join(&file.path), WAITING).is_file());
+    match (waits, installed) {
+        (true, _) => Standing::Waiting,
+        (false, Some(_)) => Standing::Current,
+        (false, None) => Standing::Absent,
+    }
+}
+
 /// What to fetch for the plugins installed in `folder`: each file whose bytes differ from the offer, unless the
 /// installed plugin says it is newer than the offer — a developer's own build, left alone together with what it
 /// carries. A plugin that is not installed is not installed from here. `installed` is each library's name and the
@@ -124,20 +182,10 @@ pub fn plan(
         {
             continue;
         }
-        for file in &offer.files {
-            if !inside(&file.path) || !file.url.starts_with(TRUSTED) {
-                continue;
-            }
-            let at = folder.join(&file.path);
-            let matches =
-                |path: &Path| md5_of(path).is_some_and(|held| held.eq_ignore_ascii_case(&file.md5));
-            if !matches(&at) && !matches(&with_suffix(&at, WAITING)) {
-                fetch.push(Fetch {
-                    plugin: plugin.clone(),
-                    file: file.clone(),
-                });
-            }
-        }
+        fetch.extend(missing(folder, offer).into_iter().map(|file| Fetch {
+            plugin: plugin.clone(),
+            file,
+        }));
     }
     fetch
 }
@@ -266,6 +314,8 @@ mod tests {
             "ic_video_view".to_string(),
             OfferedPlugin {
                 version: version.to_string(),
+                name: "Video".to_string(),
+                description: String::new(),
                 files: vec![
                     offered("libic_video_view.dylib", library),
                     offered("video-codecs/libmpv.2.dylib", codecs),
@@ -346,6 +396,37 @@ mod tests {
             b"new codecs"
         );
         assert!(!at.join("libic_video_view.dylib.new").exists());
+        let _ = std::fs::remove_dir_all(&at);
+    }
+
+    #[test]
+    fn a_plugin_not_installed_is_fetched_whole_and_then_waits_for_the_start() {
+        let at = folder("install");
+        let offer = video("0.2.0", b"new library", b"new codecs");
+        let video = &offer["ic_video_view"];
+        assert_eq!(standing(&at, video, None), Standing::Absent);
+        let files = missing(&at, video);
+        assert_eq!(files.len(), 2, "the library and what it carries");
+        for file in &files {
+            let bytes: &[u8] = if file.path.contains('/') {
+                b"new codecs"
+            } else {
+                b"new library"
+            };
+            stage(&at, file, bytes).unwrap();
+        }
+        assert_eq!(standing(&at, video, None), Standing::Waiting);
+        apply_pending(&at);
+        assert_eq!(standing(&at, video, Some(Some("0.2.0"))), Standing::Current);
+        assert_eq!(standing(&at, video, Some(Some("0.3.0"))), Standing::Current);
+
+        std::fs::write(at.join("video-codecs/libmpv.2.dylib"), b"damaged").unwrap();
+        assert_eq!(standing(&at, video, Some(Some("0.2.0"))), Standing::Behind);
+        assert_eq!(
+            standing(&at, video, Some(Some("0.3.0"))),
+            Standing::Current,
+            "a developer's own build is left alone"
+        );
         let _ = std::fs::remove_dir_all(&at);
     }
 

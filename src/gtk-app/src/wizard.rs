@@ -1,11 +1,44 @@
+use crate::plugin_offers::{self, Listed};
 use adw::prelude::*;
 use gtk::{
     Align, Box, Button, DropDown, Label, ListBox, ListBoxRow, Orientation, SelectionMode, Switch,
 };
-use std::cell::RefCell;
+use ic_plugin_host::updates::Standing;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 type Retrans = Rc<RefCell<Vec<Rc<dyn Fn()>>>>;
+
+/// Plugins being downloaded: finishing the wizard waits for them, since its restart would cut them off.
+#[derive(Default)]
+struct Downloads {
+    running: Cell<usize>,
+    when_done: RefCell<Option<std::boxed::Box<dyn FnOnce()>>>,
+}
+
+impl Downloads {
+    fn started(&self) {
+        self.running.set(self.running.get() + 1);
+    }
+
+    fn ended(&self) {
+        self.running.set(self.running.get().saturating_sub(1));
+        if self.running.get() == 0 {
+            let then = self.when_done.borrow_mut().take();
+            if let Some(then) = then {
+                then();
+            }
+        }
+    }
+
+    fn after(&self, then: impl FnOnce() + 'static) {
+        if self.running.get() == 0 {
+            then();
+        } else {
+            *self.when_done.borrow_mut() = Some(std::boxed::Box::new(then));
+        }
+    }
+}
 
 fn reg(retrans: &Retrans, f: Rc<dyn Fn()>) {
     f();
@@ -39,9 +72,9 @@ pub fn show_setup_wizard(
         .title("Welcome to Ice Commander")
         .transient_for(parent_window)
         .modal(true)
-        .default_width(640)
-        .default_height(720)
-        .resizable(false)
+        .default_width(860)
+        .default_height(760)
+        .resizable(true)
         .build();
 
     let root = Box::builder().orientation(Orientation::Vertical).build();
@@ -104,7 +137,8 @@ pub fn show_setup_wizard(
     carousel.append(&page3);
     pages.push(page3.upcast());
 
-    let page4 = build_page_plugins(&config, &retrans, on_plugin_choice);
+    let downloads = Rc::new(Downloads::default());
+    let page4 = build_page_plugins(&config, &retrans, on_plugin_choice, downloads.clone());
     carousel.append(&page4);
     pages.push(page4.upcast());
 
@@ -214,21 +248,29 @@ pub fn show_setup_wizard(
         let wizard = wizard.clone();
         let original_lang = original_lang.clone();
         let plugins_changed = plugins_changed.clone();
-        next_btn.connect_clicked(move |_| {
+        next_btn.connect_clicked(move |button| {
             let idx = carousel.position().round() as usize;
             if idx + 1 < pages.len() {
                 carousel.scroll_to(&pages[idx + 1], true);
             } else {
-                config.set("ui.setup_wizard_done", true);
-                config.save();
-                let lang_changed =
-                    config.get::<String>("ui.language").unwrap_or_default() != original_lang;
-                wizard.close();
-                // Plugins are read once at start-up, so a choice made here only
-                // takes effect on the next one.
-                if lang_changed || plugins_changed.get() {
-                    crate::utils::restart_app();
-                }
+                button.set_sensitive(false);
+                button.set_label(&crate::i18n::tr("wizard.plugins_downloading"));
+                let config = config.clone();
+                let wizard = wizard.clone();
+                let original_lang = original_lang.clone();
+                let plugins_changed = plugins_changed.clone();
+                downloads.after(move || {
+                    config.set("ui.setup_wizard_done", true);
+                    config.save();
+                    let lang_changed =
+                        config.get::<String>("ui.language").unwrap_or_default() != original_lang;
+                    wizard.close();
+                    // Plugins are read once at start-up, so a choice made here only
+                    // takes effect on the next one.
+                    if lang_changed || plugins_changed.get() {
+                        crate::utils::restart_app();
+                    }
+                });
             }
         });
     }
@@ -485,12 +527,13 @@ fn build_page_appearance(
     scroll
 }
 
-/// Which plugins to load. On a first run nothing is switched on, so this page
-/// is where the application gets its functionality at all.
+/// Which plugins to load, and which of the ones the site offers to download. On a first run nothing is switched on,
+/// so this page is where the application gets its functionality at all.
 fn build_page_plugins(
     config: &client_config::AppConfig,
     retrans: &Retrans,
     on_choice_changed: Rc<dyn Fn()>,
+    downloads: Rc<Downloads>,
 ) -> gtk::ScrolledWindow {
     let (scroll, content) = page_shell(
         retrans,
@@ -498,55 +541,133 @@ fn build_page_plugins(
         || crate::i18n::tr("wizard.plugins_subtitle").to_string(),
     );
 
-    let found = ic_plugin_host::loader::installed_with_about();
-    if found.is_empty() {
-        let empty = tr_label(retrans, || {
-            crate::i18n::tr("wizard.plugins_none").to_string()
-        });
-        empty.set_halign(Align::Start);
-        empty.set_wrap(true);
-        empty.add_css_class("dim-label");
-        content.append(&empty);
-        return scroll;
-    }
+    let status = Label::builder()
+        .label(&*crate::i18n::tr("settings.plugins_asking"))
+        .halign(Align::Start)
+        .wrap(true)
+        .build();
+    status.add_css_class("dim-label");
+    content.append(&status);
 
     let list = ListBox::builder()
         .selection_mode(SelectionMode::None)
         .build();
     list.add_css_class("boxed-list");
-
-    for held in &found {
-        let about = held.about.clone().unwrap_or_default();
-        let title = if about.name.is_empty() {
-            held.library.clone()
-        } else {
-            about.name.clone()
-        };
-        let subtitle = match (about.description.as_str(), about.version.as_str()) {
-            ("", "") => String::new(),
-            ("", version) => version.to_string(),
-            (text, "") => text.to_string(),
-            (text, version) => format!("{text}  \u{00b7}  {version}"),
-        };
-        let row = adw::SwitchRow::builder()
-            .title(&title)
-            .subtitle(&subtitle)
-            .active(ic_plugin_host::loader::is_enabled(config, &held.library))
-            .build();
-        {
-            let config = config.clone();
-            let library = held.library.clone();
-            let on_choice_changed = on_choice_changed.clone();
-            row.connect_active_notify(move |row| {
-                ic_plugin_host::loader::set_enabled(&config, &library, row.is_active());
-                on_choice_changed();
-            });
-        }
-        list.append(&row);
-    }
-
     content.append(&list);
+
+    let fill: Rc<dyn Fn(Vec<Listed>)> = {
+        let list = list.clone();
+        let config = config.clone();
+        Rc::new(move |listed: Vec<Listed>| {
+            while let Some(row) = list.first_child() {
+                list.remove(&row);
+            }
+            list.set_visible(!listed.is_empty());
+            for entry in listed {
+                list.append(&plugin_row(entry, &config, &on_choice_changed, &downloads));
+            }
+        })
+    };
+    fill(plugin_offers::listing(&Default::default()));
+
+    {
+        let fill = fill.clone();
+        gtk::glib::spawn_future_local(async move {
+            let (listed, failed) = plugin_offers::with_offers().await;
+            match failed {
+                Some(why) => status.set_label(&crate::i18n::trf(
+                    "settings.plugins_unreachable",
+                    &[("error", &why)],
+                )),
+                None if listed.is_empty() => {
+                    status.set_label(&crate::i18n::tr("wizard.plugins_none"))
+                }
+                None => status.set_visible(false),
+            }
+            fill(listed);
+        });
+    }
     scroll
+}
+
+/// Switched on, a plugin that is not here yet is downloaded first, and is chosen once all of it has arrived.
+fn plugin_row(
+    entry: Listed,
+    config: &client_config::AppConfig,
+    on_choice_changed: &Rc<dyn Fn()>,
+    downloads: &Rc<Downloads>,
+) -> adw::SwitchRow {
+    let fetched = Rc::new(Cell::new(
+        entry.standing != Standing::Absent || entry.path.is_some(),
+    ));
+    let subtitle = match entry.standing {
+        Standing::Waiting => crate::i18n::tr("settings.plugins_after_restart").to_string(),
+        Standing::Absent => plugin_offers::subtitle(&[
+            &entry.description,
+            &entry.version,
+            &plugin_offers::size_text(entry.size),
+        ]),
+        Standing::Behind | Standing::Current => {
+            plugin_offers::subtitle(&[&entry.description, &entry.version])
+        }
+    };
+    let row = adw::SwitchRow::builder()
+        .title(&entry.name)
+        .subtitle(&subtitle)
+        .active(fetched.get() && ic_plugin_host::loader::is_enabled(config, &entry.library))
+        .build();
+    let config = config.clone();
+    let on_choice_changed = on_choice_changed.clone();
+    let downloads = downloads.clone();
+    let handler: Rc<RefCell<Option<gtk::glib::SignalHandlerId>>> = Rc::new(RefCell::new(None));
+    let id = {
+        let handler = handler.clone();
+        row.connect_active_notify(move |row| {
+            if fetched.get() {
+                ic_plugin_host::loader::set_enabled(&config, &entry.library, row.is_active());
+                on_choice_changed();
+                return;
+            }
+            if !row.is_active() {
+                return;
+            }
+            row.set_sensitive(false);
+            row.set_subtitle(&crate::i18n::tr("settings.plugins_downloading"));
+            downloads.started();
+            let row = row.clone();
+            let entry = entry.clone();
+            let config = config.clone();
+            let on_choice_changed = on_choice_changed.clone();
+            let downloads = downloads.clone();
+            let fetched = fetched.clone();
+            let handler = handler.clone();
+            gtk::glib::spawn_future_local(async move {
+                match plugin_offers::fetch(&entry).await {
+                    Ok(()) => {
+                        fetched.set(true);
+                        ic_plugin_host::loader::set_enabled(&config, &entry.library, true);
+                        on_choice_changed();
+                        row.set_subtitle(&crate::i18n::tr("settings.plugins_after_restart"));
+                    }
+                    Err(why) => {
+                        if let Some(id) = handler.borrow().as_ref() {
+                            row.block_signal(id);
+                            row.set_active(false);
+                            row.unblock_signal(id);
+                        }
+                        row.set_subtitle(&crate::i18n::trf(
+                            "settings.plugins_failed",
+                            &[("name", &entry.name), ("error", &why)],
+                        ));
+                    }
+                }
+                row.set_sensitive(true);
+                downloads.ended();
+            });
+        })
+    };
+    *handler.borrow_mut() = Some(id);
+    row
 }
 
 fn build_page_toolbar(config: &client_config::AppConfig, retrans: &Retrans) -> gtk::ScrolledWindow {

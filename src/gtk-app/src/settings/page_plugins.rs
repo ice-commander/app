@@ -1,59 +1,18 @@
+use crate::plugin_offers::{self, Listed};
 use adw::prelude::*;
 use gtk::{Align, Box, Button, Label, Orientation};
-use ic_plugin_host::catalog::{self, Offer};
 use ic_plugin_host::loader;
+use ic_plugin_host::updates::Standing;
 use std::cell::RefCell;
-use std::path::PathBuf;
 use std::rc::Rc;
 
-/// One row's worth of what is known about a plugin, whether it is installed,
-/// switched off, or only offered by the catalogue.
-struct Entry {
-    library: String,
-    path: Option<PathBuf>,
-    about: Option<loader::About>,
-    enabled: bool,
-    offered: Option<Offer>,
-}
-
-fn shown(text: &str, fallback: &str) -> String {
-    if text.is_empty() {
-        fallback.to_string()
-    } else {
-        text.to_string()
-    }
-}
-
-fn installed_entries(config: &client_config::AppConfig) -> Vec<Entry> {
-    loader::installed_with_about()
-        .into_iter()
-        .map(|held| Entry {
-            enabled: loader::is_enabled(config, &held.library),
-            about: held.about,
-            library: held.library,
-            path: Some(held.path),
-            offered: None,
-        })
-        .collect()
-}
-
-/// Folds the catalogue into the installed list: a known plugin gains its offer,
-/// an unknown one becomes a row of its own.
-fn merge(mut rows: Vec<Entry>, offers: Vec<Offer>) -> Vec<Entry> {
-    for offer in offers {
-        match rows.iter_mut().find(|row| row.library == offer.library) {
-            Some(row) => row.offered = Some(offer),
-            None => rows.push(Entry {
-                library: offer.library.clone(),
-                path: None,
-                about: None,
-                enabled: true,
-                offered: Some(offer),
-            }),
-        }
-    }
-    rows.sort_by(|a, b| a.library.cmp(&b.library));
-    rows
+/// What a row needs from the page around it.
+#[derive(Clone)]
+struct Around {
+    config: client_config::AppConfig,
+    parent: gtk::Window,
+    restart_box: Box,
+    status: Label,
 }
 
 pub(super) fn build(page_box: &Box, parent: &gtk::Window, config: client_config::AppConfig) {
@@ -95,12 +54,6 @@ pub(super) fn build(page_box: &Box, parent: &gtk::Window, config: client_config:
     restart_box.append(&restart_btn);
     page_box.append(&restart_box);
 
-    let group = adw::PreferencesGroup::builder()
-        .title(&*crate::i18n::tr("settings.plugins_group"))
-        .description(&*crate::i18n::tr("settings.plugins_group_desc"))
-        .build();
-    page_box.append(&group);
-
     if !loader::has_chosen(&config) {
         let never = Label::builder()
             .label(&*crate::i18n::tr("settings.plugins_never_chosen"))
@@ -112,6 +65,20 @@ pub(super) fn build(page_box: &Box, parent: &gtk::Window, config: client_config:
         page_box.append(&never);
     }
 
+    let installed_group = adw::PreferencesGroup::builder()
+        .title(&*crate::i18n::tr("settings.plugins_group"))
+        .description(&*crate::i18n::tr("settings.plugins_group_desc"))
+        .build();
+    page_box.append(&installed_group);
+
+    let available_group = adw::PreferencesGroup::builder()
+        .title(&*crate::i18n::tr("settings.plugins_available_group"))
+        .description(&*crate::i18n::tr("settings.plugins_available_group_desc"))
+        .margin_top(18)
+        .visible(false)
+        .build();
+    page_box.append(&available_group);
+
     let status = Label::builder()
         .halign(Align::Start)
         .margin_top(10)
@@ -120,6 +87,26 @@ pub(super) fn build(page_box: &Box, parent: &gtk::Window, config: client_config:
         .build();
     status.add_css_class("dim-label");
     page_box.append(&status);
+
+    let actions = Box::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(8)
+        .margin_top(14)
+        .halign(Align::Start)
+        .build();
+    let check_btn = Button::builder()
+        .label(&*crate::i18n::tr("settings.plugins_check"))
+        .build();
+    check_btn.set_cursor_from_name(Some("pointer"));
+    let update_all_btn = Button::builder()
+        .label(&*crate::i18n::tr("settings.plugins_update_all"))
+        .visible(false)
+        .build();
+    update_all_btn.add_css_class("suggested-action");
+    update_all_btn.set_cursor_from_name(Some("pointer"));
+    actions.append(&check_btn);
+    actions.append(&update_all_btn);
+    page_box.append(&actions);
 
     let folder = Label::builder()
         .halign(Align::Start)
@@ -133,170 +120,217 @@ pub(super) fn build(page_box: &Box, parent: &gtk::Window, config: client_config:
     });
     page_box.append(&folder);
 
-    let offers: Rc<RefCell<Vec<Offer>>> = Rc::new(RefCell::new(Vec::new()));
-    let rows: Rc<RefCell<Vec<adw::ActionRow>>> = Rc::new(RefCell::new(Vec::new()));
+    let around = Around {
+        config,
+        parent: parent.clone(),
+        restart_box,
+        status: status.clone(),
+    };
+    let rows: Rc<RefCell<Vec<(adw::PreferencesGroup, adw::ActionRow)>>> =
+        Rc::new(RefCell::new(Vec::new()));
+    let update_buttons: Rc<RefCell<Vec<Button>>> = Rc::new(RefCell::new(Vec::new()));
 
-    // Nothing a row does takes effect before a restart, so a row never has to
-    // redraw itself. Only the catalogue can add rows, and that is this closure.
-    let refill: Rc<dyn Fn()> = {
-        let group = group.clone();
+    // Nothing a row does takes effect before a restart, so a row never redraws itself: only a fresh listing does.
+    let fill: Rc<dyn Fn(Vec<Listed>)> = {
+        let installed_group = installed_group.clone();
+        let available_group = available_group.clone();
+        let update_all_btn = update_all_btn.clone();
         let rows = rows.clone();
-        let offers = offers.clone();
-        let config = config.clone();
-        let restart_box = restart_box.clone();
-        let status = status.clone();
-        let parent = parent.clone();
-        Rc::new(move || {
-            for row in rows.borrow_mut().drain(..) {
+        let update_buttons = update_buttons.clone();
+        let around = around.clone();
+        Rc::new(move |listed: Vec<Listed>| {
+            for (group, row) in rows.borrow_mut().drain(..) {
                 group.remove(&row);
             }
-            let listed = merge(installed_entries(&config), offers.borrow().clone());
-            if listed.is_empty() {
-                status.set_label(&crate::i18n::tr("settings.plugins_none"));
-                status.set_visible(true);
-            }
+            update_buttons.borrow_mut().clear();
+            let mut available = 0;
             for entry in listed {
-                let row = make_row(&entry, &config, &restart_box, &status, &parent);
+                if entry.standing == Standing::Waiting {
+                    around.restart_box.set_visible(true);
+                }
+                let (group, row) = if entry.path.is_some() {
+                    let (row, update) = installed_row(entry, &around);
+                    update_buttons.borrow_mut().extend(update);
+                    (installed_group.clone(), row)
+                } else {
+                    available += 1;
+                    (available_group.clone(), available_row(entry, &around))
+                };
                 group.add(&row);
-                rows.borrow_mut().push(row);
+                rows.borrow_mut().push((group, row));
             }
+            available_group.set_visible(available > 0);
+            update_all_btn.set_visible(!update_buttons.borrow().is_empty());
+            update_all_btn.set_sensitive(true);
         })
     };
-    refill();
+    fill(plugin_offers::listing(&Default::default()));
 
-    let actions = Box::builder()
-        .orientation(Orientation::Horizontal)
-        .spacing(8)
-        .margin_top(14)
-        .halign(Align::Start)
-        .build();
-    let check_btn = Button::builder()
-        .label(&*crate::i18n::tr("settings.plugins_check"))
-        .build();
-    check_btn.set_cursor_from_name(Some("pointer"));
-    {
-        let config = config.clone();
-        let offers = offers.clone();
+    let ask_site: Rc<dyn Fn()> = {
+        let fill = fill.clone();
         let status = status.clone();
-        let refill = refill.clone();
-        check_btn.connect_clicked(move |_| {
+        let check_btn = check_btn.clone();
+        Rc::new(move || {
+            status.set_label(&crate::i18n::tr("settings.plugins_asking"));
             status.set_visible(true);
-            match catalog::fetch(&config) {
-                Ok(found) => {
-                    let count = found.len();
-                    *offers.borrow_mut() = found;
-                    status.set_label(&crate::i18n::trf(
-                        "settings.plugins_catalogue_read",
-                        &[("count", &count.to_string())],
-                    ));
-                    refill();
+            check_btn.set_sensitive(false);
+            let fill = fill.clone();
+            let status = status.clone();
+            let check_btn = check_btn.clone();
+            gtk::glib::spawn_future_local(async move {
+                let (listed, failed) = plugin_offers::with_offers().await;
+                match failed {
+                    Some(why) => status.set_label(&crate::i18n::trf(
+                        "settings.plugins_unreachable",
+                        &[("error", &why)],
+                    )),
+                    None if listed.is_empty() => {
+                        status.set_label(&crate::i18n::tr("settings.plugins_none"))
+                    }
+                    None => status.set_visible(false),
+                }
+                fill(listed);
+                check_btn.set_sensitive(true);
+            });
+        })
+    };
+    {
+        let ask_site = ask_site.clone();
+        check_btn.connect_clicked(move |_| ask_site());
+    }
+    update_all_btn.connect_clicked(move |button| {
+        button.set_sensitive(false);
+        for update in update_buttons.borrow().iter() {
+            if update.is_sensitive() && update.is_visible() {
+                update.emit_clicked();
+            }
+        }
+    });
+    ask_site();
+}
+
+/// Downloads on a click, the button standing in for progress; `then` runs once all of the plugin is there.
+fn fetch_on_click(
+    button: &Button,
+    entry: Listed,
+    row: &adw::ActionRow,
+    around: &Around,
+    then: impl Fn() + 'static,
+) {
+    let label = button.label().unwrap_or_default();
+    let row = row.clone();
+    let around = around.clone();
+    let then = Rc::new(then);
+    button.connect_clicked(move |button| {
+        button.set_sensitive(false);
+        button.set_label(&crate::i18n::tr("settings.plugins_downloading"));
+        let button = button.clone();
+        let entry = entry.clone();
+        let row = row.clone();
+        let around = around.clone();
+        let label = label.clone();
+        let then = then.clone();
+        gtk::glib::spawn_future_local(async move {
+            match plugin_offers::fetch(&entry).await {
+                Ok(()) => {
+                    then();
+                    button.set_visible(false);
+                    row.set_subtitle(&crate::i18n::tr("settings.plugins_after_restart"));
+                    around.restart_box.set_visible(true);
                 }
                 Err(why) => {
-                    offers.borrow_mut().clear();
-                    status.set_label(&why.to_string());
-                    refill();
+                    button.set_label(&label);
+                    button.set_sensitive(true);
+                    around.status.set_label(&crate::i18n::trf(
+                        "settings.plugins_failed",
+                        &[("name", &entry.name), ("error", &why)],
+                    ));
+                    around.status.set_visible(true);
                 }
             }
         });
-    }
-    actions.append(&check_btn);
-    page_box.append(&actions);
+    });
 }
 
-fn make_row(
-    entry: &Entry,
-    config: &client_config::AppConfig,
-    restart_box: &Box,
-    status: &Label,
-    parent: &gtk::Window,
-) -> adw::ActionRow {
-    let about = entry.about.clone().unwrap_or_default();
-    let title = if about.name.is_empty() {
-        entry.library.clone()
-    } else {
-        shown(&about.name, &entry.library)
-    };
-    let installed_version = about.version.clone();
+/// Not installed: the only thing offered is fetching it, and it is switched on with that.
+fn available_row(entry: Listed, around: &Around) -> adw::ActionRow {
+    let row = adw::ActionRow::builder().title(&entry.name).build();
+    if entry.standing == Standing::Waiting {
+        row.set_subtitle(&crate::i18n::tr("settings.plugins_after_restart"));
+        return row;
+    }
+    row.set_subtitle(&plugin_offers::subtitle(&[
+        &entry.description,
+        &entry.version,
+        &plugin_offers::size_text(entry.size),
+    ]));
+    let install = Button::builder()
+        .label(&*crate::i18n::tr("settings.plugins_install"))
+        .valign(Align::Center)
+        .build();
+    install.set_cursor_from_name(Some("pointer"));
+    let config = around.config.clone();
+    let library = entry.library.clone();
+    fetch_on_click(&install, entry, &row, around, move || {
+        loader::set_enabled(&config, &library, true)
+    });
+    row.add_suffix(&install);
+    row
+}
+
+/// An installed plugin: switched on or off, deleted, and updated when the site has something else for it. Returns the
+/// update button when there is one.
+fn installed_row(entry: Listed, around: &Around) -> (adw::ActionRow, Option<Button>) {
     let offered_version = entry
         .offered
         .as_ref()
         .map(|offer| offer.version.clone())
         .unwrap_or_default();
-
-    let mut subtitle = shown(&about.description, "");
-    if entry.path.is_none() {
-        let offered_name = entry
-            .offered
-            .as_ref()
-            .map(|offer| offer.description.clone())
-            .unwrap_or_default();
-        if subtitle.is_empty() {
-            subtitle = offered_name;
-        }
-    }
-    let version_line = match (installed_version.as_str(), offered_version.as_str()) {
-        ("", "") => String::new(),
-        (held, "") => held.to_string(),
-        ("", offered) => {
-            crate::i18n::trf("settings.plugins_offered_version", &[("version", offered)])
-                .to_string()
-        }
-        (held, offered) if catalog::is_newer(offered, held) => crate::i18n::trf(
+    let version_line = if entry.standing == Standing::Behind && offered_version != entry.version {
+        crate::i18n::trf(
             "settings.plugins_update_available",
-            &[("installed", held), ("offered", offered)],
+            &[("installed", &entry.version), ("offered", &offered_version)],
         )
-        .to_string(),
-        (held, _) => held.to_string(),
+        .to_string()
+    } else {
+        entry.version.clone()
     };
-    if !version_line.is_empty() {
-        if subtitle.is_empty() {
-            subtitle = version_line;
-        } else {
-            subtitle = format!("{subtitle}  \u{b7}  {version_line}");
+    let subtitle = match entry.standing {
+        Standing::Waiting => crate::i18n::tr("settings.plugins_after_restart").to_string(),
+        Standing::Behind => plugin_offers::subtitle(&[
+            &entry.description,
+            &version_line,
+            &plugin_offers::size_text(entry.size),
+        ]),
+        Standing::Absent | Standing::Current => {
+            plugin_offers::subtitle(&[&entry.description, &version_line])
         }
-    }
-
+    };
     let row = adw::ActionRow::builder()
-        .title(&title)
+        .title(&entry.name)
         .subtitle(&subtitle)
         .build();
 
-    // Not installed: the only thing offered is fetching it.
-    if entry.path.is_none() {
-        let install = Button::builder()
-            .label(&*crate::i18n::tr("settings.plugins_install"))
+    let update = (entry.standing == Standing::Behind).then(|| {
+        let update = Button::builder()
+            .label(&*crate::i18n::tr("settings.plugins_update"))
             .valign(Align::Center)
             .build();
-        install.set_cursor_from_name(Some("pointer"));
-        let offer = entry.offered.clone().unwrap_or_default();
-        let status = status.clone();
-        let restart_box = restart_box.clone();
-        let row_for_install = row.clone();
-        install.connect_clicked(move |button| match catalog::install(&offer) {
-            Ok(path) => {
-                status.set_visible(true);
-                status.set_label(&path.display().to_string());
-                restart_box.set_visible(true);
-                button.set_sensitive(false);
-                row_for_install.set_subtitle(&crate::i18n::tr("settings.plugins_after_restart"));
-            }
-            Err(why) => {
-                status.set_visible(true);
-                status.set_label(&why.to_string());
-            }
-        });
-        row.add_suffix(&install);
-        return row;
-    }
+        update.add_css_class("suggested-action");
+        update.set_cursor_from_name(Some("pointer"));
+        fetch_on_click(&update, entry.clone(), &row, around, || {});
+        row.add_suffix(&update);
+        update
+    });
 
     let switch = gtk::Switch::builder()
-        .active(entry.enabled)
+        .active(loader::is_enabled(&around.config, &entry.library))
         .valign(Align::Center)
         .build();
     {
-        let config = config.clone();
+        let config = around.config.clone();
         let library = entry.library.clone();
-        let restart_box = restart_box.clone();
+        let restart_box = around.restart_box.clone();
         switch.connect_state_set(move |_, on| {
             if loader::is_enabled(&config, &library) != on {
                 loader::set_enabled(&config, &library, on);
@@ -316,12 +350,11 @@ fn make_row(
     delete.set_cursor_from_name(Some("pointer"));
     {
         let path = entry.path.clone().unwrap_or_default();
-        let title = title.clone();
-        let parent = parent.clone();
-        let status = status.clone();
-        let restart_box = restart_box.clone();
+        let title = entry.name.clone();
+        let around = around.clone();
         let row_for_delete = row.clone();
         let switch_for_delete = switch.clone();
+        let update_for_delete = update.clone();
         delete.connect_clicked(move |button| {
             let ask = adw::AlertDialog::builder()
                 .heading(&*crate::i18n::tr("settings.plugins_delete"))
@@ -336,10 +369,10 @@ fn make_row(
             ask.set_default_response(Some("cancel"));
             ask.set_close_response("cancel");
             let path = path.clone();
-            let status = status.clone();
-            let restart_box = restart_box.clone();
+            let around = around.clone();
             let row_for_delete = row_for_delete.clone();
             let switch_for_delete = switch_for_delete.clone();
+            let update_for_delete = update_for_delete.clone();
             let button = button.clone();
             ask.connect_response(None, move |dialog, answer| {
                 dialog.close();
@@ -348,97 +381,24 @@ fn make_row(
                 }
                 match loader::remove(&path) {
                     Ok(()) => {
-                        restart_box.set_visible(true);
+                        around.restart_box.set_visible(true);
                         button.set_sensitive(false);
                         switch_for_delete.set_sensitive(false);
+                        if let Some(update) = &update_for_delete {
+                            update.set_visible(false);
+                        }
                         row_for_delete
                             .set_subtitle(&crate::i18n::tr("settings.plugins_after_restart"));
                     }
                     Err(why) => {
-                        status.set_visible(true);
-                        status.set_label(&why);
+                        around.status.set_visible(true);
+                        around.status.set_label(&why);
                     }
                 }
             });
-            ask.present(Some(&parent));
+            ask.present(Some(&around.parent));
         });
     }
     row.add_suffix(&delete);
-    row
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{merge, Entry};
-    use ic_plugin_host::catalog::Offer;
-    use std::path::PathBuf;
-
-    fn installed(library: &str, version: &str) -> Entry {
-        Entry {
-            library: library.to_string(),
-            path: Some(PathBuf::from(format!("/plugins/lib{library}.so"))),
-            about: Some(ic_plugin_host::loader::About {
-                id: format!("ic-{library}"),
-                name: library.to_string(),
-                version: version.to_string(),
-                description: String::new(),
-                abi_version: Some(ic_plugin_api::IC_ABI_VERSION),
-            }),
-            enabled: true,
-            offered: None,
-        }
-    }
-
-    fn offer(library: &str, version: &str) -> Offer {
-        Offer {
-            id: format!("ic-{library}"),
-            library: library.to_string(),
-            version: version.to_string(),
-            ..Offer::default()
-        }
-    }
-
-    #[test]
-    fn a_catalogue_entry_lands_on_the_plugin_it_names() {
-        let listed = merge(
-            vec![installed("ic_ftp_fs", "0.1.0")],
-            vec![offer("ic_ftp_fs", "0.2.0")],
-        );
-        assert_eq!(listed.len(), 1, "the same plugin is not listed twice");
-        assert_eq!(
-            listed[0].offered.as_ref().map(|o| o.version.as_str()),
-            Some("0.2.0")
-        );
-        assert!(listed[0].path.is_some());
-    }
-
-    #[test]
-    fn a_plugin_only_the_catalogue_knows_becomes_a_row_with_nothing_local() {
-        let listed = merge(
-            vec![installed("ic_ftp_fs", "0.1.0")],
-            vec![offer("ic_node_in_net", "0.8.0")],
-        );
-        assert_eq!(listed.len(), 2);
-        let fresh = listed
-            .iter()
-            .find(|row| row.library == "ic_node_in_net")
-            .expect("listed");
-        assert!(fresh.path.is_none(), "there is no file for it yet");
-        assert!(fresh.about.is_none(), "and nothing to read from one");
-        assert_eq!(
-            listed
-                .iter()
-                .map(|row| row.library.as_str())
-                .collect::<Vec<_>>(),
-            vec!["ic_ftp_fs", "ic_node_in_net"],
-            "rows are ordered by library name"
-        );
-    }
-
-    #[test]
-    fn an_empty_catalogue_leaves_the_installed_list_alone() {
-        let listed = merge(vec![installed("ic_ftp_fs", "0.1.0")], Vec::new());
-        assert_eq!(listed.len(), 1);
-        assert!(listed[0].offered.is_none());
-    }
+    (row, update)
 }

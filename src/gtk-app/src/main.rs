@@ -29,6 +29,7 @@ mod player_ui;
 mod plugin_ask;
 mod plugin_canvas;
 mod plugin_host;
+mod plugin_offers;
 mod plugin_view;
 mod secret_store;
 mod settings;
