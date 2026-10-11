@@ -183,6 +183,10 @@ pub enum Chrome {
     #[default]
     Bare,
     Row,
+    /// A `choice` drawn as the list of its options, all in sight, the picked one marked: a
+    /// sidebar of tools rather than a drop-down. A frontend with no room for one, a terminal,
+    /// draws the choice as it always does, and so does an application from before it.
+    List,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
