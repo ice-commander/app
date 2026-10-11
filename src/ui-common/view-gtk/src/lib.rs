@@ -509,16 +509,22 @@ impl Renderer {
         let Some(bytes) = bytes else {
             return (self.nothing_to_show(&named), Control::Plain);
         };
-        let held = gtk::glib::Bytes::from_owned(bytes);
-        let stream = gtk::gio::MemoryInputStream::from_bytes(&held);
-        let drawn = match gtk::gdk_pixbuf::Pixbuf::from_stream(&stream, gtk::gio::Cancellable::NONE)
-        {
-            // A photograph carries which way up it was taken, and every
-            // frontend has to honour it or half of them come out sideways.
-            Ok(pixbuf) => gtk::gdk::Texture::for_pixbuf(
-                &pixbuf.apply_embedded_orientation().unwrap_or(pixbuf),
-            ),
-            Err(_) => return (self.nothing_to_show(&named), Control::Plain),
+        let drawn = if ic_svg_gtk::is_svg(&bytes) {
+            match ic_svg_gtk::picture(&bytes) {
+                Some(texture) => texture,
+                None => return (self.nothing_to_show(&named), Control::Plain),
+            }
+        } else {
+            let held = gtk::glib::Bytes::from_owned(bytes);
+            let stream = gtk::gio::MemoryInputStream::from_bytes(&held);
+            match gtk::gdk_pixbuf::Pixbuf::from_stream(&stream, gtk::gio::Cancellable::NONE) {
+                // A photograph carries which way up it was taken, and every
+                // frontend has to honour it or half of them come out sideways.
+                Ok(pixbuf) => gtk::gdk::Texture::for_pixbuf(
+                    &pixbuf.apply_embedded_orientation().unwrap_or(pixbuf),
+                ),
+                Err(_) => return (self.nothing_to_show(&named), Control::Plain),
+            }
         };
         // A document that said how tall the picture is means it: a sleeve of
         // 180 is 180 whatever the photograph behind it measures. `Picture`

@@ -20,6 +20,10 @@ pub(crate) fn load_image_paintable(pic: &gtk::Picture, data: &[u8], raw: &RawHoo
     } else {
         gtk::glib::Bytes::from(data)
     };
+    if ic_svg_gtk::is_svg(&bytes_glib) {
+        pic.set_paintable(ic_svg_gtk::picture(&bytes_glib).as_ref());
+        return;
+    }
     let stream = gtk::gio::MemoryInputStream::from_bytes(&bytes_glib);
     if let Ok(pixbuf) = gtk::gdk_pixbuf::Pixbuf::from_stream(&stream, gtk::gio::Cancellable::NONE) {
         let pixbuf = pixbuf.apply_embedded_orientation().unwrap_or(pixbuf);

@@ -27,7 +27,8 @@ members = [
 	"src/ui-common/viewer-ui",
 	"src/ui-common/view-gtk",
 	"src/ui-common/canvas-gtk",
-	"src/ui-common/updater-ui"
+	"src/ui-common/updater-ui",
+	"src/ui-common/svg-gtk"
 ]
 resolver = "2"
 
@@ -61,6 +62,7 @@ ic-view = { path = "src/common/ic-view" }
 ic-view-session = { path = "src/common/ic-view-session" }
 ic-view-gtk = { path = "src/ui-common/view-gtk" }
 ic-canvas-gtk = { path = "src/ui-common/canvas-gtk" }
+ic-svg-gtk = { path = "src/ui-common/svg-gtk" }
 ic-platform = { path = "src/common/ic-platform" }
 # The p2p protocol itself: commands, node model, signalling, crypto, BSON wire format.
 # Capability handlers served over p2p; installed by the app at startup.

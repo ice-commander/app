@@ -1,90 +1,21 @@
 use gtk::prelude::*;
 use relm4::ComponentSender;
-use std::cell::RefCell;
-use std::collections::HashMap;
 
 use crate::fm_view::{FmPanelModel, FmPanelOutput, Shared, ThumbnailFn};
 use crate::utils::build_path_string;
 
-thread_local! {
-    static PAINTABLE_CACHE: RefCell<HashMap<String, gtk::gdk::Paintable>> = RefCell::new(HashMap::new());
-}
-
+/// Drawn and kept by the one SVG renderer the application has.
 pub fn generated_svg_paintable(svg_content: String, size: i32) -> Option<gtk::gdk::Paintable> {
-    if let Some(paintable) = PAINTABLE_CACHE.with(|cache| cache.borrow().get(&svg_content).cloned())
-    {
-        return Some(paintable);
-    }
-    let paintable = svg_paintable_uncached(&svg_content, size)?;
-    PAINTABLE_CACHE.with(|cache| {
-        cache.borrow_mut().insert(svg_content, paintable.clone());
-    });
-    Some(paintable)
-}
-
-#[cfg(any(target_os = "macos", target_os = "windows"))]
-fn svg_paintable_uncached(svg_content: &str, size: i32) -> Option<gtk::gdk::Paintable> {
-    use resvg::{tiny_skia, usvg};
-
-    thread_local! {
-        static USVG_OPTIONS: usvg::Options<'static> = {
-            let mut options = usvg::Options::default();
-            options.fontdb_mut().load_system_fonts();
-            options
-        };
-    }
-
-    let tree = USVG_OPTIONS.with(|options| usvg::Tree::from_str(svg_content, options).ok())?;
-    let pixels = (size.max(1) as u32) * 2;
-    let mut pixmap = tiny_skia::Pixmap::new(pixels, pixels)?;
-    let transform = tiny_skia::Transform::from_scale(
-        pixels as f32 / tree.size().width(),
-        pixels as f32 / tree.size().height(),
-    );
-    resvg::render(&tree, transform, &mut pixmap.as_mut());
-    let stride = pixels as usize * 4;
-    let bytes = gtk::glib::Bytes::from_owned(pixmap.take());
-    let texture = gtk::gdk::MemoryTexture::new(
-        pixels as i32,
-        pixels as i32,
-        gtk::gdk::MemoryFormat::R8g8b8a8Premultiplied,
-        &bytes,
-        stride,
-    );
-    Some(texture.upcast())
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-fn svg_paintable_uncached(svg_content: &str, size: i32) -> Option<gtk::gdk::Paintable> {
-    let bytes = gtk::glib::Bytes::from(svg_content.as_bytes());
-    let stream = gtk::gio::MemoryInputStream::from_bytes(&bytes);
-    let pixbuf = gtk::gdk_pixbuf::Pixbuf::from_stream_at_scale(
-        &stream,
-        size,
-        size,
-        true,
-        gtk::gio::Cancellable::NONE,
-    )
-    .ok()?;
-    Some(gtk::gdk::Texture::for_pixbuf(&pixbuf).upcast())
+    ic_svg_gtk::icon(svg_content.as_bytes(), size.max(1) as u32).map(|texture| texture.upcast())
 }
 
 fn set_fixed_resource_icon(picture: &gtk::Picture, resource_path: &str, size: u32) {
-    let cache_key = format!("res:{resource_path}@{size}");
-    if let Some(p) = PAINTABLE_CACHE.with(|c| c.borrow().get(&cache_key).cloned()) {
-        picture.set_paintable(Some(&p));
-        return;
-    }
-    let sz = size as i32;
-    match gtk::gdk_pixbuf::Pixbuf::from_resource_at_scale(resource_path, sz, sz, true) {
-        Ok(pixbuf) => {
-            let paintable: gtk::gdk::Paintable = gtk::gdk::Texture::for_pixbuf(&pixbuf).upcast();
-            PAINTABLE_CACHE.with(|c| {
-                c.borrow_mut().insert(cache_key, paintable.clone());
-            });
-            picture.set_paintable(Some(&paintable));
-        }
-        Err(_) => picture.set_resource(Some(resource_path)),
+    let drawn = gtk::gio::resources_lookup_data(resource_path, gtk::gio::ResourceLookupFlags::NONE)
+        .ok()
+        .and_then(|bytes| ic_svg_gtk::icon(&bytes, size));
+    match drawn {
+        Some(texture) => picture.set_paintable(Some(&texture)),
+        None => picture.set_resource(Some(resource_path)),
     }
 }
 

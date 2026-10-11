@@ -6,6 +6,7 @@ license = "MIT OR Apache-2.0"
 publish = false
 
 [dependencies]
+ic-svg-gtk = { workspace = true }
 gtk = { package = "gtk4", version = "0.9", features = ["v4_12"] }
 adw = { package = "libadwaita", version = "0.7", features = ["v1_6"] }
 ic-i18n = { workspace = true }
