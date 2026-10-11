@@ -96,7 +96,7 @@ export interface Node {
   role?: Cond<Text>
   visible?: Pred
   sensitive?: Pred
-  chrome?: 'bare' | 'row'
+  chrome?: 'bare' | 'row' | 'list'
   variant?: InputVariant
   emit?: 'commit' | 'change'
   scroll?: 'none' | 'vertical' | 'both'

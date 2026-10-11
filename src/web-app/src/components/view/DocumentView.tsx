@@ -388,6 +388,36 @@ function NodeView({ node, ...rest }: DocumentViewProps & { node: Node }) {
     case 'choice': {
       const options = node.options ?? []
       const at = choiceIndex(node, held)
+      if (node.chrome === 'list') {
+        return (
+          <div
+            style={{
+              ...lead,
+              display: 'flex',
+              flexDirection: 'column',
+              flexShrink: 0,
+              width: px(node.width),
+              minHeight: 0,
+              overflowY: 'auto',
+            }}
+            title={text(node.tooltip)}
+          >
+            {options.map((option, index) => (
+              <button
+                key={index}
+                ref={index === at ? bringIntoView : undefined}
+                className={index === at ? 'view-row selected' : 'view-row'}
+                disabled={!live || node.read_only}
+                onClick={() => onChange(node, node.bind ?? '', option.value)}
+              >
+                {option.label === undefined
+                  ? asText(option.value)
+                  : textOf(option.label as Text, translate)}
+              </button>
+            ))}
+          </div>
+        )
+      }
       return (
         <label style={{ ...ROW, ...lead }} title={text(node.tooltip)}>
           <span style={LABEL}>{text(node.title)}</span>

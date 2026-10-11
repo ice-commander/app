@@ -707,6 +707,20 @@ mod tests {
     }
 
     #[test]
+    fn a_choice_can_be_drawn_as_a_list() {
+        let source = json!({
+            "schema": 1,
+            "fields": [ { "bind": "tool", "type": "text", "default": "a" } ],
+            "form": { "t": "row", "children": [
+                { "t": "choice", "id": "tool", "bind": "tool", "chrome": "list",
+                  "options": [ { "value": "a" }, { "value": "b" } ] } ] }
+        });
+        let (document, issues) = validate_source(&source.to_string()).expect("parses");
+        assert_eq!(document.form.children[0].chrome, Chrome::List);
+        assert!(issues.is_empty(), "{issues:?}");
+    }
+
+    #[test]
     fn a_mistyped_conditional_property_is_reported_rather_than_silently_dropped() {
         let source = json!({
             "schema": 1,

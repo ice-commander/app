@@ -163,6 +163,7 @@ enum Control {
     PasswordRow(adw::PasswordEntryRow),
     Switch(gtk::Switch),
     Choice(gtk::DropDown, Rc<Vec<Value>>),
+    ChoiceList(gtk::ListBox, Rc<Vec<Value>>),
     Label(gtk::Label),
     Multiline(gtk::TextView),
     Table(TableView),
@@ -756,19 +757,44 @@ impl Renderer {
                 None => as_text(&option.value),
             })
             .collect();
-        let borrowed: Vec<&str> = labels.iter().map(String::as_str).collect();
-        let dropdown = gtk::DropDown::from_strings(&borrowed);
         let current = node
             .bind
             .as_ref()
             .and_then(|bind| state.state.get(bind))
             .cloned()
             .unwrap_or(Value::Null);
+        let values = Rc::new(node.options.iter().map(|o| o.value.clone()).collect());
+        if node.chrome == Chrome::List {
+            let list = gtk::ListBox::builder()
+                .selection_mode(gtk::SelectionMode::Single)
+                .build();
+            list.add_css_class("navigation-sidebar");
+            for label in &labels {
+                list.append(
+                    &gtk::Label::builder()
+                        .label(label)
+                        .xalign(0.0)
+                        .margin_start(6)
+                        .margin_end(6)
+                        .margin_top(4)
+                        .margin_bottom(4)
+                        .build(),
+                );
+            }
+            if let Some(row) = list.row_at_index(select_index(node, &current) as i32) {
+                list.select_row(Some(&row));
+            }
+            let holder = gtk::ScrolledWindow::builder()
+                .child(&list)
+                .hscrollbar_policy(gtk::PolicyType::Never)
+                .vexpand(true)
+                .build();
+            return (holder.upcast(), Control::ChoiceList(list, values));
+        }
+        let borrowed: Vec<&str> = labels.iter().map(String::as_str).collect();
+        let dropdown = gtk::DropDown::from_strings(&borrowed);
         dropdown.set_selected(select_index(node, &current));
-        let control = Control::Choice(
-            dropdown.clone(),
-            Rc::new(node.options.iter().map(|o| o.value.clone()).collect()),
-        );
+        let control = Control::Choice(dropdown.clone(), values);
         if node.chrome == Chrome::Row {
             let row = adw::ActionRow::builder()
                 .title(self.text(node.title.as_ref(), state).unwrap_or_default())
@@ -1743,6 +1769,7 @@ fn takes_state(control: &Control) -> bool {
             | Control::PasswordRow(_)
             | Control::Switch(_)
             | Control::Choice(_, _)
+            | Control::ChoiceList(_, _)
             | Control::Multiline(_)
     )
 }
@@ -1777,6 +1804,14 @@ fn write_control(bound: &Bound, value: &Value) -> bool {
             let wanted = select_index(&bound.node, value);
             if dropdown.selected() != wanted {
                 dropdown.set_selected(wanted);
+            }
+        }
+        Control::ChoiceList(list, _) => {
+            let wanted = select_index(&bound.node, value) as i32;
+            if list.selected_row().map(|row| row.index()) != Some(wanted) {
+                if let Some(row) = list.row_at_index(wanted) {
+                    list.select_row(Some(&row));
+                }
             }
         }
         Control::Multiline(area) => {
@@ -1899,6 +1934,22 @@ impl BuiltView {
                         return;
                     }
                     handler(bind.clone(), Value::Bool(widget.is_active()));
+                });
+            }
+            Control::ChoiceList(list, values) => {
+                let values = values.clone();
+                list.connect_row_selected(move |_, row| {
+                    let Some(row) = row else {
+                        return;
+                    };
+                    if !note(&bind) {
+                        return;
+                    }
+                    let picked = values
+                        .get(row.index() as usize)
+                        .cloned()
+                        .unwrap_or(Value::Null);
+                    handler(bind.clone(), picked);
                 });
             }
             Control::Choice(dropdown, values) => {
@@ -2137,6 +2188,7 @@ impl BuiltView {
                 }
                 Control::Switch(_)
                 | Control::Choice(_, _)
+                | Control::ChoiceList(_, _)
                 | Control::Multiline(_)
                 | Control::Plain => {}
             }
@@ -2182,6 +2234,11 @@ fn read_control(control: &Control) -> Option<Value> {
             values
                 .get(dropdown.selected() as usize)
                 .cloned()
+                .unwrap_or(Value::Null),
+        ),
+        Control::ChoiceList(list, values) => Some(
+            list.selected_row()
+                .and_then(|row| values.get(row.index() as usize).cloned())
                 .unwrap_or(Value::Null),
         ),
         Control::Slider(scale, _) => Some(number(scale.value())),
