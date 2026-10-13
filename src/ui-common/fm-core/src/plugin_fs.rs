@@ -10,6 +10,20 @@ fn cstr(ptr: *const c_char) -> String {
     unsafe { CStr::from_ptr(ptr) }.to_string_lossy().to_string()
 }
 
+fn taken(last: ic_plugin_api::IcFsErrorFn, handle: ic_plugin_api::IcFsHandle) -> Option<String> {
+    let text = cstr(last(handle));
+    (!text.is_empty()).then_some(text)
+}
+
+fn settled(done: bool, why: Option<String>) -> Result<(), common::AppError> {
+    if done {
+        return Ok(());
+    }
+    Err(common::AppError::Other(why.unwrap_or_else(|| {
+        "the plugin reported no reason".to_string()
+    })))
+}
+
 type Spawner = std::rc::Rc<dyn Fn(std::pin::Pin<Box<dyn std::future::Future<Output = ()>>>)>;
 
 fn filesystems() -> &'static std::sync::Mutex<Vec<FsPlugin>> {
@@ -647,17 +661,10 @@ impl PluginFsRpc {
             .await
     }
 
-    fn error_of(&self, handle: ic_plugin_api::IcFsHandle) -> common::AppError {
-        let ptr = (self
-            .plugin
+    fn last_error(&self) -> ic_plugin_api::IcFsErrorFn {
+        self.plugin
             .last_error_fn()
-            .expect("checked at registration"))(handle);
-        let text = if ptr.is_null() {
-            "the plugin reported no reason".to_string()
-        } else {
-            cstr(ptr)
-        };
-        common::AppError::Other(text)
+            .expect("checked at registration")
     }
 }
 
@@ -769,13 +776,16 @@ impl crate::rpc::FileSystemRpc for PluginFsRpc {
         path: String,
     ) -> Result<Vec<crate::rpc::RemoteFileEntry>, common::AppError> {
         let wanted = CString::new(path).map_err(|e| common::AppError::Other(e.to_string()))?;
+        let last = self.last_error();
         if let Some(rows) = self.plugin.rows_fn() {
             let columns = self.plugin.columns_fn();
-            let (specs, entries) = self
+            let (specs, entries, why) = self
                 .call(move |handle| {
                     let specs = columns.map(|ask| specs_of(ask(handle))).unwrap_or_default();
                     let declared = specs.len();
-                    let entries = rows(handle, wanted.as_ptr())
+                    let got = rows(handle, wanted.as_ptr());
+                    let empty = got.as_slice().is_empty();
+                    let entries = got
                         .as_slice()
                         .iter()
                         .map(|row| crate::rpc::RemoteFileEntry {
@@ -788,29 +798,40 @@ impl crate::rpc::FileSystemRpc for PluginFsRpc {
                         })
                         .filter(|e| !e.name.is_empty())
                         .collect::<Vec<_>>();
-                    (specs, entries)
+                    (specs, entries, taken(last, handle).filter(|_| empty))
                 })
                 .await?;
+            if let Some(why) = why {
+                return Err(common::AppError::Other(why));
+            }
             *self.columns.borrow_mut() = specs;
             return Ok(entries);
         }
         let list = self.plugin.list_fn().expect("checked at registration");
-        self.call(move |handle| {
-            list(handle, wanted.as_ptr())
-                .as_slice()
-                .iter()
-                .map(|e| crate::rpc::RemoteFileEntry {
-                    name: e.name_string(),
-                    is_dir: e.is_directory(),
-                    size: e.size,
-                    modified: e.modified,
-                    permissions: e.permissions_opt(),
-                    extra: Vec::new(),
-                })
-                .filter(|e| !e.name.is_empty())
-                .collect()
-        })
-        .await
+        let (entries, why) = self
+            .call(move |handle| {
+                let got = list(handle, wanted.as_ptr());
+                let empty = got.as_slice().is_empty();
+                let entries = got
+                    .as_slice()
+                    .iter()
+                    .map(|e| crate::rpc::RemoteFileEntry {
+                        name: e.name_string(),
+                        is_dir: e.is_directory(),
+                        size: e.size,
+                        modified: e.modified,
+                        permissions: e.permissions_opt(),
+                        extra: Vec::new(),
+                    })
+                    .filter(|e| !e.name.is_empty())
+                    .collect::<Vec<_>>();
+                (entries, taken(last, handle).filter(|_| empty))
+            })
+            .await?;
+        match why {
+            Some(why) => Err(common::AppError::Other(why)),
+            None => Ok(entries),
+        }
     }
 
     async fn read_file(
@@ -820,14 +841,16 @@ impl crate::rpc::FileSystemRpc for PluginFsRpc {
     ) -> Result<Vec<u8>, common::AppError> {
         let wanted = CString::new(path).map_err(|e| common::AppError::Other(e.to_string()))?;
         let read = self.plugin.read_fn().expect("checked at registration");
-        let owned = self
+        let last = self.last_error();
+        let (owned, why) = self
             .call(move |handle| {
                 let bytes = read(handle, wanted.as_ptr());
-                (!bytes.data.is_null()).then(|| bytes.as_slice().to_vec())
+                let owned = (!bytes.data.is_null()).then(|| bytes.as_slice().to_vec());
+                (owned, taken(last, handle))
             })
             .await?;
         let Some(owned) = owned else {
-            return Err(self.error_of(self.handle.get()));
+            return Err(settled(false, why).unwrap_err());
         };
         if let Some(cb) = progress_callback {
             cb(owned.len() as u64);
@@ -847,19 +870,18 @@ impl crate::rpc::FileSystemRpc for PluginFsRpc {
         let wanted = CString::new(Self::joined(&parent_path, &dir_name))
             .map_err(|e| common::AppError::Other(e.to_string()))?;
         let chmod = permissions.zip(self.plugin.set_permissions_fn());
-        let done = self
+        let last = self.last_error();
+        let (done, why) = self
             .call(move |handle| {
                 let made = create(handle, wanted.as_ptr()) == ic_plugin_api::IC_OK;
                 if let (true, Some((mode, chmod))) = (made, chmod) {
                     // Best effort, as the old SFTP setstat after mkdir was.
                     let _ = chmod(handle, wanted.as_ptr(), mode & 0o7777);
                 }
-                made
+                (made, taken(last, handle))
             })
             .await?;
-        if !done {
-            return Err(self.error_of(self.handle.get()));
-        }
+        settled(done, why)?;
         self.put_back().await
     }
 
@@ -871,16 +893,16 @@ impl crate::rpc::FileSystemRpc for PluginFsRpc {
             .into_iter()
             .map(|path| CString::new(path).map_err(|e| common::AppError::Other(e.to_string())))
             .collect::<Result<_, _>>()?;
-        let done = self
+        let last = self.last_error();
+        let (done, why) = self
             .call(move |handle| {
-                wanted
+                let gone = wanted
                     .iter()
-                    .all(|path| remove(handle, path.as_ptr()) == ic_plugin_api::IC_OK)
+                    .all(|path| remove(handle, path.as_ptr()) == ic_plugin_api::IC_OK);
+                (gone, taken(last, handle))
             })
             .await?;
-        if !done {
-            return Err(self.error_of(self.handle.get()));
-        }
+        settled(done, why)?;
         self.put_back().await
     }
 
@@ -890,12 +912,14 @@ impl crate::rpc::FileSystemRpc for PluginFsRpc {
         };
         let from = CString::new(path).map_err(|e| common::AppError::Other(e.to_string()))?;
         let to = CString::new(new).map_err(|e| common::AppError::Other(e.to_string()))?;
-        let done = self
-            .call(move |handle| rename(handle, from.as_ptr(), to.as_ptr()) == ic_plugin_api::IC_OK)
+        let last = self.last_error();
+        let (done, why) = self
+            .call(move |handle| {
+                let moved = rename(handle, from.as_ptr(), to.as_ptr()) == ic_plugin_api::IC_OK;
+                (moved, taken(last, handle))
+            })
             .await?;
-        if !done {
-            return Err(self.error_of(self.handle.get()));
-        }
+        settled(done, why)?;
         self.put_back().await
     }
 
@@ -912,7 +936,8 @@ impl crate::rpc::FileSystemRpc for PluginFsRpc {
         let wanted = CString::new(path).map_err(|e| common::AppError::Other(e.to_string()))?;
         let written = content.len() as u64;
         let chmod = permissions.zip(self.plugin.set_permissions_fn());
-        let done = self
+        let last = self.last_error();
+        let (done, why) = self
             .call(move |handle| {
                 let wrote = write(handle, wanted.as_ptr(), content.as_ptr(), written)
                     == ic_plugin_api::IC_OK;
@@ -920,12 +945,10 @@ impl crate::rpc::FileSystemRpc for PluginFsRpc {
                     // Best effort, as the old SFTP setstat after a write was.
                     let _ = chmod(handle, wanted.as_ptr(), mode & 0o7777);
                 }
-                wrote
+                (wrote, taken(last, handle))
             })
             .await?;
-        if !done {
-            return Err(self.error_of(self.handle.get()));
-        }
+        settled(done, why)?;
         self.put_back().await?;
         if let Some(report) = progress_callback {
             report(written);
@@ -948,14 +971,15 @@ impl crate::rpc::FileSystemRpc for PluginFsRpc {
             ));
         };
         let wanted = CString::new(path).map_err(|e| common::AppError::Other(e.to_string()))?;
-        let done = self
+        let last = self.last_error();
+        let (done, why) = self
             .call(move |handle| {
-                chmod(handle, wanted.as_ptr(), permissions & 0o7777) == ic_plugin_api::IC_OK
+                let set =
+                    chmod(handle, wanted.as_ptr(), permissions & 0o7777) == ic_plugin_api::IC_OK;
+                (set, taken(last, handle))
             })
             .await?;
-        if !done {
-            return Err(self.error_of(self.handle.get()));
-        }
+        settled(done, why)?;
         self.put_back().await
     }
 
@@ -2891,5 +2915,181 @@ mod tests {
             crate::rpc::ContentWait::Bounded(std::time::Duration::from_secs(7)),
             "a remote parent's timeout must reach the nested level"
         );
+    }
+
+    thread_local! {
+        static TAKE_ROWS: RefCell<Vec<&'static str>> = const { RefCell::new(Vec::new()) };
+        static TAKE_FAILS: RefCell<Option<&'static str>> = const { RefCell::new(None) };
+        static TAKE_PENDING: RefCell<Option<String>> = const { RefCell::new(None) };
+        static TAKE_SAID: RefCell<Option<CString>> = const { RefCell::new(None) };
+        static TAKE_ASKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+        static TAKE_BLANK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        static TAKE_NAMES: RefCell<Vec<CString>> = const { RefCell::new(Vec::new()) };
+        static TAKE_ENTRIES: RefCell<Vec<ic_plugin_api::IcDirEntry>> = const { RefCell::new(Vec::new()) };
+    }
+
+    fn take_fails_with(why: &'static str) {
+        TAKE_PENDING.with(|p| *p.borrow_mut() = Some(why.to_string()));
+    }
+
+    extern "C" fn take_list(_: ic_plugin_api::IcFsHandle, _: *const c_char) -> ic_plugin_api::IcListing {
+        if let Some(why) = TAKE_FAILS.with(|f| *f.borrow()) {
+            take_fails_with(why);
+            return ic_plugin_api::IcListing::EMPTY;
+        }
+        let rows = TAKE_ROWS.with(|r| r.borrow().clone());
+        TAKE_NAMES.with(|names| {
+            *names.borrow_mut() = rows.iter().map(|n| CString::new(*n).unwrap()).collect();
+        });
+        TAKE_ENTRIES.with(|entries| {
+            *entries.borrow_mut() = TAKE_NAMES.with(|names| {
+                names
+                    .borrow()
+                    .iter()
+                    .map(|n| ic_plugin_api::IcDirEntry {
+                        name: n.as_ptr(),
+                        is_dir: 0,
+                        size: 1,
+                        modified: 0,
+                        permissions: 0,
+                        has_permissions: 0,
+                    })
+                    .collect()
+            });
+            let held = entries.borrow();
+            ic_plugin_api::IcListing {
+                items: if held.is_empty() { std::ptr::null() } else { held.as_ptr() },
+                count: held.len() as u32,
+            }
+        })
+    }
+
+    extern "C" fn take_last_error(_: ic_plugin_api::IcFsHandle) -> *const c_char {
+        TAKE_ASKED.with(|a| a.set(a.get() + 1));
+        let handed = TAKE_PENDING.with(|p| p.borrow_mut().take());
+        TAKE_SAID.with(|said| {
+            *said.borrow_mut() = match handed {
+                Some(text) => Some(CString::new(text).unwrap()),
+                None if TAKE_BLANK.with(|b| b.get()) => Some(CString::default()),
+                None => None,
+            };
+            said.borrow().as_ref().map(|t| t.as_ptr()).unwrap_or(std::ptr::null())
+        })
+    }
+
+    extern "C" fn take_create_dir(_: ic_plugin_api::IcFsHandle, _: *const c_char) -> c_int {
+        ic_plugin_api::IC_OK
+    }
+
+    extern "C" fn take_chmod_refuses(
+        _: ic_plugin_api::IcFsHandle,
+        _: *const c_char,
+        _: u32,
+    ) -> c_int {
+        take_fails_with("chmod is not allowed here");
+        -1
+    }
+
+    fn take_filesystem(extension: &str) -> PluginFsRpc {
+        TAKE_ROWS.with(|r| r.borrow_mut().clear());
+        TAKE_FAILS.with(|f| *f.borrow_mut() = None);
+        TAKE_PENDING.with(|p| *p.borrow_mut() = None);
+        TAKE_ASKED.with(|a| a.set(0));
+        TAKE_BLANK.with(|b| b.set(false));
+        let vtable = ic_plugin_api::IcFsVTable {
+            open_in: stub_open_in,
+            is_read_only: writable,
+            list: take_list,
+            last_error: take_last_error,
+            create_dir: Some(take_create_dir),
+            set_permissions: Some(take_chmod_refuses),
+            ..table()
+        };
+        let exts = CString::new(extension).unwrap();
+        assert_eq!(
+            register(exts.as_ptr(), &vtable, std::ptr::null_mut()),
+            ic_plugin_api::IC_OK
+        );
+        let plugin = filesystem_for(&format!("x{extension}")).expect("registered");
+        let parent: std::rc::Rc<dyn crate::rpc::FileSystemRpc> = std::rc::Rc::new(SlowParent {
+            opened: std::rc::Rc::new(std::cell::Cell::new(0)),
+        });
+        PluginFsRpc::new(plugin, format!("x{extension}"), parent)
+    }
+
+    fn listed(fs: &PluginFsRpc) -> Result<Vec<String>, String> {
+        use crate::rpc::FileSystemRpc;
+        futures::executor::block_on(fs.list_dir("/".to_string()))
+            .map(|rows| rows.into_iter().map(|r| r.name).collect())
+            .map_err(|e| e.to_string())
+    }
+
+    #[test]
+    fn a_folder_that_could_not_be_listed_is_an_error_and_not_an_empty_folder() {
+        let _lease = lease_registry_for_test();
+        let fs = take_filesystem(".take1");
+        TAKE_FAILS.with(|f| *f.borrow_mut() = Some("SFTP ReadDir: permission denied"));
+        let got = listed(&fs).unwrap_err();
+        assert!(got.contains("SFTP ReadDir: permission denied"), "got {got}");
+    }
+
+    #[test]
+    fn an_empty_folder_with_no_reason_is_simply_empty() {
+        let _lease = lease_registry_for_test();
+        let fs = take_filesystem(".take2");
+        assert_eq!(listed(&fs), Ok(Vec::new()));
+    }
+
+    #[test]
+    fn a_failure_is_reported_once_and_the_empty_folder_after_it_is_clean() {
+        let _lease = lease_registry_for_test();
+        let fs = take_filesystem(".take3");
+        TAKE_FAILS.with(|f| *f.borrow_mut() = Some("TCP Connect: Connection refused"));
+        assert!(listed(&fs).is_err());
+        TAKE_FAILS.with(|f| *f.borrow_mut() = None);
+        assert_eq!(listed(&fs), Ok(Vec::new()), "the old failure came back on an empty folder");
+    }
+
+    #[test]
+    fn an_empty_string_from_last_error_means_there_is_no_error() {
+        let _lease = lease_registry_for_test();
+        let fs = take_filesystem(".take4");
+        TAKE_BLANK.with(|b| b.set(true));
+        assert_eq!(listed(&fs), Ok(Vec::new()));
+    }
+
+    #[test]
+    fn a_listing_with_entries_is_never_an_error_and_its_stray_reason_is_drained() {
+        let _lease = lease_registry_for_test();
+        let fs = take_filesystem(".take5");
+        TAKE_ROWS.with(|r| *r.borrow_mut() = vec!["a.txt", "b.txt"]);
+        take_fails_with("a warning nobody asked for");
+        assert_eq!(listed(&fs), Ok(vec!["a.txt".to_string(), "b.txt".to_string()]));
+        TAKE_ROWS.with(|r| r.borrow_mut().clear());
+        assert_eq!(listed(&fs), Ok(Vec::new()), "the stray reason surfaced on the next folder");
+    }
+
+    #[test]
+    fn a_best_effort_chmod_that_fails_does_not_surface_on_the_next_listing() {
+        use crate::rpc::FileSystemRpc;
+        let _lease = lease_registry_for_test();
+        let fs = take_filesystem(".take6");
+        futures::executor::block_on(fs.create_directory(
+            "/".to_string(),
+            "made".to_string(),
+            Some(0o600),
+        ))
+        .expect("the folder was made even though chmod after it failed");
+        assert_eq!(listed(&fs), Ok(Vec::new()), "the ignored chmod failure leaked into a listing");
+    }
+
+    #[test]
+    fn the_host_asks_for_the_reason_once_per_call() {
+        let _lease = lease_registry_for_test();
+        let fs = take_filesystem(".take7");
+        let before = TAKE_ASKED.with(|a| a.get());
+        let _ = listed(&fs);
+        let _ = listed(&fs);
+        assert_eq!(TAKE_ASKED.with(|a| a.get()) - before, 2);
     }
 }

@@ -499,7 +499,6 @@ impl MainWindow {
                 border-radius: 6px;
                 min-height: 0;
                 padding: 2px 2px;
-                margin: 4px 0 0px 0;
             }
             .nav-pill button,
             .address-pill button {

@@ -194,6 +194,7 @@ pub enum FmPanelInput {
 
 #[derive(Debug)]
 pub enum FmPanelOutput {
+    Located(BreadcrumbSegment),
     Cut,
     Copy,
     Paste,
@@ -1123,9 +1124,8 @@ impl SimpleComponent for FmPanelModel {
         }
 
         let address_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        address_row.set_margin_start(8);
-        address_row.set_margin_end(8);
-        address_row.set_margin_top(2);
+        address_row.set_margin_top(3);
+        address_row.set_margin_bottom(3);
         address_row.append(&nav_pill);
         address_row.append(&breadcrumbs_scroller);
 
@@ -2105,7 +2105,33 @@ fn render_breadcrumbs(model: &FmPanelModel, sender: &ComponentSender<FmPanelMode
         bc.append(&build_crumb(segment, i, segs.len(), sender));
     }
 
+    if source_changed || *segs != prev_segs {
+        let place = current_place(segs, &model.shared.source.borrow());
+        let _ = sender.output(FmPanelOutput::Located(place));
+    }
+
     *model.views.rendered_crumbs.borrow_mut() = (source_key, segs.clone());
+}
+
+fn root_icon_of(source: &SourceInfo) -> String {
+    if source.root_icon.is_empty() {
+        "/com/fm-ui/gtk/home.svg".to_string()
+    } else {
+        source.root_icon.clone()
+    }
+}
+
+fn current_place(segs: &[BreadcrumbSegment], source: &SourceInfo) -> BreadcrumbSegment {
+    segs.last().cloned().unwrap_or_else(|| BreadcrumbSegment {
+        name: source
+            .display_name
+            .clone()
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| "/".to_string()),
+        path: String::new(),
+        icon: root_icon_of(source),
+        icon_svg: source.root_icon_svg.clone(),
+    })
 }
 
 fn append_root_chip(model: &FmPanelModel, sender: &ComponentSender<FmPanelModel>, bc: &gtk::Box) {
@@ -2125,11 +2151,7 @@ fn append_root_chip(model: &FmPanelModel, sender: &ComponentSender<FmPanelModel>
     bc.append(&flag_btn);
 
     let source = model.shared.source.borrow();
-    let root_icon = if source.root_icon.is_empty() {
-        "/com/fm-ui/gtk/home.svg".to_string()
-    } else {
-        source.root_icon.clone()
-    };
+    let root_icon = root_icon_of(&source);
     let root_img = match source.root_icon_svg.clone().and_then(|svg| {
         crate::view_factories::generated_svg_paintable(svg, crate::utils::TOOLBAR_ICON_SIZE)
     }) {
@@ -2600,6 +2622,58 @@ mod tests {
         assert!(glob_match("*отчёт*", "мой отчёт.pdf"));
         assert!(glob_match("?.mp3", "🎧.mp3"));
         assert!(!glob_match("?.mp3", "ab.mp3"));
+    }
+
+    fn crumb(name: &str, icon: &str) -> BreadcrumbSegment {
+        BreadcrumbSegment {
+            name: name.to_string(),
+            path: format!("/{name}"),
+            icon: icon.to_string(),
+            icon_svg: None,
+        }
+    }
+
+    fn source(name: Option<&str>, root_icon: &str) -> SourceInfo {
+        SourceInfo {
+            display_name: name.map(str::to_string),
+            root_icon: root_icon.to_string(),
+            ..SourceInfo::default()
+        }
+    }
+
+    #[test]
+    fn inside_a_folder_the_place_is_the_last_crumb_with_its_own_icon() {
+        let segs = [crumb("home", "/folder.svg"), crumb("f145h", "/user-home.svg")];
+        let here = current_place(&segs, &source(Some("f145h-pc"), "/pc.svg"));
+        assert_eq!(here.name, "f145h");
+        assert_eq!(here.icon, "/user-home.svg");
+    }
+
+    #[test]
+    fn at_the_root_the_place_is_what_the_root_chip_shows() {
+        let here = current_place(&[], &source(Some("Fozzy-Tunnel"), "/sftp.svg"));
+        assert_eq!(here.name, "Fozzy-Tunnel");
+        assert_eq!(here.icon, "/sftp.svg");
+    }
+
+    #[test]
+    fn a_root_without_an_icon_falls_back_the_same_way_the_root_chip_does() {
+        let here = current_place(&[], &source(Some("disk"), ""));
+        assert_eq!(here.icon, root_icon_of(&source(None, "")));
+        assert_eq!(here.icon, "/com/fm-ui/gtk/home.svg");
+    }
+
+    #[test]
+    fn a_root_with_no_name_is_called_slash_rather_than_left_blank() {
+        assert_eq!(current_place(&[], &source(None, "/x.svg")).name, "/");
+        assert_eq!(current_place(&[], &source(Some(""), "/x.svg")).name, "/");
+    }
+
+    #[test]
+    fn a_drawn_root_icon_travels_with_the_place() {
+        let mut src = source(Some("Torrent"), "/t.svg");
+        src.root_icon_svg = Some("<svg/>".to_string());
+        assert_eq!(current_place(&[], &src).icon_svg.as_deref(), Some("<svg/>"));
     }
 
     #[test]

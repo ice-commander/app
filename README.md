@@ -1,5 +1,11 @@
 # Ice Commander
 
+> [!IMPORTANT]
+> **Upgrading to 0.8? Connections, archives and viewers are now plugins.**
+> If the Protocol list in *Manage Connections* is empty, or a feature you used is gone,
+> open **Settings → Plugins**, install what you need — FTP, SFTP, WebDAV and more — and
+> restart Ice Commander. [Why this changed](#current-state-of-the-project)
+
 A cross-platform dual-pane file manager — Linux, macOS and Windows. Written in Rust with
 GTK4 and libadwaita.
 

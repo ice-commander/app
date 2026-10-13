@@ -53,6 +53,15 @@ pub(super) fn build_header_bar(
         .build();
     theme_btn.set_cursor_from_name(Some("pointer"));
 
+    let feedback_img = gtk::Image::from_resource("/com/icecommander/gtk/feedback.svg");
+    feedback_img.set_pixel_size(20);
+    let feedback_btn = Button::builder()
+        .child(&feedback_img)
+        .tooltip_text(&*crate::i18n::tr("feedback.title"))
+        .build();
+    feedback_btn.set_cursor_from_name(Some("pointer"));
+    feedback_btn.connect_clicked(|b| crate::feedback::show(b));
+
     let theme_btn_img_notify = theme_btn_img.clone();
     adw::StyleManager::default().connect_dark_notify(move |sm| {
         if sm.is_dark() {
@@ -216,6 +225,7 @@ pub(super) fn build_header_bar(
         header_bar.pack_start(&btn);
     }
     header_bar.pack_end(&theme_btn);
+    header_bar.pack_end(&feedback_btn);
     header_bar.pack_end(&conn_btn);
     if let Some(ref web_btn) = web_btn {
         header_bar.pack_end(web_btn);
