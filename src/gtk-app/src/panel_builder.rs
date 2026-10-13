@@ -903,7 +903,7 @@ fn build_tab(
         .transition_type(gtk::StackTransitionType::Crossfade)
         .build();
 
-    let (tab_switch, tab_header) = create_drives_toolbar(
+    let (tab_switch, tab_header, show_place) = create_drives_toolbar(
         router.clone(),
         stack.clone(),
         selector_updaters.clone(),
@@ -911,6 +911,12 @@ fn build_tab(
         config.clone(),
         nav_hook,
     );
+    show_place(gtk_fm_ui::BreadcrumbSegment {
+        name: tab_title_for(&initial_path),
+        path: String::new(),
+        icon: "/com/fm-ui/gtk/folder.svg".to_string(),
+        icon_svg: None,
+    });
 
     let on_open_panel_source: std::rc::Rc<dyn Fn(&str)> = {
         let stack = stack.clone();
@@ -991,6 +997,7 @@ fn build_tab(
         let drop_hook = drop_hook.clone();
         let config = config.clone();
         let clipboard_out = clipboard.clone();
+        let show_place = show_place.clone();
         gtk::glib::spawn_future_local(async move {
             use gtk_fm_ui::{FmPanelInput, FmPanelOutput};
             while let Some(out) = out_rx.recv().await {
@@ -1164,6 +1171,7 @@ fn build_tab(
                             f(files);
                         }
                     }
+                    FmPanelOutput::Located(here) => show_place(here),
                     _ => {}
                 }
             }

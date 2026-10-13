@@ -121,7 +121,7 @@ pub fn create_drives_toolbar(
     shift_held: Rc<std::cell::Cell<bool>>,
     config: client_config::AppConfig,
     nav_hook: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
-) -> (Box, DropDown) {
+) -> (Box, DropDown, Rc<dyn Fn(gtk_fm_ui::BreadcrumbSegment)>) {
     let is_syncing = Rc::new(std::cell::Cell::new(false));
     let monitor = gtk::gio::VolumeMonitor::get();
     let string_list = gtk::StringList::new(&[]);
@@ -192,7 +192,10 @@ pub fn create_drives_toolbar(
     switch_icon.set_pixel_size(20);
     let switch_label = Label::builder()
         .halign(Align::Start)
-        .ellipsize(gtk::pango::EllipsizeMode::End)
+        .ellipsize(gtk::pango::EllipsizeMode::Middle)
+        .width_chars(10)
+        .max_width_chars(18)
+        .xalign(0.0)
         .build();
     let switch_box = Box::builder()
         .orientation(Orientation::Horizontal)
@@ -201,23 +204,34 @@ pub fn create_drives_toolbar(
     switch_box.append(&switch_icon);
     switch_box.append(&switch_label);
 
-    let update_switch: Rc<dyn Fn()> = {
-        let dd = drive_dropdown.clone();
-        let items = drive_items.clone();
+    let place: Rc<RefCell<Option<gtk_fm_ui::BreadcrumbSegment>>> = Rc::new(RefCell::new(None));
+    let show_title: Rc<dyn Fn()> = {
+        let stack = stack.clone();
+        let place = place.clone();
         let icon = switch_icon.clone();
         let lbl = switch_label.clone();
+        let tab = switch_box.clone();
         Rc::new(move || {
-            let sel = dd.selected();
-            if let Some(item) = items.borrow().get(sel as usize) {
-                lbl.set_text(&item.name);
-                show_drive_icon(&icon, item);
+            if stack.visible_child_name().as_deref() == Some("selector") {
+                icon.set_resource(Some("/com/fm-ui/gtk/start.svg"));
+                lbl.set_text(&crate::i18n::tr("selector.title"));
+                tab.set_tooltip_text(None);
+                return;
+            }
+            if let Some(here) = place.borrow().as_ref() {
+                let drawn = here
+                    .icon_svg
+                    .as_deref()
+                    .and_then(|svg| crate::plugin_host::texture_from_svg(svg.as_bytes(), 20));
+                match drawn {
+                    Some(texture) => icon.set_paintable(Some(&texture)),
+                    None => icon.set_resource(Some(&here.icon)),
+                }
+                lbl.set_text(&here.name);
+                tab.set_tooltip_text(Some(&here.name));
             }
         })
     };
-    drive_dropdown.connect_selected_notify({
-        let update = update_switch.clone();
-        move |_| update()
-    });
 
     let update_volumes_ui = {
         let string_list = string_list.clone();
@@ -262,10 +276,10 @@ pub fn create_drives_toolbar(
                 }
             }
 
-            let mut active_idx = 0;
+            let mut active_idx = gtk::INVALID_LIST_POSITION;
             for (idx, item) in items.iter().enumerate() {
                 if is_currently_active(&router, &item.item, &stack) {
-                    active_idx = idx;
+                    active_idx = idx as u32;
                 }
             }
 
@@ -274,7 +288,7 @@ pub fn create_drives_toolbar(
             is_syncing_vol.set(true);
             *drive_items.borrow_mut() = items;
             string_list.splice(0, string_list.n_items(), &dropdown_refs);
-            drive_dropdown_vol.set_selected(active_idx as u32);
+            drive_dropdown_vol.set_selected(active_idx);
             is_syncing_vol.set(false);
         })
     };
@@ -284,7 +298,7 @@ pub fn create_drives_toolbar(
         .push(update_volumes_ui.clone());
 
     update_volumes_ui();
-    update_switch();
+    show_title();
 
     {
         let update1 = update_volumes_ui.clone();
@@ -429,12 +443,10 @@ pub fn create_drives_toolbar(
             if is_in_fm {
                 drop(items);
                 update_vol_sync();
-            } else {
-                if drive_dropdown_sync.selected() != 0 {
-                    is_syncing_sync.set(true);
-                    drive_dropdown_sync.set_selected(0);
-                    is_syncing_sync.set(false);
-                }
+            } else if drive_dropdown_sync.selected() != gtk::INVALID_LIST_POSITION {
+                is_syncing_sync.set(true);
+                drive_dropdown_sync.set_selected(gtk::INVALID_LIST_POSITION);
+                is_syncing_sync.set(false);
             }
         }
     });
@@ -453,8 +465,10 @@ pub fn create_drives_toolbar(
     stack.connect_visible_child_name_notify({
         let sync = sync_selection.clone();
         let nav_hook = nav_hook.clone();
+        let show_title = show_title.clone();
         move |st| {
             sync();
+            show_title();
             let on_selector = st
                 .visible_child_name()
                 .map(|n| n == "selector")
@@ -467,7 +481,11 @@ pub fn create_drives_toolbar(
         }
     });
 
-    (switch_box, drive_dropdown)
+    let set_place: Rc<dyn Fn(gtk_fm_ui::BreadcrumbSegment)> = Rc::new(move |here| {
+        *place.borrow_mut() = Some(here);
+        show_title();
+    });
+    (switch_box, drive_dropdown, set_place)
 }
 
 fn show_error(parent: &impl IsA<gtk::Widget>, title: &str, msg: &str) {

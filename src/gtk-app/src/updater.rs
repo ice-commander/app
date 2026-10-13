@@ -11,7 +11,7 @@ const DEFAULT_UPDATE_SERVER: &str = "https://www.icecommander.com";
 const APP_NAME: &str = "Ice Commander";
 const FILE_PREFIX: &str = "icecommander";
 
-fn update_server() -> String {
+pub(crate) fn update_server() -> String {
     let raw = std::env::var("IC_UPDATE_SERVER").unwrap_or_default();
     let raw = raw.trim().trim_end_matches('/');
     if raw.is_empty() {
@@ -234,7 +234,13 @@ async fn ask_site() -> Result<Checked, String> {
         "platform": updates::platform(),
     });
     let resp = reqwest::Client::new()
-        .post(format!("{}/api/checkUpdates", update_server()))
+        .post(format!(
+            "{}/api/checkUpdates?app_type={}&build_type={}&version={}",
+            update_server(),
+            common::version::APP_TYPE,
+            common::version::BUILD_TYPE,
+            common::version::APP_VERSION,
+        ))
         .json(&asked)
         .send()
         .await

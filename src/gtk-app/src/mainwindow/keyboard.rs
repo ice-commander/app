@@ -239,7 +239,9 @@ pub(super) fn setup_keyboard(
         if keyval == gtk::gdk::Key::Tab {
             let is_textview = gtk::prelude::GtkWindowExt::focus(&window_pressed)
                 .map_or(false, |w| w.is::<gtk::TextView>());
-            if is_textview {
+            let dialog_up =
+                adw::prelude::AdwApplicationWindowExt::visible_dialog(&window_pressed).is_some();
+            if is_textview || dialog_up {
                 gtk::glib::Propagation::Proceed
             } else {
                 if left_panel_pressed

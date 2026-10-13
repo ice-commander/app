@@ -81,6 +81,7 @@
     <file compressed="true" preprocess="xml-stripblanks">edit-file.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">empty-star.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">expand.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">feedback.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">night.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">at-home.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">ssd.svg</file>
