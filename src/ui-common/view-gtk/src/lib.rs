@@ -221,6 +221,8 @@ pub struct Renderer {
     media: Option<MediaSource>,
     player: Option<PlayerSource>,
     canvas: Option<CanvasSource>,
+    /// The widest a document may ask a node to be; a narrow screen keeps everything within it.
+    max_width: Option<i32>,
 }
 
 impl Renderer {
@@ -232,7 +234,13 @@ impl Renderer {
             media: None,
             player: None,
             canvas: None,
+            max_width: None,
         }
+    }
+
+    pub fn with_max_width(mut self, max_width: Option<i32>) -> Renderer {
+        self.max_width = max_width;
+        self
     }
 
     pub fn with_icons(mut self, icons: IconSource) -> Renderer {
@@ -371,7 +379,8 @@ impl Renderer {
         };
 
         if let Some(width) = node.width {
-            frame.set_width_request(width as i32);
+            let width = width as i32;
+            frame.set_width_request(self.max_width.map_or(width, |max| width.min(max)));
         }
         if let Some(height) = node.height {
             frame.set_height_request(height as i32);
@@ -559,6 +568,7 @@ impl Renderer {
             .hexpand(true)
             .vexpand(true)
             .build();
+        zoom_by_hand(&scroller, &picture);
         (scroller.upcast(), Control::Plain)
     }
 
@@ -1436,6 +1446,7 @@ fn bind_keys(built: &BuiltView) {
             bound.push((accel.to_lowercase(), button.clone()));
         }
     }
+    swipe_like_arrows(built, &bound);
     if !built.keys.is_empty() {
         let pressing = built.document_keys();
         // Bubble, so a focused slider or list inside the view keeps its arrows.
@@ -1471,6 +1482,151 @@ fn bind_keys(built: &BuiltView) {
         }
     });
     built.root.add_controller(keys);
+}
+
+/// Pinch, a double tap, or Ctrl and the wheel: the picture grows past the room it was fitted into
+/// and the scroller pans it, keeping the point under the fingers where it was.
+fn zoom_by_hand(scroller: &gtk::ScrolledWindow, picture: &gtk::Picture) {
+    const MOST: f64 = 8.0;
+    let scale = Rc::new(std::cell::Cell::new(1.0f64));
+    // The point to bring back under (x, y), as fractions of the picture, once it is laid out anew.
+    let pending = Rc::new(std::cell::Cell::new(None::<(f64, f64, f64, f64)>));
+    let place = {
+        let (h, v, pending) = (scroller.hadjustment(), scroller.vadjustment(), pending.clone());
+        move || {
+            if let Some((fx, fy, x, y)) = pending.take() {
+                h.set_value(fx * h.upper() - x);
+                v.set_value(fy * v.upper() - y);
+            }
+        }
+    };
+    let place = Rc::new(place);
+    for adjustment in [scroller.hadjustment(), scroller.vadjustment()] {
+        let place = place.clone();
+        adjustment.connect_changed(move |_| place());
+    }
+    let zoom: Rc<dyn Fn(f64, f64, f64)> = {
+        let (scroller, picture, scale) = (scroller.clone(), picture.clone(), scale.clone());
+        Rc::new(move |wanted: f64, x: f64, y: f64| {
+            let wanted = wanted.clamp(1.0, MOST);
+            if (wanted - scale.get()).abs() < 0.01 {
+                return;
+            }
+            let (h, v) = (scroller.hadjustment(), scroller.vadjustment());
+            pending.set(Some((
+                (h.value() + x) / h.upper().max(1.0),
+                (v.value() + y) / v.upper().max(1.0),
+                x,
+                y,
+            )));
+            scale.set(wanted);
+            if wanted <= 1.0 {
+                picture.set_size_request(-1, -1);
+            } else {
+                picture.set_size_request(
+                    (f64::from(scroller.width()) * wanted) as i32,
+                    (f64::from(scroller.height()) * wanted) as i32,
+                );
+            }
+        })
+    };
+
+    let pinch = gtk::GestureZoom::new();
+    pinch.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let from = Rc::new(std::cell::Cell::new(1.0f64));
+    {
+        let (from, scale) = (from.clone(), scale.clone());
+        pinch.connect_begin(move |gesture, _| {
+            // Two fingers are a pinch, not the scroller's pan.
+            gesture.set_state(gtk::EventSequenceState::Claimed);
+            from.set(scale.get());
+        });
+    }
+    {
+        let (zoom, scroller) = (zoom.clone(), scroller.clone());
+        pinch.connect_scale_changed(move |gesture, by| {
+            let (x, y) = gesture.bounding_box_center().unwrap_or((
+                f64::from(scroller.width()) / 2.0,
+                f64::from(scroller.height()) / 2.0,
+            ));
+            zoom(from.get() * by, x, y);
+        });
+    }
+    scroller.add_controller(pinch);
+
+    let taps = gtk::GestureClick::new();
+    {
+        let (zoom, scale) = (zoom.clone(), scale.clone());
+        taps.connect_pressed(move |_, presses, x, y| {
+            if presses == 2 {
+                zoom(if scale.get() > 1.0 { 1.0 } else { 2.5 }, x, y);
+            }
+        });
+    }
+    scroller.add_controller(taps);
+
+    let pointer = Rc::new(std::cell::Cell::new((0.0f64, 0.0f64)));
+    let motion = gtk::EventControllerMotion::new();
+    {
+        let pointer = pointer.clone();
+        motion.connect_motion(move |_, x, y| pointer.set((x, y)));
+    }
+    scroller.add_controller(motion);
+    let wheel = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
+    wheel.set_propagation_phase(gtk::PropagationPhase::Capture);
+    wheel.connect_scroll(move |controller, _, dy| {
+        if !controller
+            .current_event_state()
+            .contains(gtk::gdk::ModifierType::CONTROL_MASK)
+        {
+            return glib::Propagation::Proceed;
+        }
+        let (x, y) = pointer.get();
+        zoom(scale.get() * 1.2f64.powf(-dy), x, y);
+        glib::Propagation::Stop
+    });
+    scroller.add_controller(wheel);
+}
+
+/// A swipe across a picture that is not zoomed in does what Left and Right do: turns the page.
+fn swipe_like_arrows(built: &BuiltView, bound: &[(String, gtk::Button)]) {
+    let arrow = |named: &str| {
+        bound
+            .iter()
+            .find(|(accel, _)| accel == named)
+            .map(|(_, button)| button.clone())
+    };
+    let (left, right) = (arrow("left"), arrow("right"));
+    if left.is_none() && right.is_none() {
+        return;
+    }
+    for held in &built.bound {
+        if held.node.kind() != NodeKind::Image || !held.node.zoom {
+            continue;
+        }
+        let Ok(scroller) = held.frame.clone().downcast::<gtk::ScrolledWindow>() else {
+            continue;
+        };
+        let swipe = gtk::GestureSwipe::new();
+        swipe.set_touch_only(true);
+        let (left, right, panned) = (left.clone(), right.clone(), scroller.clone());
+        swipe.connect_swipe(move |_, vx, vy| {
+            let zoomed = [panned.hadjustment(), panned.vadjustment()]
+                .iter()
+                .any(|adjustment| adjustment.upper() - adjustment.page_size() > 1.0);
+            if zoomed || vx.abs() < 300.0 || vx.abs() < vy.abs() * 1.5 {
+                return;
+            }
+            let turned = if vx < 0.0 { &right } else { &left };
+            if let Some(button) = turned
+                .as_ref()
+                .filter(|button| button.is_sensitive() && button.is_visible())
+            {
+                button.emit_clicked();
+            }
+        });
+        scroller.add_controller(swipe);
+    }
 }
 
 /// The document's `keys`, pressable from outside the view, such as from the window holding it.

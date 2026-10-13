@@ -89,13 +89,7 @@ pub fn show_search_dialog<P: glib::object::IsA<gtk::Window>>(
         println!("[SEARCH UI] Warning: active file manager has no provider.");
     }
 
-    let dialog = gtk::Window::builder()
-        .title(&*crate::i18n::tr("find.title"))
-        .transient_for(parent)
-        .modal(true)
-        .default_width(750)
-        .default_height(550)
-        .build();
+    let dialog = crate::ui::surface::Surface::new(parent, &crate::i18n::tr("find.title"), 750, 550);
 
     let main_box = Box::builder()
         .orientation(Orientation::Vertical)
@@ -201,7 +195,7 @@ pub fn show_search_dialog<P: glib::object::IsA<gtk::Window>>(
         .build();
     main_box.append(&status_label);
 
-    dialog.set_child(Some(&main_box));
+    dialog.set_child(&main_box);
 
     let searching = Rc::new(RefCell::new(false));
     let cancel_flag = Rc::new(RefCell::new(false));
@@ -214,7 +208,7 @@ pub fn show_search_dialog<P: glib::object::IsA<gtk::Window>>(
     let destroyed_c = destroyed.clone();
     let cancel_flag_c = cancel_flag.clone();
     let thread_cancel_c = thread_cancel_flag.clone();
-    dialog.connect_destroy(move |_| {
+    dialog.connect_closed(move || {
         println!("[SEARCH UI] Search dialog destroyed. Cancelling active search if running.");
         *destroyed_c.borrow_mut() = true;
         *cancel_flag_c.borrow_mut() = true;
@@ -954,7 +948,7 @@ pub fn show_search_dialog<P: glib::object::IsA<gtk::Window>>(
                                     }
                                     d.close();
                                 });
-                                confirm_dialog.present(Some(&dialog_del));
+                                confirm_dialog.present(Some(&dialog_del.window()));
                             });
                             vbox.append(&btn_del);
 

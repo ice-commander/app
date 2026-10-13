@@ -35,10 +35,12 @@ impl Application {
         };
 
         if config.get::<Vec<String>>("ui.favorites").is_none() {
-            config.set(
-                "ui.favorites",
-                vec!["local_fs:/".to_string(), "local_fs:~".to_string()],
-            );
+            let favorites: &[&str] = if cfg!(target_os = "android") {
+                &["local_fs:~"]
+            } else {
+                &["local_fs:/", "local_fs:~"]
+            };
+            config.set("ui.favorites", favorites);
             needs_save = true;
         }
 

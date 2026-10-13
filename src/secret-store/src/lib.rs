@@ -66,7 +66,11 @@ fn install_salt() -> Vec<u8> {
 }
 
 fn machine_key() -> [u8; 32] {
+    #[cfg(not(target_os = "android"))]
     let machine_id = machine_uid::get().unwrap_or_default();
+    // No machine id an app can read; the salt in the app's private storage carries the key.
+    #[cfg(target_os = "android")]
+    let machine_id = String::new();
     let user = std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_default();

@@ -10,14 +10,12 @@ fn show_key_capture_dialog(
     hotkey_desc: &str,
     on_rebound: impl Fn() + 'static,
 ) {
-    let capture_dialog = gtk::Window::builder()
-        .title(&*crate::i18n::tr("settings.hotkey_assign"))
-        .transient_for(parent)
-        .modal(true)
-        .default_width(360)
-        .default_height(200)
-        .resizable(false)
-        .build();
+    let capture_dialog = crate::ui::surface::Surface::new(
+        parent,
+        &crate::i18n::tr("settings.hotkey_assign"),
+        360,
+        200,
+    );
 
     let main_box = Box::builder()
         .orientation(Orientation::Vertical)
@@ -50,7 +48,7 @@ fn show_key_capture_dialog(
         .build();
     main_box.append(&instruction_label);
 
-    capture_dialog.set_child(Some(&main_box));
+    capture_dialog.set_child(&main_box);
 
     let key_controller = gtk::EventControllerKey::new();
     let dialog_clone = capture_dialog.clone();

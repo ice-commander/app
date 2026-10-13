@@ -3,14 +3,8 @@ use gtk::glib;
 use gtk::{Box, Button, Label, Orientation, ScrolledWindow};
 
 pub fn show_help_dialog(parent_window: &impl IsA<gtk::Window>, config: &client_config::AppConfig) {
-    let help_window = adw::Window::builder()
-        .title(&*crate::i18n::tr("help.title"))
-        .transient_for(parent_window)
-        .modal(true)
-        .default_width(650)
-        .default_height(550)
-        .resizable(true)
-        .build();
+    let help_window =
+        crate::ui::surface::Surface::new(parent_window, &crate::i18n::tr("help.title"), 650, 550);
 
     let root_vbox = Box::builder().orientation(Orientation::Vertical).build();
 
@@ -236,7 +230,7 @@ pub fn show_help_dialog(parent_window: &impl IsA<gtk::Window>, config: &client_c
     });
     header_bar.pack_end(&close_btn);
 
-    help_window.set_content(Some(&root_vbox));
+    help_window.set_child(&root_vbox);
     help_window.present();
 }
 

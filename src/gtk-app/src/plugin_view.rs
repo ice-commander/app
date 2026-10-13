@@ -7,14 +7,14 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 enum Holder {
-    Window(gtk::Window),
+    Window(crate::ui::surface::Surface),
     Embedded(gtk::Box),
 }
 
 impl Holder {
     fn show(&self, root: &gtk::Widget) {
         match self {
-            Holder::Window(window) => window.set_child(Some(root)),
+            Holder::Window(window) => window.set_child(root),
             Holder::Embedded(frame) => {
                 while let Some(child) = frame.first_child() {
                     frame.remove(&child);
@@ -94,6 +94,9 @@ pub(crate) fn facts() -> HostFacts {
     )
 }
 
+/// A phone is narrower than any width a plugin asks for.
+const MOBILE_WIDTH: i32 = 320;
+
 fn renderer() -> ic_view_gtk::Renderer {
     let icons: ic_view_gtk::IconSource = Rc::new(|name: &str, size: u32| {
         let bare = name.strip_prefix("asset:")?;
@@ -101,6 +104,7 @@ fn renderer() -> ic_view_gtk::Renderer {
         crate::plugin_host::image_from_svg_at(&bytes, size).map(|image| image.upcast())
     });
     ic_view_gtk::Renderer::new(Rc::new(crate::connection_manager::translate_optional))
+        .with_max_width(crate::mobile().then_some(MOBILE_WIDTH))
         .with_icons(icons)
 }
 
@@ -311,8 +315,21 @@ fn hide_while_still(slot: &str, frame: &gtk::Box) {
     });
     frame.add_controller(keys);
 
+    // A finger makes no motion events, only touches: a tap is what brings the row back on a phone.
+    let taps = gtk::GestureClick::new();
+    taps.set_button(0);
+    taps.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let tapped = held.clone();
+    taps.connect_pressed(move |_, _, _, _| tapped.stir());
+    frame.add_controller(taps);
+
     // Armed on entering full screen, not on the next move, or a still pointer keeps the row.
+    // Let go with the frame: on a phone the window is the main one, which outlives every view.
+    let watched = Rc::new(std::cell::RefCell::new(
+        None::<(gtk::Window, gtk::glib::SignalHandlerId)>,
+    ));
     let watcher = held.clone();
+    let watching = watched.clone();
     frame.connect_root_notify(move |frame| {
         if watcher.watching.get() {
             return;
@@ -322,13 +339,21 @@ fn hide_while_still(slot: &str, frame: &gtk::Box) {
         };
         watcher.watching.set(true);
         let held = watcher.clone();
-        window.connect_fullscreened_notify(move |window| {
+        let id = window.connect_fullscreened_notify(move |window| {
             if window.is_fullscreen() {
                 held.arm();
             } else {
                 held.put_away(false);
             }
         });
+        *watching.borrow_mut() = Some((window, id));
+    });
+    let unwatched = held.clone();
+    frame.connect_unrealize(move |_| {
+        if let Some((window, id)) = watched.borrow_mut().take() {
+            window.disconnect(id);
+        }
+        unwatched.watching.set(false);
     });
 }
 
@@ -550,14 +575,14 @@ fn open(parent: &gtk::Window, id: &str, argument: &str) {
     let built = renderer().build(&session.document, &session.state);
     let named = ic_plugin_host::view_title(id).unwrap_or_default();
     let title = crate::connection_manager::translate_optional(&named).unwrap_or(named);
-    let window = gtk::Window::builder()
-        .title(title)
-        .transient_for(parent)
-        .modal(session.document.form.surface == ic_view::Surface::Dialog)
-        .default_width(session.document.form.width.unwrap_or(700) as i32)
-        .default_height(session.document.form.height.unwrap_or(600) as i32)
-        .child(&built.root)
-        .build();
+    let window = crate::ui::surface::Surface::new(
+        parent,
+        &title,
+        session.document.form.width.unwrap_or(700) as i32,
+        session.document.form.height.unwrap_or(600) as i32,
+    );
+    window.set_modal(session.document.form.surface == ic_view::Surface::Dialog);
+    window.set_child(&built.root);
 
     let escape = gtk::EventControllerKey::new();
     let closing = window.clone();
@@ -572,10 +597,9 @@ fn open(parent: &gtk::Window, id: &str, argument: &str) {
     window.add_controller(escape);
 
     let closed = id.to_string();
-    window.connect_close_request(move |_| {
+    window.connect_closed(move || {
         OPEN.with(|open| open.borrow_mut().remove(&closed));
         ic_plugin_host::view_closed(&closed, 1);
-        gtk::glib::Propagation::Proceed
     });
 
     tick(id, session.document.form.refresh_ms);

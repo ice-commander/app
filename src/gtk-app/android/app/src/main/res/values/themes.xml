@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- libadwaita 1.10's light window background: what Android shows before GTK's first frame. -->
+    <style name="Theme.IceCommander" parent="android:Theme.DeviceDefault.NoActionBar">
+        <item name="android:windowBackground">@color/adw_window_bg</item>
+        <item name="android:windowSplashScreenBackground">@color/adw_window_bg</item>
+    </style>
+</resources>

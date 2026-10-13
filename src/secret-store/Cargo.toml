@@ -11,7 +11,6 @@ name = "secret_store"
 path = "src/lib.rs"
 
 [dependencies]
-machine-uid = "0.5"
 hkdf = "0.12"
 sha2 = "0.10"
 chacha20poly1305 = "0.10"
@@ -20,3 +19,6 @@ base64 = "0.22"
 rand = { workspace = true }
 dirs = "6.0.0"
 serde_json = { workspace = true }
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+machine-uid = "0.5"

@@ -96,7 +96,8 @@ pub fn place(instance: u64, slots: Slots) -> gtk::Widget {
     area.connect_realize(move |area| {
         area.make_current();
         if let Some(wrong) = area.error() {
-            eprintln!("canvas: no GL context for instance {instance}: {wrong}");
+            // Not stderr: Android throws it away.
+            gtk::glib::g_warning!("canvas", "no GL context for instance {instance}: {wrong}");
             return;
         }
         let canvas = IcCanvas {
@@ -179,23 +180,36 @@ pub fn letting_go(instance: u64) {
 
 const GL_FRAMEBUFFER_BINDING: u32 = 0x8CA6;
 
-/// What GTK is drawing into. Looked up once: the original did it per frame.
+/// What GTK is drawing into. Looked up once it is found: the original did it per frame. A miss is
+/// not kept, since framebuffer 0 would have the plugin draw over the whole window.
 fn bound_framebuffer() -> i32 {
     static FOUND: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    let found = *FOUND.get_or_init(|| {
-        proc_address(
-            std::ptr::null_mut(),
-            c"glGetIntegerv".as_ptr(),
-        ) as usize
-    });
-    if found == 0 {
-        return 0;
-    }
+    let found = match FOUND.get() {
+        Some(found) => *found,
+        None => {
+            let found = proc_address(std::ptr::null_mut(), c"glGetIntegerv".as_ptr()) as usize;
+            if found == 0 {
+                gtk::glib::g_warning!("canvas", "glGetIntegerv was not found");
+                return 0;
+            }
+            *FOUND.get_or_init(|| found)
+        }
+    };
     let ask: unsafe extern "C" fn(u32, *mut i32) = unsafe { std::mem::transmute(found) };
     let mut bound: i32 = 0;
     unsafe { ask(GL_FRAMEBUFFER_BINDING, &mut bound) };
     bound
 }
+
+#[cfg(target_os = "android")]
+const EGL_LIBRARY: &std::ffi::CStr = c"libEGL.so";
+#[cfg(target_os = "android")]
+// The NDK's libGLESv2.so stops at GLES 2; v3 carries the rest.
+const GL_LIBRARY: &std::ffi::CStr = c"libGLESv3.so";
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "android")))]
+const EGL_LIBRARY: &std::ffi::CStr = c"libEGL.so.1";
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "android")))]
+const GL_LIBRARY: &std::ffi::CStr = c"libGL.so.1";
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 type GetProcAddress = unsafe extern "C" fn(*const c_char) -> *mut c_void;
@@ -230,10 +244,7 @@ pub extern "C" fn proc_address(_ctx: *mut c_void, name: *const c_char) -> *mut c
 fn egl_get_proc_address() -> Option<GetProcAddress> {
     static FOUND: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     let found = *FOUND.get_or_init(|| unsafe {
-        let library = libc::dlopen(
-            c"libEGL.so.1".as_ptr(),
-            libc::RTLD_LAZY | libc::RTLD_LOCAL,
-        );
+        let library = libc::dlopen(EGL_LIBRARY.as_ptr(), libc::RTLD_LAZY | libc::RTLD_LOCAL);
         if library.is_null() {
             return 0;
         }
@@ -246,10 +257,7 @@ fn egl_get_proc_address() -> Option<GetProcAddress> {
 fn gl_library() -> Option<*mut c_void> {
     static FOUND: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     let found = *FOUND.get_or_init(|| unsafe {
-        libc::dlopen(
-            c"libGL.so.1".as_ptr(),
-            libc::RTLD_LAZY | libc::RTLD_LOCAL,
-        ) as usize
+        libc::dlopen(GL_LIBRARY.as_ptr(), libc::RTLD_LAZY | libc::RTLD_LOCAL) as usize
     });
     (found != 0).then_some(found as *mut c_void)
 }

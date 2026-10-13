@@ -105,6 +105,8 @@ pub struct FmPanelInit {
     pub toolbar_start_extras: Vec<gtk::Widget>,
     pub toolbar_end_extras: Vec<gtk::Widget>,
     pub on_selection_changed: Option<std::rc::Rc<dyn Fn(u32, u32)>>,
+    /// A narrow screen: the toolbar scrolls sideways instead of setting the panel's width.
+    pub compact: bool,
 }
 
 impl FmPanelInit {
@@ -118,6 +120,7 @@ impl FmPanelInit {
             toolbar_start_extras: Vec::new(),
             toolbar_end_extras: Vec::new(),
             on_selection_changed: None,
+            compact: false,
         }
     }
 }
@@ -821,6 +824,7 @@ impl SimpleComponent for FmPanelModel {
             .show_end_title_buttons(false)
             .title_widget(&empty_title)
             .build();
+        let toolbar = Toolbar::new(&header, init.compact);
 
         let mk_icon_btn = |res: &str, tip: String| {
             let b = gtk::Button::builder()
@@ -916,7 +920,7 @@ impl SimpleComponent for FmPanelModel {
         }
         let mut write_buttons: Vec<gtk::Widget> = Vec::new();
         if with_default_toolbar {
-            header.pack_start(&btn_create_dir);
+            toolbar.start(&btn_create_dir);
             write_buttons.push(btn_create_dir.clone().upcast());
         }
 
@@ -926,7 +930,7 @@ impl SimpleComponent for FmPanelModel {
         );
         btn_rename.set_sensitive(false);
         if with_default_toolbar {
-            header.pack_start(&btn_rename);
+            toolbar.start(&btn_rename);
             write_buttons.push(btn_rename.clone().upcast());
         }
 
@@ -945,7 +949,7 @@ impl SimpleComponent for FmPanelModel {
             });
         }
         if with_default_toolbar {
-            header.pack_start(&btn_delete);
+            toolbar.start(&btn_delete);
             write_buttons.push(btn_delete.clone().upcast());
         }
 
@@ -955,7 +959,7 @@ impl SimpleComponent for FmPanelModel {
             .margin_bottom(8)
             .build();
         if with_default_toolbar {
-            header.pack_start(&clip_sep_l);
+            toolbar.start(&clip_sep_l);
             write_buttons.push(clip_sep_l.clone().upcast());
         }
 
@@ -1021,15 +1025,15 @@ impl SimpleComponent for FmPanelModel {
             .margin_bottom(8)
             .build();
         if with_default_toolbar {
-            header.pack_start(&cut_overlay);
+            toolbar.start(&cut_overlay);
             write_buttons.push(cut_overlay.clone().upcast());
-            header.pack_start(&copy_overlay);
+            toolbar.start(&copy_overlay);
             write_buttons.push(copy_overlay.clone().upcast());
-            header.pack_start(&btn_paste);
+            toolbar.start(&btn_paste);
             write_buttons.push(btn_paste.clone().upcast());
-            header.pack_start(&btn_clip_clear);
+            toolbar.start(&btn_clip_clear);
             write_buttons.push(btn_clip_clear.clone().upcast());
-            header.pack_start(&clip_sep_r);
+            toolbar.start(&clip_sep_r);
             write_buttons.push(clip_sep_r.clone().upcast());
         }
 
@@ -1047,7 +1051,7 @@ impl SimpleComponent for FmPanelModel {
             });
         }
         if with_default_toolbar {
-            header.pack_start(&btn_chmod);
+            toolbar.start(&btn_chmod);
             write_buttons.push(btn_chmod.clone().upcast());
         }
 
@@ -1114,14 +1118,15 @@ impl SimpleComponent for FmPanelModel {
             },
         ];
         if with_default_toolbar {
-            header.pack_end(&view_switcher);
+            toolbar.end(&view_switcher);
         }
         for w in &init.toolbar_start_extras {
-            header.pack_start(w);
+            toolbar.start(w);
         }
         for w in &init.toolbar_end_extras {
-            header.pack_end(w);
+            toolbar.end(w);
         }
+        toolbar.finish();
 
         let address_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         address_row.set_margin_top(3);
@@ -1191,7 +1196,15 @@ impl SimpleComponent for FmPanelModel {
         let content_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
         content_box.set_vexpand(true);
         root.append(&content_box);
-        content_box.append(&header);
+        if let Some(rows) = &toolbar.rows {
+            header
+                .bind_property("visible", rows, "visible")
+                .sync_create()
+                .build();
+            content_box.append(rows);
+        } else {
+            content_box.append(&header);
+        }
         header.set_visible(with_default_toolbar);
 
         let list_store = gtk::gio::ListStore::new::<crate::file_entry::FileEntry>();
@@ -1463,6 +1476,10 @@ impl SimpleComponent for FmPanelModel {
             .margin_bottom(4)
             .build();
         status_label.add_css_class("dim-label");
+        // A long file name in it must not set the width of a narrow screen.
+        if init.compact {
+            status_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        }
         let source_label = gtk::Label::builder()
             .halign(gtk::Align::Start)
             .margin_start(8)
@@ -2554,6 +2571,67 @@ fn scroll_and_focus(
                 gtk::glib::ControlFlow::Break
             });
         }
+    }
+}
+
+/// The panel's toolbar: a header bar, or on a narrow screen two rows that scroll sideways together.
+struct Toolbar {
+    header: adw::HeaderBar,
+    rows: Option<gtk::ScrolledWindow>,
+    start: RefCell<Vec<gtk::Widget>>,
+    end: RefCell<Vec<gtk::Widget>>,
+}
+
+impl Toolbar {
+    fn new(header: &adw::HeaderBar, compact: bool) -> Self {
+        let rows = compact.then(|| {
+            gtk::ScrolledWindow::builder()
+                .hscrollbar_policy(gtk::PolicyType::External)
+                .vscrollbar_policy(gtk::PolicyType::Never)
+                .propagate_natural_height(true)
+                .build()
+        });
+        Self {
+            header: header.clone(),
+            rows,
+            start: RefCell::default(),
+            end: RefCell::default(),
+        }
+    }
+
+    fn start(&self, widget: &impl IsA<gtk::Widget>) {
+        match &self.rows {
+            Some(_) => self.start.borrow_mut().push(widget.clone().upcast()),
+            None => self.header.pack_start(widget),
+        }
+    }
+
+    fn end(&self, widget: &impl IsA<gtk::Widget>) {
+        match &self.rows {
+            Some(_) => self.end.borrow_mut().push(widget.clone().upcast()),
+            None => self.header.pack_end(widget),
+        }
+    }
+
+    /// The end group after the start one, in the order a header bar shows it, split over two rows.
+    /// Separators part groups along one row; split rows have no use for them.
+    fn finish(&self) {
+        let Some(rows) = &self.rows else { return };
+        let mut items: Vec<gtk::Widget> = self.start.borrow_mut().drain(..).collect();
+        items.extend(self.end.borrow_mut().drain(..).rev());
+        items.retain(|widget| !widget.is::<gtk::Separator>());
+        let lines = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        for half in items.chunks(items.len().div_ceil(2).max(1)) {
+            let line = gtk::Box::builder()
+                .spacing(2)
+                .css_classes(["toolbar"])
+                .build();
+            for widget in half {
+                line.append(widget);
+            }
+            lines.append(&line);
+        }
+        rows.set_child(Some(&lines));
     }
 }
 

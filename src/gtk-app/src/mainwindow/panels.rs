@@ -79,7 +79,7 @@ fn collapse_side(
     saved_player_visible: bool,
     audio_player: &crate::player::AudioPlayer,
 ) {
-    refs.other_panel.set_visible(true);
+    refs.other_panel.set_visible(!crate::mobile());
     refs.collapse_btn.set_visible(false);
     refs.router
         .fm
@@ -160,7 +160,9 @@ pub(super) fn build_panels(
     let left_term = left_info.terminal_view.clone();
     let left_expand = left_info.expand_btn.clone();
 
-    left_panel.set_size_request(400, -1);
+    if !crate::mobile() {
+        left_panel.set_size_request(400, -1);
+    }
     paned.set_start_child(Some(&left_panel));
 
     let right_info = build_panel(
@@ -180,8 +182,11 @@ pub(super) fn build_panels(
     let right_term = right_info.terminal_view.clone();
     let right_expand = right_info.expand_btn.clone();
 
-    right_panel.set_size_request(400, -1);
-    paned.set_end_child(Some(&right_panel));
+    // The phone shows one panel; the other is only lent to the page that picks where to copy to.
+    if !crate::mobile() {
+        right_panel.set_size_request(400, -1);
+        paned.set_end_child(Some(&right_panel));
+    }
 
     paned.set_shrink_start_child(false);
     paned.set_shrink_end_child(false);
@@ -226,7 +231,9 @@ pub(super) fn build_panels(
         if let Some(w) = gtk::prelude::GtkWindowExt::focus(win) {
             if w.is_ancestor(&left_panel_focus) || w == left_panel_focus {
                 set_active_panel(super::ActivePanelSide::Left);
-            } else if w.is_ancestor(&right_panel_focus) || w == right_panel_focus {
+            } else if !crate::mobile()
+                && (w.is_ancestor(&right_panel_focus) || w == right_panel_focus)
+            {
                 set_active_panel(super::ActivePanelSide::Right);
             }
         }

@@ -5,7 +5,6 @@
 //! file on a disk is read where it lies; one on a server is fetched once, into
 //! a directory of the host's own, and swept away when the window closes.
 
-use adw::prelude::*;
 use gtk_viewer_ui::{Needs, Payload, ViewerCtx, ViewerPlugin};
 
 pub(super) struct DeclaredPlugin {
@@ -49,7 +48,7 @@ impl ViewerPlugin for DeclaredPlugin {
         // let into, and the copy of the file if one had to be made. They go
         // in that order, because the plugin may read while it is closing.
         let held = std::cell::RefCell::new(Some(staged));
-        ctx.window.connect_close_request(move |_| {
+        ctx.surface.connect_close_request(move || {
             // The plugin is asked first: it may have something unfinished in
             // there, and it draws what it wants to say into this same window.
             if !may_close() {

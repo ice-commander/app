@@ -24,6 +24,8 @@ pub fn target(config: &client_config::AppConfig) -> ic_logging::Target {
         None if config.get::<bool>("ui.enable_logging").unwrap_or(false) => {
             ic_logging::Target::File
         }
+        // Logcat is where an Android app is expected to say things, and costs nothing unread.
+        None if cfg!(target_os = "android") => ic_logging::Target::Console,
         None => ic_logging::Target::Off,
     }
 }
@@ -32,7 +34,15 @@ pub fn level(config: &client_config::AppConfig) -> ic_logging::LevelFilter {
     ic_logging::level_from_str(
         &config
             .get::<String>("ui.log_level")
-            .unwrap_or_else(|| DEFAULT_LEVEL.to_string()),
+            // Logcat is shared with the whole phone: only what went wrong, unless asked for more.
+            .unwrap_or_else(|| {
+                if cfg!(target_os = "android") {
+                    "warn"
+                } else {
+                    DEFAULT_LEVEL
+                }
+                .to_string()
+            }),
     )
 }
 

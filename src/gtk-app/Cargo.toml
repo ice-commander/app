@@ -9,12 +9,17 @@ publish = false
 build = "build.rs"
 default-run = "ice-commander"
 
+# On Android GTK's runtime loads this library (android/build.sh builds it as a cdylib) and runs its main().
+[lib]
+name = "ice_commander_gtk"
+
 [[bin]]
 name = "ice-commander"
 path = "src/main.rs"
 
 [dependencies]
 ic-svg-gtk = { workspace = true }
+ic-surface-gtk = { workspace = true }
 ic-plugin-api = { workspace = true }
 ic-plugin-host = { workspace = true }
 connection-form = { workspace = true }
@@ -58,6 +63,11 @@ chrono = { version = "0.4", features = ["serde"] }
 rodio = { version = "0.19", default-features = false, features = ["mp3", "flac", "vorbis", "wav", "symphonia-aac", "symphonia-isomp4"] }
 image = "0.24.2"
 kamadak-exif = "0.5"
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21.1"
+# Audio (cpal's Oboe backend) asks Android through this; the GTK runtime does not fill it in.
+ndk-context = "0.1"
 
 
 

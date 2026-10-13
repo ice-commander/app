@@ -68,14 +68,8 @@ pub fn show_setup_wizard(
     config: client_config::AppConfig,
     on_connections_changed: Rc<dyn Fn() + 'static>,
 ) {
-    let wizard = gtk::Window::builder()
-        .title("Welcome to Ice Commander")
-        .transient_for(parent_window)
-        .modal(true)
-        .default_width(860)
-        .default_height(760)
-        .resizable(true)
-        .build();
+    let wizard =
+        crate::ui::surface::Surface::new(parent_window, "Welcome to Ice Commander", 860, 760);
 
     let root = Box::builder().orientation(Orientation::Vertical).build();
     let carousel = adw::Carousel::builder().hexpand(true).vexpand(true).build();
@@ -200,7 +194,7 @@ pub fn show_setup_wizard(
 
     root.append(&carousel);
     root.append(&footer);
-    wizard.set_child(Some(&root));
+    wizard.set_child(&root);
 
     let update_nav: Rc<dyn Fn(u32)> = {
         let back_btn = back_btn.clone();
@@ -320,11 +314,12 @@ fn page_shell(
     title: impl Fn() -> String + 'static,
     subtitle: impl Fn() -> String + 'static,
 ) -> (gtk::ScrolledWindow, Box) {
+    let side = if crate::mobile() { 12 } else { 28 };
     let content = Box::builder()
         .orientation(Orientation::Vertical)
         .spacing(10)
-        .margin_start(28)
-        .margin_end(28)
+        .margin_start(side)
+        .margin_end(side)
         .margin_top(28)
         .margin_bottom(20)
         .build();
@@ -439,7 +434,11 @@ fn build_page_appearance(
                 .spacing(6)
                 .build();
             let pic = gtk::Picture::for_resource(resource);
-            pic.set_size_request(200, 125);
+            if crate::mobile() {
+                pic.set_size_request(120, 75);
+            } else {
+                pic.set_size_request(200, 125);
+            }
             pic.set_content_fit(gtk::ContentFit::Cover);
             v.append(&pic);
             v.append(&tr_label(retrans, label));

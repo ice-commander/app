@@ -2409,7 +2409,7 @@ pub fn create_manage_ftp_widget(
 }
 
 thread_local! {
-    static OPEN_DIALOG: std::cell::RefCell<Option<gtk::Window>> =
+    static OPEN_DIALOG: std::cell::RefCell<Option<crate::ui::surface::Surface>> =
         const { std::cell::RefCell::new(None) };
 }
 
@@ -2429,14 +2429,8 @@ pub fn show_manage_ftp_dialog(
     config: client_config::AppConfig,
     on_connect: Option<Rc<dyn Fn(Connection) + 'static>>,
 ) {
-    let window = gtk::Window::builder()
-        .title(&*crate::i18n::tr("conn_manager.title"))
-        .default_width(750)
-        .default_height(500)
-        .resizable(true)
-        .modal(true)
-        .transient_for(parent)
-        .build();
+    let window =
+        crate::ui::surface::Surface::new(parent, &crate::i18n::tr("conn_manager.title"), 750, 500);
 
     let key_controller = gtk::EventControllerKey::new();
     let win_clone = window.clone();
@@ -2458,14 +2452,13 @@ pub fn show_manage_ftp_dialog(
             win.close();
         }) as Rc<dyn Fn(Connection)>
     });
-    let widget = create_manage_ftp_widget(&window, on_change, config, on_connect_wrapped);
-    window.set_child(Some(&widget));
+    let widget = create_manage_ftp_widget(&window.window(), on_change, config, on_connect_wrapped);
+    window.set_child(&widget);
     OPEN_DIALOG.with(|slot| *slot.borrow_mut() = Some(window.clone()));
     crate::api::notify_connections_dialog(true);
-    window.connect_close_request(move |_| {
+    window.connect_closed(move || {
         OPEN_DIALOG.with(|slot| *slot.borrow_mut() = None);
         crate::api::notify_connections_dialog(false);
-        gtk::glib::Propagation::Proceed
     });
 
     window.present();
