@@ -6,6 +6,55 @@ use relm4::prelude::*;
 use crate::drivestoolbar::create_drives_toolbar;
 use crate::source_selector::create_source_selector;
 
+thread_local! {
+    static PHONE_ACTIONS: std::cell::RefCell<Option<std::rc::Rc<dyn Fn(&str)>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// The phone's toolbar actions that need both panels; the main window answers them.
+pub fn set_phone_actions(handler: std::rc::Rc<dyn Fn(&str)>) {
+    PHONE_ACTIONS.with(|slot| *slot.borrow_mut() = Some(handler));
+}
+
+/// What the F-keys do on the desktop, for the panel a phone shows: copy and move elsewhere, view, edit.
+fn phone_buttons() -> Vec<gtk::Widget> {
+    let name = |key: &str| {
+        let label = crate::i18n::tr(key).to_string();
+        label
+            .split_once(' ')
+            .map_or(label.clone(), |(_, rest)| rest.to_string())
+    };
+    [
+        (
+            "copy_to",
+            "open.svg",
+            crate::i18n::tr("mobile.copy_to").to_string(),
+        ),
+        (
+            "move_to",
+            "arrow-right.svg",
+            crate::i18n::tr("mobile.move_to").to_string(),
+        ),
+        ("view", "open-document.svg", name("f_buttons.f3")),
+        ("edit", "edit-file.svg", name("f_buttons.f4")),
+    ]
+    .into_iter()
+    .map(|(action, icon, tooltip)| {
+        let button = Button::builder()
+            .child(&toolbar_icon(&format!("/com/icecommander/gtk/{icon}")))
+            .tooltip_text(tooltip)
+            .build();
+        button.connect_clicked(move |_| {
+            let handler = PHONE_ACTIONS.with(|slot| slot.borrow().clone());
+            if let Some(handler) = handler {
+                handler(action);
+            }
+        });
+        button.upcast()
+    })
+    .collect()
+}
+
 #[derive(Clone)]
 pub struct PanelInfo {
     pub panel_box: Box,
@@ -711,6 +760,10 @@ fn build_tab(
         fs_action_clicks.push((btn, action));
     }
 
+    if crate::mobile() && panel_id == "left" {
+        toolbar_start_extras.splice(0..0, phone_buttons());
+    }
+
     let (out_tx, out_rx) = relm4::channel::<gtk_fm_ui::FmPanelOutput>();
     let init = gtk_fm_ui::FmPanelInit {
         panel_id: panel_id.to_string(),
@@ -725,6 +778,7 @@ fn build_tab(
         },
         toolbar_start_extras,
         toolbar_end_extras,
+        compact: crate::mobile(),
         on_selection_changed: {
             let buttons = plugin_buttons.clone();
             Some(std::rc::Rc::new(move |files: u32, dirs: u32| {

@@ -134,7 +134,7 @@ impl log::Log for Sink {
         );
 
         if state.settings.target.writes_console() {
-            let _ = std::io::stderr().write_all(line.as_bytes());
+            console(record.level(), &line);
         }
 
         if state.settings.target.writes_file() {
@@ -149,6 +149,35 @@ impl log::Log for Sink {
             }
         }
     }
+}
+
+#[cfg(not(target_os = "android"))]
+fn console(_level: log::Level, line: &str) {
+    let _ = std::io::stderr().write_all(line.as_bytes());
+}
+
+/// Android throws stderr away: the console there is logcat.
+#[cfg(target_os = "android")]
+fn console(level: log::Level, line: &str) {
+    #[link(name = "log")]
+    extern "C" {
+        fn __android_log_write(
+            priority: std::os::raw::c_int,
+            tag: *const std::os::raw::c_char,
+            text: *const std::os::raw::c_char,
+        ) -> std::os::raw::c_int;
+    }
+    let priority = match level {
+        log::Level::Error => 6,
+        log::Level::Warn => 5,
+        log::Level::Info => 4,
+        log::Level::Debug => 3,
+        log::Level::Trace => 2,
+    };
+    let Ok(text) = std::ffi::CString::new(line.trim_end().replace('\0', " ")) else {
+        return;
+    };
+    unsafe { __android_log_write(priority, c"IceCommander".as_ptr(), text.as_ptr()) };
 }
 
 impl State {

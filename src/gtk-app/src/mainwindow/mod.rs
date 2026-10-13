@@ -1,3 +1,4 @@
+mod destination;
 mod fbuttons;
 pub(crate) mod header;
 mod keyboard;
@@ -52,8 +53,14 @@ impl MainWindow {
             _ => sm.set_color_scheme(adw::ColorScheme::Default),
         }
 
-        let width = config.get::<i32>("ui.window_width").unwrap_or(1200);
-        let height = config.get::<i32>("ui.window_height").unwrap_or(800);
+        let (width, height) = if crate::mobile() {
+            (412, 860)
+        } else {
+            (
+                config.get::<i32>("ui.window_width").unwrap_or(1200),
+                config.get::<i32>("ui.window_height").unwrap_or(800),
+            )
+        };
         let is_max = config.get::<bool>("ui.window_maximized").unwrap_or(false);
 
         let window = adw::ApplicationWindow::builder()
@@ -69,7 +76,18 @@ impl MainWindow {
         }
 
         let root_vbox = Box::builder().orientation(Orientation::Vertical).build();
-        window.set_content(Some(&root_vbox));
+        if crate::mobile() {
+            let main = adw::NavigationPage::builder()
+                .title(&*crate::i18n::tr("main_window_title"))
+                .child(&root_vbox)
+                .build();
+            let pages = adw::NavigationView::new();
+            pages.add(&main);
+            window.set_content(Some(&pages));
+            crate::ui::surface::set_page_host(&pages, window.upcast_ref());
+        } else {
+            window.set_content(Some(&root_vbox));
+        }
 
         let header::HeaderResult { bar, settings_btn } = header::build_header_bar(
             &window,
@@ -388,7 +406,12 @@ impl MainWindow {
             });
         }
 
-        root_vbox.append(&bottom_box);
+        // A phone has no F-keys: their actions are on the panel's own toolbar.
+        if crate::mobile() {
+            destination::install_phone_actions(&window, &left_info, &right_info);
+        } else {
+            root_vbox.append(&bottom_box);
+        }
 
         let css_provider = gtk::CssProvider::new();
         css_provider.load_from_string(
@@ -533,6 +556,9 @@ impl MainWindow {
             let config_close = config.clone();
 
             window.connect_close_request(move |win| {
+                if crate::ui::surface::go_back() {
+                    return glib::Propagation::Stop;
+                }
                 let (w, h) = win.default_size();
                 let is_max = win.is_maximized();
                 config_close.set("ui.window_width", w);
@@ -570,6 +596,9 @@ impl MainWindow {
 
                 config_close.save();
 
+                if crate::platform().put_away(win.upcast_ref()) {
+                    return glib::Propagation::Stop;
+                }
                 glib::Propagation::Proceed
             });
         }
@@ -579,6 +608,14 @@ impl MainWindow {
         let wiz_right_router = right_router.clone();
         let wiz_updaters = selector_updaters.clone();
 
+        // The activity behind the window exists once it is mapped.
+        window.connect_map(|window| {
+            let window = window.clone().upcast::<gtk::Window>();
+            glib::idle_add_local_once(move || {
+                crate::platform().attach_services(&window);
+                crate::platform().ensure_storage_access(&window);
+            });
+        });
         window.present();
 
         if crate::secret_store::protection() == crate::secret_store::Protection::Password
@@ -624,8 +661,9 @@ impl MainWindow {
             dialog.present(Some(&window));
         }
 
+        #[cfg(not(target_os = "android"))]
         if !std::env::args().any(|a| a == "--no-check-update") {
-            crate::updater::auto_check(window.upcast::<gtk::Window>());
+            crate::updater::auto_check(window.clone().upcast::<gtk::Window>());
         }
     }
 }

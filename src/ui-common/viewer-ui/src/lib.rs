@@ -7,6 +7,7 @@ mod style;
 
 use fm_core::rpc::FileSystemRpc;
 use gtk::prelude::*;
+pub use ic_surface_gtk::Surface;
 use std::cell::Cell;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -82,7 +83,7 @@ impl Default for HostServices {
 }
 
 pub struct ViewerCtx {
-    pub window: gtk::Window,
+    pub surface: Surface,
     pub stack: gtk::Stack,
     pub path: String,
     pub name: String,
@@ -97,7 +98,7 @@ pub trait ViewerPlugin {
     fn window_size(&self) -> (i32, i32) {
         (800, 600)
     }
-    fn configure_window(&self, _window: &gtk::Window) {}
+    fn configure_window(&self, _surface: &Surface) {}
 }
 
 pub struct TextPlugin;
@@ -111,7 +112,7 @@ impl ViewerPlugin for TextPlugin {
         let Payload::Bytes(bytes) = payload else {
             return;
         };
-        let window = ctx.window.clone();
+        let window = ctx.surface.clone();
         let stack = ctx.stack.clone();
         let path = ctx.path.clone();
         let name = ctx.name.clone();
@@ -145,7 +146,7 @@ impl ViewerPlugin for NewFilePlugin {
 
     fn build(&self, ctx: &ViewerCtx, _payload: Payload) {
         content::build_editor_content(
-            &ctx.window,
+            &ctx.surface,
             &ctx.stack,
             None,
             &ctx.name,
@@ -205,20 +206,11 @@ fn temp_path(display_path: &str) -> PathBuf {
 }
 
 struct Host {
-    window: gtk::Window,
+    surface: Surface,
     stack: gtk::Stack,
     error_label: gtk::Label,
     status: gtk::Label,
     cancelled: Rc<Cell<bool>>,
-}
-
-/// Fills the screen with a viewer window, or gives it back.
-fn full_screen(window: &gtk::Window, wanted: bool) {
-    if wanted {
-        window.fullscreen();
-    } else {
-        window.unfullscreen();
-    }
 }
 
 impl Host {
@@ -229,18 +221,12 @@ impl Host {
         observer: Option<Rc<dyn ViewerObserver>>,
         fullscreen_key: Rc<dyn Fn(gtk::gdk::Key, gtk::gdk::ModifierType) -> bool>,
     ) -> Self {
-        let window = gtk::Window::builder()
-            .default_width(size.0)
-            .default_height(size.1)
-            .modal(true)
-            .transient_for(parent)
-            .title(title)
-            .build();
+        let surface = Surface::new(parent, title, size.0, size.1);
 
         let stack = gtk::Stack::builder()
             .transition_type(gtk::StackTransitionType::Crossfade)
             .build();
-        window.set_child(Some(&stack));
+        surface.set_child_fitted(&stack);
 
         let loading = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
@@ -255,7 +241,7 @@ impl Host {
         spinner.start();
         let status = gtk::Label::new(Some(&i18n::tr("editor.loading_file")));
         let cancel = gtk::Button::with_label(&i18n::tr("editor.cancel"));
-        let win_cancel = window.clone();
+        let win_cancel = surface.clone();
         cancel.connect_clicked(move |_| win_cancel.close());
         loading.append(&spinner);
         loading.append(&status);
@@ -274,7 +260,7 @@ impl Host {
             .max_width_chars(60)
             .build();
         let close = gtk::Button::with_label(&i18n::tr("editor.close"));
-        let win_close = window.clone();
+        let win_close = surface.clone();
         close.connect_clicked(move |_| win_close.close());
         error_box.append(&error_label);
         error_box.append(&close);
@@ -283,17 +269,17 @@ impl Host {
 
         let cancelled = Rc::new(Cell::new(false));
         let key_controller = gtk::EventControllerKey::new();
-        let win_key = window.clone();
+        let win_key = surface.clone();
         key_controller.connect_key_pressed(move |_, keyval, _, state| {
             // F11 as well as the key from Settings, because the rest of the desktop uses it.
             if keyval == gtk::gdk::Key::F11 || fullscreen_key(keyval, state) {
-                full_screen(&win_key, !win_key.is_fullscreen());
+                win_key.set_fullscreen(!win_key.is_fullscreen());
                 return gtk::glib::Propagation::Stop;
             }
             // Escape leaves full screen first and closes only when there is none to leave.
             if keyval == gtk::gdk::Key::Escape {
                 if win_key.is_fullscreen() {
-                    full_screen(&win_key, false);
+                    win_key.set_fullscreen(false);
                 } else {
                     win_key.close();
                 }
@@ -301,21 +287,21 @@ impl Host {
             }
             gtk::glib::Propagation::Proceed
         });
-        window.add_controller(key_controller);
+        surface.add_controller(key_controller);
 
         let cancelled_close = cancelled.clone();
-        window.connect_close_request(move |_| {
+        surface.connect_close_request(move || {
             cancelled_close.set(true);
             gtk::glib::Propagation::Proceed
         });
-        window.connect_destroy(move |_| {
+        surface.connect_closed(move || {
             if let Some(ref observer) = observer {
                 observer.closed();
             }
         });
 
         Self {
-            window,
+            surface,
             stack,
             error_label,
             status,
@@ -346,11 +332,11 @@ pub fn open(
         services.observer.clone(),
         services.fullscreen_key.clone(),
     );
-    plugin.configure_window(&host.window);
-    host.window.present();
+    plugin.configure_window(&host.surface);
+    host.surface.present();
 
     let ctx = ViewerCtx {
-        window: host.window.clone(),
+        surface: host.surface.clone(),
         stack: host.stack.clone(),
         path: path.clone(),
         name,

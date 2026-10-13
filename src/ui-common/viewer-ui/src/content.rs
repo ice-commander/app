@@ -3,7 +3,8 @@ use crate::metadata::query_file_metadata;
 use crate::{Format, Mode};
 use adw::prelude::*;
 use fm_core::rpc::FileSystemRpc;
-use gtk::{Align, Button, Label, Orientation, ScrolledWindow, TextView, Window};
+use gtk::{Align, Button, Label, Orientation, ScrolledWindow, TextView};
+use ic_surface_gtk::Surface;
 use std::cell::{Cell, RefCell};
 use std::path::Path;
 use std::rc::Rc;
@@ -35,7 +36,7 @@ pub(crate) fn load_image_paintable(pic: &gtk::Picture, data: &[u8], raw: &RawHoo
 }
 
 pub(crate) fn build_editor_content(
-    window: &Window,
+    window: &Surface,
     root_stack: &gtk::Stack,
     file_path_str: Option<&str>,
     file_name: &str,
@@ -328,7 +329,7 @@ pub(crate) fn build_editor_content(
                 Mode::View => "Viewer",
                 Mode::Edit => "Editor",
             };
-            window.set_title(Some(&format!(
+            window.set_title(&format!(
                 "{} - {}{}",
                 title_prefix,
                 *file_name_cell_clone.borrow(),
@@ -337,7 +338,7 @@ pub(crate) fn build_editor_content(
                 } else {
                     String::new()
                 }
-            )));
+            ));
 
             match mode {
                 Mode::View => {
@@ -550,7 +551,7 @@ pub(crate) fn build_editor_content(
                                 ))
                                 .build();
                             dialog.add_response("ok", &*crate::i18n::tr("editor.ok"));
-                            dialog.present(Some(&window_c));
+                            dialog.present(Some(&window_c.window()));
                         }
                     }
                 });
@@ -687,7 +688,7 @@ pub(crate) fn build_editor_content(
                                 ))
                                 .build();
                             dialog.add_response("ok", &*crate::i18n::tr("editor.ok"));
-                            dialog.present(Some(&window_res));
+                            dialog.present(Some(&window_res.window()));
                         }
                     }
                 });
@@ -729,7 +730,7 @@ pub(crate) fn build_editor_content(
                 }
                 d.close();
             });
-            dialog.present(Some(&window_save));
+            dialog.present(Some(&window_save.window()));
         } else {
             let Some(path) = file_path_save.borrow().clone() else {
                 return;
@@ -794,7 +795,7 @@ pub(crate) fn build_editor_content(
                                     }
                                     d.close();
                                 });
-                                dialog.present(Some(&window_query));
+                                dialog.present(Some(&window_query.window()));
                             } else {
                                 do_save_c(path_save, save_bytes_run);
                             }
@@ -825,7 +826,7 @@ pub(crate) fn build_editor_content(
                                 }
                                 d.close();
                             });
-                            dialog.present(Some(&window_query));
+                            dialog.present(Some(&window_query.window()));
                         }
                     } else {
                         do_save_c(path_save, save_bytes_run);
@@ -868,7 +869,7 @@ pub(crate) fn build_editor_content(
             && state.contains(gtk::gdk::ModifierType::CONTROL_MASK)
             && current_format_key.get() == Format::Hex
         {
-            crate::hex_view::ask_for_offset(&win_key, hex_view_key.clone());
+            crate::hex_view::ask_for_offset(&win_key.window(), hex_view_key.clone());
             gtk::glib::Propagation::Stop
         } else if keyval == gtk::gdk::Key::F4 {
             if current_format_key.get() != Format::Image && !read_only {
@@ -897,7 +898,7 @@ pub(crate) fn build_editor_content(
 
     let is_modified_close = is_modified.clone();
     let window_close_req = window.clone();
-    window.connect_close_request(move |_| {
+    window.connect_close_request(move || {
         if is_modified_close.get() {
             let dialog = adw::AlertDialog::builder()
                 .heading(&*crate::i18n::tr("editor.unsaved_changes"))
@@ -916,7 +917,7 @@ pub(crate) fn build_editor_content(
                 }
                 d.close();
             });
-            dialog.present(Some(&window_close_req));
+            dialog.present(Some(&window_close_req.window()));
             gtk::glib::Propagation::Stop
         } else {
             gtk::glib::Propagation::Proceed

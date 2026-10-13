@@ -28,7 +28,8 @@ members = [
 	"src/ui-common/view-gtk",
 	"src/ui-common/canvas-gtk",
 	"src/ui-common/updater-ui",
-	"src/ui-common/svg-gtk"
+	"src/ui-common/svg-gtk",
+	"src/ui-common/surface-gtk"
 ]
 resolver = "2"
 
@@ -63,6 +64,7 @@ ic-view-session = { path = "src/common/ic-view-session" }
 ic-view-gtk = { path = "src/ui-common/view-gtk" }
 ic-canvas-gtk = { path = "src/ui-common/canvas-gtk" }
 ic-svg-gtk = { path = "src/ui-common/svg-gtk" }
+ic-surface-gtk = { path = "src/ui-common/surface-gtk" }
 ic-platform = { path = "src/common/ic-platform" }
 # The p2p protocol itself: commands, node model, signalling, crypto, BSON wire format.
 # Capability handlers served over p2p; installed by the app at startup.
@@ -101,3 +103,10 @@ debug = false
 # Whole-program optimisation: smaller, faster binaries for a longer build; the plugins are built the same way.
 lto = true
 codegen-units = 1
+
+# The Android library for iterating on a device (src/gtk-app/android/build.sh dev): links in a fraction
+# of the release time.
+[profile.android-dev]
+inherits = "release"
+lto = "thin"
+codegen-units = 16

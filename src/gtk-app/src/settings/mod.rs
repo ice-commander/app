@@ -24,14 +24,12 @@ pub fn show_settings_dialog(
     config: client_config::AppConfig,
     on_connections_changed: Rc<dyn Fn() + 'static>,
 ) {
-    let settings_dialog = gtk::Window::builder()
-        .title(&*crate::i18n::tr("settings.window_title"))
-        .transient_for(parent_window)
-        .modal(true)
-        .default_width(900)
-        .default_height(600)
-        .resizable(true)
-        .build();
+    let settings_dialog = crate::ui::surface::Surface::new(
+        parent_window,
+        &crate::i18n::tr("settings.window_title"),
+        900,
+        600,
+    );
 
     let main_box = Box::builder().orientation(Orientation::Horizontal).build();
 
@@ -66,7 +64,7 @@ pub fn show_settings_dialog(
     reset_btn.set_cursor_from_name(Some("pointer"));
     {
         let config = config.clone();
-        let dialog = settings_dialog.clone();
+        let dialog = settings_dialog.window();
         reset_btn.connect_clicked(move |_| {
             let ask = adw::AlertDialog::builder()
                 .heading(&*crate::i18n::tr("settings.reset_all"))
@@ -163,13 +161,13 @@ pub fn show_settings_dialog(
 
         let builder: Option<PageBuilder> = match *cat {
             "About" => {
-                let dialog = settings_dialog.clone();
+                let dialog = settings_dialog.window();
                 Some(std::boxed::Box::new(move |page_box: &Box| {
                     page_about::build(page_box, &dialog);
                 }))
             }
             "Connections" => {
-                let dialog = settings_dialog.clone();
+                let dialog = settings_dialog.window();
                 let config = config.clone();
                 let on_changed = on_connections_changed.clone();
                 Some(std::boxed::Box::new(move |page_box: &Box| {
@@ -191,7 +189,7 @@ pub fn show_settings_dialog(
                 }))
             }
             "Hot keys" => {
-                let dialog = settings_dialog.clone();
+                let dialog = settings_dialog.window();
                 let config = config.clone();
                 let on_changed = on_connections_changed.clone();
                 Some(std::boxed::Box::new(move |page_box: &Box| {
@@ -199,35 +197,35 @@ pub fn show_settings_dialog(
                 }))
             }
             "Editors" => {
-                let dialog = settings_dialog.clone();
+                let dialog = settings_dialog.window();
                 let config = config.clone();
                 Some(std::boxed::Box::new(move |page_box: &Box| {
                     page_editors::build(page_box, &dialog, config.clone());
                 }))
             }
             "Applications" => {
-                let dialog = settings_dialog.clone();
+                let dialog = settings_dialog.window();
                 let config = config.clone();
                 Some(std::boxed::Box::new(move |page_box: &Box| {
                     page_applications::build(page_box, &dialog, config.clone());
                 }))
             }
             "Security" => {
-                let dialog = settings_dialog.clone();
+                let dialog = settings_dialog.window();
                 let config = config.clone();
                 Some(std::boxed::Box::new(move |page_box: &Box| {
                     page_security::build(page_box, &dialog, config.clone());
                 }))
             }
             "Plugins" => {
-                let dialog = settings_dialog.clone();
+                let dialog = settings_dialog.window();
                 let config = config.clone();
                 Some(std::boxed::Box::new(move |page_box: &Box| {
                     page_plugins::build(page_box, &dialog, config.clone());
                 }))
             }
             "Logging" => {
-                let dialog = settings_dialog.clone();
+                let dialog = settings_dialog.window();
                 let config = config.clone();
                 Some(std::boxed::Box::new(move |page_box: &Box| {
                     page_logging::build(page_box, &dialog, config.clone());
@@ -256,7 +254,7 @@ pub fn show_settings_dialog(
     main_box.append(&separator);
     main_box.append(&stack);
 
-    settings_dialog.set_child(Some(&main_box));
+    settings_dialog.set_child(&main_box);
 
     let key_controller = gtk::EventControllerKey::new();
     let dialog_esc = settings_dialog.clone();

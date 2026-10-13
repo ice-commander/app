@@ -63,18 +63,22 @@ pub fn get_all_app_drives(config: &client_config::AppConfig) -> Vec<AppDrive> {
         .get::<Vec<String>>("ui.favorites")
         .unwrap_or_default();
 
-    let root_key = "local_fs:/".to_string();
-    drives.push(AppDrive {
-        item: AppDriveItem::RootFs,
-        name: crate::i18n::tr("drives.system_root").to_string(),
-        subtitle: "/".to_string(),
-        icon: "/com/icecommander/gtk/home.svg".to_string(),
-        key: root_key.clone(),
-        is_favorite: favorites.contains(&root_key),
-        is_online: true,
-        svg: Vec::new(),
-        drive_info: None,
-    });
+    // Android lets no app read "/"; "~" is the phone's own storage there.
+    #[cfg(not(target_os = "android"))]
+    {
+        let root_key = "local_fs:/".to_string();
+        drives.push(AppDrive {
+            item: AppDriveItem::RootFs,
+            name: crate::i18n::tr("drives.system_root").to_string(),
+            subtitle: "/".to_string(),
+            icon: "/com/icecommander/gtk/home.svg".to_string(),
+            key: root_key.clone(),
+            is_favorite: favorites.contains(&root_key),
+            is_online: true,
+            svg: Vec::new(),
+            drive_info: None,
+        });
+    }
 
     let home_key = "local_fs:~".to_string();
     let home_path = dirs::home_dir()
