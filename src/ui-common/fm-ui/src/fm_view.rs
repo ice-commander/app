@@ -215,6 +215,10 @@ pub enum FmPanelOutput {
     ActivateFile {
         path: String,
     },
+    /// What F3 does, asked for from the menu: the file shown by whoever views its kind.
+    View {
+        path: String,
+    },
     /// A tick in one of a plugin's own columns was clicked. `dir` is the
     /// listing it happened in and `name` the row.
     CellToggled {
@@ -930,7 +934,7 @@ impl SimpleComponent for FmPanelModel {
         );
         btn_rename.set_sensitive(false);
         if with_default_toolbar {
-            toolbar.start(&btn_rename);
+            toolbar.start(&on_files_line(&btn_rename));
             write_buttons.push(btn_rename.clone().upcast());
         }
 
@@ -949,7 +953,7 @@ impl SimpleComponent for FmPanelModel {
             });
         }
         if with_default_toolbar {
-            toolbar.start(&btn_delete);
+            toolbar.start(&on_files_line(&btn_delete));
             write_buttons.push(btn_delete.clone().upcast());
         }
 
@@ -1025,9 +1029,9 @@ impl SimpleComponent for FmPanelModel {
             .margin_bottom(8)
             .build();
         if with_default_toolbar {
-            toolbar.start(&cut_overlay);
+            toolbar.start(&on_files_line(&cut_overlay));
             write_buttons.push(cut_overlay.clone().upcast());
-            toolbar.start(&copy_overlay);
+            toolbar.start(&on_files_line(&copy_overlay));
             write_buttons.push(copy_overlay.clone().upcast());
             toolbar.start(&btn_paste);
             write_buttons.push(btn_paste.clone().upcast());
@@ -1051,7 +1055,7 @@ impl SimpleComponent for FmPanelModel {
             });
         }
         if with_default_toolbar {
-            toolbar.start(&btn_chmod);
+            toolbar.start(&on_files_line(&btn_chmod));
             write_buttons.push(btn_chmod.clone().upcast());
         }
 
@@ -1120,6 +1124,7 @@ impl SimpleComponent for FmPanelModel {
         if with_default_toolbar {
             toolbar.end(&view_switcher);
         }
+        toolbar.extras_begin();
         for w in &init.toolbar_start_extras {
             toolbar.start(w);
         }
@@ -1225,9 +1230,7 @@ impl SimpleComponent for FmPanelModel {
             move |target: &gtk::Widget| {
                 let sender = sender.clone();
                 let shared_bg = shared_bg.clone();
-                let bg = gtk::GestureClick::builder().button(3).build();
-                bg.set_propagation_phase(gtk::PropagationPhase::Bubble);
-                bg.connect_pressed(move |g, _, x, y| {
+                let open = Rc::new(move |g: &gtk::Gesture, x: f64, y: f64| {
                     if shared_bg.clip_count.get() == 0 {
                         return;
                     }
@@ -1252,7 +1255,14 @@ impl SimpleComponent for FmPanelModel {
                     menu.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
                     menu.popup();
                 });
+                let bg = gtk::GestureClick::builder().button(3).build();
+                bg.set_propagation_phase(gtk::PropagationPhase::Bubble);
+                let clicked = open.clone();
+                bg.connect_pressed(move |g, _, x, y| clicked(g.upcast_ref(), x, y));
                 target.add_controller(bg);
+                let hold = gtk::GestureLongPress::builder().touch_only(true).build();
+                hold.connect_pressed(move |g, x, y| open(g.upcast_ref(), x, y));
+                target.add_controller(hold);
             }
         };
         attach_paste_menu(list_view.clone().upcast_ref::<gtk::Widget>());
@@ -2575,28 +2585,38 @@ fn scroll_and_focus(
 }
 
 /// The panel's toolbar: a header bar, or on a narrow screen two rows that scroll sideways together.
+/// Marks a toolbar widget as acting on the selected files. A phone shows those on a line of their
+/// own; a desktop header bar keeps one row and ignores the mark.
+pub const TOOLBAR_FILES_LINE: &str = "toolbar-files-line";
+
+pub fn on_files_line<W: IsA<gtk::Widget>>(widget: &W) -> W {
+    widget.add_css_class(TOOLBAR_FILES_LINE);
+    widget.clone()
+}
+
 struct Toolbar {
     header: adw::HeaderBar,
-    rows: Option<gtk::ScrolledWindow>,
+    rows: Option<gtk::Box>,
     start: RefCell<Vec<gtk::Widget>>,
     end: RefCell<Vec<gtk::Widget>>,
+    /// Where the host's own widgets begin in `start`.
+    extras_from: std::cell::Cell<usize>,
 }
 
 impl Toolbar {
     fn new(header: &adw::HeaderBar, compact: bool) -> Self {
-        let rows = compact.then(|| {
-            gtk::ScrolledWindow::builder()
-                .hscrollbar_policy(gtk::PolicyType::External)
-                .vscrollbar_policy(gtk::PolicyType::Never)
-                .propagate_natural_height(true)
-                .build()
-        });
+        let rows = compact.then(|| gtk::Box::new(gtk::Orientation::Vertical, 0));
         Self {
             header: header.clone(),
             rows,
             start: RefCell::default(),
             end: RefCell::default(),
+            extras_from: std::cell::Cell::new(0),
         }
+    }
+
+    fn extras_begin(&self) {
+        self.extras_from.set(self.start.borrow().len());
     }
 
     fn start(&self, widget: &impl IsA<gtk::Widget>) {
@@ -2613,25 +2633,61 @@ impl Toolbar {
         }
     }
 
-    /// The end group after the start one, in the order a header bar shows it, split over two rows.
-    /// Separators part groups along one row; split rows have no use for them.
+    /// Two lines, each scrolled sideways on its own: what acts on the selected files, then what
+    /// acts on the folder and the panel. On the files line the host's widgets lead, since a phone
+    /// puts its own actions there. Separators part groups along one row; lines have no use for them.
     fn finish(&self) {
         let Some(rows) = &self.rows else { return };
-        let mut items: Vec<gtk::Widget> = self.start.borrow_mut().drain(..).collect();
-        items.extend(self.end.borrow_mut().drain(..).rev());
-        items.retain(|widget| !widget.is::<gtk::Separator>());
-        let lines = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        for half in items.chunks(items.len().div_ceil(2).max(1)) {
+        let mut start: Vec<gtk::Widget> = self.start.borrow_mut().drain(..).collect();
+        let extras = start.split_off(self.extras_from.get().min(start.len()));
+        let end: Vec<gtk::Widget> = self.end.borrow_mut().drain(..).rev().collect();
+        let on_files = |widget: &gtk::Widget| widget.has_css_class(TOOLBAR_FILES_LINE);
+        let kept = |widget: &&gtk::Widget| !widget.is::<gtk::Separator>();
+        let files: Vec<&gtk::Widget> = extras
+            .iter()
+            .chain(&start)
+            .chain(&end)
+            .filter(kept)
+            .filter(|widget| on_files(widget))
+            .collect();
+        let folder: Vec<&gtk::Widget> = start
+            .iter()
+            .chain(&extras)
+            .filter(kept)
+            .filter(|widget| !on_files(widget))
+            .collect();
+        // The end group keeps to the right, as it does in a header bar.
+        let tools: Vec<&gtk::Widget> = end
+            .iter()
+            .filter(kept)
+            .filter(|widget| !on_files(widget))
+            .collect();
+        for (left, right) in [(files, Vec::new()), (folder, tools)] {
+            if left.is_empty() && right.is_empty() {
+                continue;
+            }
             let line = gtk::Box::builder()
                 .spacing(2)
                 .css_classes(["toolbar"])
                 .build();
-            for widget in half {
+            for widget in left {
                 line.append(widget);
             }
-            lines.append(&line);
+            if !right.is_empty() {
+                line.append(&gtk::Box::builder().hexpand(true).build());
+            }
+            for widget in right {
+                line.append(widget);
+            }
+            rows.append(
+                &gtk::ScrolledWindow::builder()
+                    .hscrollbar_policy(gtk::PolicyType::External)
+                    .vscrollbar_policy(gtk::PolicyType::Never)
+                    .propagate_natural_height(true)
+                    .child(&line)
+                    .build(),
+            );
         }
-        rows.set_child(Some(&lines));
     }
 }
 

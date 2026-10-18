@@ -57,6 +57,23 @@ pub fn create_context_menu(
             .build()
     };
 
+    // First, as F3 comes first: on a phone it is the only way to some viewers, such as a player.
+    if !is_dir {
+        let btn_view = create_btn_with_label(
+            &crate::i18n::tr("fm.context.view"),
+            "document-open-symbolic",
+            "",
+        );
+        let pop_view = popover.clone();
+        let sender_view = sender.clone();
+        let path = format!("{}{}", safe_parent, name_clone);
+        btn_view.connect_clicked(move |_| {
+            pop_view.popdown();
+            let _ = sender_view.output(FmPanelOutput::View { path: path.clone() });
+        });
+        vbox.append(&btn_view);
+    }
+
     let btn_copy = create_btn_with_label(
         &crate::i18n::tr("fm.context.copy_path"),
         "edit-copy-symbolic",

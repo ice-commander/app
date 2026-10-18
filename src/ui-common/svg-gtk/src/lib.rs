@@ -32,10 +32,27 @@ fn fonts() -> Arc<usvg::fontdb::Database> {
         .get_or_init(|| {
             let mut fonts = usvg::fontdb::Database::new();
             fonts.load_system_fonts();
+            phone_fonts(&mut fonts);
             Arc::new(fonts)
         })
         .clone()
 }
+
+/// fontdb looks for no fonts on Android, where sans-serif is Roboto. Only Roboto is read: the
+/// phone keeps some two hundred font files, and an icon's label needs none of the others.
+#[cfg(target_os = "android")]
+fn phone_fonts(fonts: &mut usvg::fontdb::Database) {
+    for file in [
+        "/system/fonts/Roboto-Regular.ttf",
+        "/system/fonts/RobotoStatic-Regular.ttf",
+    ] {
+        let _ = fonts.load_font_file(file);
+    }
+    fonts.set_sans_serif_family("Roboto");
+}
+
+#[cfg(not(target_os = "android"))]
+fn phone_fonts(_fonts: &mut usvg::fontdb::Database) {}
 
 fn parse(svg: &[u8]) -> Option<usvg::Tree> {
     let options = usvg::Options {

@@ -26,8 +26,13 @@ pub(super) fn build_header_bar(
     >,
 ) -> HeaderResult {
     let header_bar = adw::HeaderBar::new();
+    // A phone has the width of one row of buttons: no title, no logo, the rest behind "more".
+    let mobile = crate::mobile();
+    if mobile {
+        header_bar.set_show_title(false);
+    }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     let logo_img = {
         let img = gtk::Image::from_resource("/com/icecommander/gtk/app-logo.svg");
         img.set_pixel_size(24);
@@ -102,6 +107,7 @@ pub(super) fn build_header_bar(
     let conn_btn_icon = gtk::Image::from_resource("/com/icecommander/gtk/connect.svg");
     conn_btn_icon.set_pixel_size(20);
     let conn_btn_label = Label::new(Some("Connections"));
+    conn_btn_label.set_visible(!mobile);
     let conn_badge = Label::builder().css_classes(vec!["dim-label"]).build();
 
     conn_btn_box.append(&conn_btn_icon);
@@ -193,6 +199,12 @@ pub(super) fn build_header_bar(
                 icon.set_pixel_size(20);
                 content.append(&icon);
                 PLUGIN_ICONS.with(|held| held.borrow_mut().insert(entry.id.clone(), icon));
+                let tooltip = crate::connection_manager::translate_optional(&entry.tooltip)
+                    .unwrap_or_else(|| entry.tooltip.clone());
+                // In the phone's menu a button says what it is: the tooltip, when it has no label.
+                if mobile && entry.label.is_empty() && !tooltip.is_empty() {
+                    content.append(&Label::new(Some(&tooltip)));
+                }
                 let label = Label::new(Some(&entry.label));
                 content.append(&label);
                 label.set_visible(!entry.label.is_empty());
@@ -200,10 +212,8 @@ pub(super) fn build_header_bar(
                 let btn = Button::builder().child(&content).build();
                 btn.set_visible(entry.shown);
                 PLUGIN_BUTTONS.with(|held| held.borrow_mut().insert(entry.id.clone(), btn.clone()));
-                if !entry.tooltip.is_empty() {
-                    let shown = crate::connection_manager::translate_optional(&entry.tooltip)
-                        .unwrap_or_else(|| entry.tooltip.clone());
-                    btn.set_tooltip_text(Some(&shown));
+                if !tooltip.is_empty() {
+                    btn.set_tooltip_text(Some(&tooltip));
                 }
                 btn.set_cursor_from_name(Some("pointer"));
                 btn.connect_clicked(move |b| {
@@ -218,20 +228,28 @@ pub(super) fn build_header_bar(
             .collect()
     };
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     header_bar.pack_start(&logo_img);
     header_bar.pack_start(&settings_btn);
-    for btn in plugin_header_buttons(ic_plugin_api::IC_SIDE_LEFT) {
-        header_bar.pack_start(&btn);
-    }
-    header_bar.pack_end(&theme_btn);
-    header_bar.pack_end(&feedback_btn);
-    header_bar.pack_end(&conn_btn);
-    if let Some(ref web_btn) = web_btn {
-        header_bar.pack_end(web_btn);
-    }
-    for btn in plugin_header_buttons(ic_plugin_api::IC_SIDE_RIGHT) {
-        header_bar.pack_end(&btn);
+    if mobile {
+        let mut others = vec![theme_btn.clone(), feedback_btn.clone()];
+        others.extend(plugin_header_buttons(ic_plugin_api::IC_SIDE_LEFT));
+        others.extend(plugin_header_buttons(ic_plugin_api::IC_SIDE_RIGHT));
+        header_bar.pack_end(&more_menu(&theme_btn, &theme_btn_img, others));
+        header_bar.pack_end(&conn_btn);
+    } else {
+        for btn in plugin_header_buttons(ic_plugin_api::IC_SIDE_LEFT) {
+            header_bar.pack_start(&btn);
+        }
+        header_bar.pack_end(&theme_btn);
+        header_bar.pack_end(&feedback_btn);
+        header_bar.pack_end(&conn_btn);
+        if let Some(ref web_btn) = web_btn {
+            header_bar.pack_end(web_btn);
+        }
+        for btn in plugin_header_buttons(ic_plugin_api::IC_SIDE_RIGHT) {
+            header_bar.pack_end(&btn);
+        }
     }
 
     ic_plugin_host::set_header_changed_handler(std::rc::Rc::new(|id: &str, text: &str| {
@@ -267,4 +285,43 @@ pub(super) fn build_header_bar(
         bar: header_bar,
         settings_btn,
     }
+}
+
+/// The phone's "more": the theme switch and the plugins' buttons, each with words beside its icon.
+fn more_menu(theme_btn: &Button, theme_img: &gtk::Image, buttons: Vec<Button>) -> gtk::MenuButton {
+    let theme_row = gtk::Box::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(6)
+        .build();
+    theme_btn.set_child(None::<&gtk::Widget>);
+    theme_row.append(theme_img);
+    theme_row.append(&Label::new(Some(&crate::i18n::tr("mobile.theme"))));
+    theme_btn.set_child(Some(&theme_row));
+
+    let list = gtk::Box::builder()
+        .orientation(Orientation::Vertical)
+        .spacing(2)
+        .build();
+    let popover = gtk::Popover::builder().child(&list).build();
+    for btn in buttons {
+        btn.add_css_class("flat");
+        if let Some(content) = btn.child() {
+            content.set_halign(gtk::Align::Start);
+        }
+        let shut = popover.downgrade();
+        btn.connect_clicked(move |_| {
+            if let Some(popover) = shut.upgrade() {
+                popover.popdown();
+            }
+        });
+        list.append(&btn);
+    }
+
+    let icon = gtk::Image::from_resource("/com/icecommander/gtk/more.svg");
+    icon.set_pixel_size(20);
+    gtk::MenuButton::builder()
+        .child(&icon)
+        .tooltip_text(&*crate::i18n::tr("mobile.more"))
+        .popover(&popover)
+        .build()
 }

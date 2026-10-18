@@ -1,0 +1,5 @@
+# The GTK stack release this app builds against (android-rust-gtk4-adwaita); npm run fetch-gtk-stack
+# unpacks it into ~/.cache/android-rust-gtk4-adwaita/<version>/. Pin only the ABIs the app builds.
+repo=https://github.com/savchenko-igor/android-rust-gtk4-adwaita
+version=0.1.0
+sha256-arm64-v8a=84c0de8e0be12b7d53b0c8054967a7b33a397dac9d9b45ae3afda85de212f3a6

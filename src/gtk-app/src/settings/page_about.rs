@@ -65,6 +65,8 @@ pub(super) fn build(page_box: &Box, parent: &gtk::Window) {
             btn_inner.set_sensitive(true);
         });
     });
+    // An APK is updated otherwise, and the updater's windows would each be a screen of their own.
+    update_btn.set_visible(cfg!(not(target_os = "android")));
     about_box.append(&update_btn);
 
     page_box.append(&about_box);

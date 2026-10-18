@@ -17,6 +17,7 @@
   "fm.context.duplicate": "Duplicate",
   "fm.context.extract": "Extract Here",
   "fm.context.rename": "Rename",
+  "fm.context.view": "View",
   "fm.copy_files_title": "Copy Files",
   "fm.create_btn": "Create",
   "fm.create_dir_title": "Create New Directory",

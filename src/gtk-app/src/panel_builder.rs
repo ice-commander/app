@@ -25,6 +25,8 @@ fn phone_buttons() -> Vec<gtk::Widget> {
             .map_or(label.clone(), |(_, rest)| rest.to_string())
     };
     [
+        ("view", "open-document.svg", name("f_buttons.f3")),
+        ("edit", "edit-file.svg", name("f_buttons.f4")),
         (
             "copy_to",
             "open.svg",
@@ -35,8 +37,6 @@ fn phone_buttons() -> Vec<gtk::Widget> {
             "arrow-right.svg",
             crate::i18n::tr("mobile.move_to").to_string(),
         ),
-        ("view", "open-document.svg", name("f_buttons.f3")),
-        ("edit", "edit-file.svg", name("f_buttons.f4")),
     ]
     .into_iter()
     .map(|(action, icon, tooltip)| {
@@ -50,7 +50,7 @@ fn phone_buttons() -> Vec<gtk::Widget> {
                 handler(action);
             }
         });
-        button.upcast()
+        gtk_fm_ui::on_files_line(&button).upcast()
     })
     .collect()
 }
@@ -722,7 +722,7 @@ fn build_tab(
             .visible(false)
             .build();
         btn.set_cursor_from_name(Some("pointer"));
-        toolbar_start_extras.push(btn.clone().upcast());
+        toolbar_start_extras.push(gtk_fm_ui::on_files_line(&btn).upcast());
         plugin_actions.push((btn.clone(), action.source_id.clone()));
         plugin_action_clicks.push((btn, action));
     }
@@ -751,7 +751,7 @@ fn build_tab(
                 .upcast()
         };
         btn.set_cursor_from_name(Some("pointer"));
-        toolbar_start_extras.push(btn.clone());
+        toolbar_start_extras.push(gtk_fm_ui::on_files_line(&btn));
         fs_actions.push((
             btn.clone(),
             action.extensions.clone(),
@@ -1138,6 +1138,28 @@ fn build_tab(
                                 gtk_fm_ui::FileEntry::new(&name, &path, false, size, "", None);
                             crate::viewer::show_viewer(&win, entry, router.clone());
                         }
+                    }
+                    FmPanelOutput::View { path } => {
+                        let Some(win) = router.window() else {
+                            continue;
+                        };
+                        let name = std::path::Path::new(&path)
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let size = router
+                            .state
+                            .path
+                            .borrow()
+                            .active()
+                            .entries()
+                            .iter()
+                            .find(|e| e.name == name)
+                            .map(|e| e.size)
+                            .unwrap_or(0);
+                        let entry = gtk_fm_ui::FileEntry::new(&name, &path, false, size, "", None);
+                        crate::viewer::show_viewer(&win, entry, router.clone());
                     }
                     FmPanelOutput::Cut | FmPanelOutput::Copy => {
                         let kind = if matches!(host, FmPanelOutput::Cut) {
