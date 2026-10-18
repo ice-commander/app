@@ -18,13 +18,41 @@ val appVersionCode: Int = appVersion.split(".").let {
         (it.getOrNull(2)?.toIntOrNull() ?: 0)
 }
 
-// The GTK stack, its staged libraries and GTK's Java glue come from android-rust-gtk4-adwaita.
-val gtkStack: File = providers.environmentVariable("GTK_STACK").map { appRoot.resolve(it) }
-    .getOrElse(appRoot.parentFile.resolveSibling("android-rust-gtk4-adwaita"))
+// The GTK stack (android-rust-gtk4-adwaita): GTK_STACK, a checkout for work on the stack (relative to
+// appRoot), else the release gtk-stack.lock pins, in the cache npm run fetch-gtk-stack fills,
+// ${XDG_CACHE_HOME:-~/.cache}/android-rust-gtk4-adwaita/<version>/. Gradle does not download it.
+// abis: what this build packages; each must have been fetched from the archive the lock pins.
+fun gtkStackDir(appRoot: File, abis: Collection<String>): File {
+    providers.environmentVariable("GTK_STACK").orNull?.takeIf { it.isNotEmpty() }
+        ?.let { return appRoot.resolve(it).normalize() }
+    val lockFile = File(appRoot, "gtk-stack.lock")
+    if (!lockFile.isFile) throw GradleException("No $lockFile")
+    val lock: Map<String, String> = lockFile.readLines().map { it.substringBefore('#').trim() }
+        .filter { it.isNotEmpty() }
+        .associate { it.substringBefore('=').trim() to it.substringAfter('=').trim() }
+    val version = lock["version"] ?: throw GradleException("$lockFile: no version")
+    val cache = providers.environmentVariable("XDG_CACHE_HOME").orNull?.takeIf { it.startsWith("/") }
+        ?.let(::File)
+        ?: File(providers.environmentVariable("HOME").orNull ?: System.getProperty("user.home"), ".cache")
+    val dir = File(cache, "android-rust-gtk4-adwaita/$version")
+    val missing = abis.filter { abi ->
+        val pinned = lock["sha256-$abi"] ?: throw GradleException("$lockFile pins no $abi (sha256-$abi=…)")
+        File(dir, ".fetched-$abi").takeIf { it.isFile }?.readText()?.trim() != pinned
+    }
+    if (missing.isNotEmpty()) {
+        throw GradleException(
+            "No GTK stack $version for ${missing.joinToString()} in $dir: run npm run fetch-gtk-stack"
+        )
+    }
+    return dir
+}
+
+// Its staged libraries and GTK's Java glue.
+val gtkStack: File = gtkStackDir(appRoot, listOf("arm64-v8a"))
 val gtkSources = File(gtkStack, "src/gtk-stack/subprojects/gtk-4.24.1")
 val gtkStage = File(gtkStack, "bin/gtk-stack/apk")
 val rustLibs = File(appRoot, "bin/android-gtk-jniLibs")
-check(File(gtkStage, "jniLibs").isDirectory) { "No $gtkStage: run npm run build-gtk-stack in $gtkStack" }
+check(File(gtkStage, "jniLibs").isDirectory) { "No $gtkStage: build the GTK stack in $gtkStack" }
 
 // Not at configuration time, so that clean and the task list work before the first build.
 tasks.named("preBuild") {
@@ -42,7 +70,7 @@ android {
 
     defaultConfig {
         applicationId = "com.icecommander.gtkapp"
-        // GDK's Android backend needs API 31.
+        // The app's own setting: the GTK stack release runs from API 28.
         minSdk = 31
         targetSdk = 36
         versionCode = appVersionCode

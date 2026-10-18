@@ -1,21 +1,14 @@
-#![allow(deprecated)] // adw::MessageDialog / FileDialog — modernization tracked separately
 use adw::prelude::*;
 use relm4::ComponentSender;
 
 use crate::fm_view::{FmPanelModel, FmPanelOutput, Shared};
 use crate::utils::build_path_string;
 
+// Dialogs sit inside the window they belong to: a separate window is a whole new screen on a phone.
 pub fn present_error(window: Option<&gtk::Window>, title: &str, body: &str) {
-    let dialog = adw::MessageDialog::builder()
-        .modal(true)
-        .heading(title)
-        .body(body)
-        .build();
-    if let Some(w) = window {
-        dialog.set_transient_for(Some(w));
-    }
+    let dialog = adw::AlertDialog::new(Some(title), Some(body));
     dialog.add_response("ok", "OK");
-    dialog.present();
+    dialog.present(window);
 }
 
 pub fn show_create_dir_dialog(
@@ -24,7 +17,7 @@ pub fn show_create_dir_dialog(
     sender: ComponentSender<FmPanelModel>,
 ) {
     let Some(window) = window else { return };
-    let dialog = adw::MessageDialog::new(Some(window), None, None);
+    let dialog = adw::AlertDialog::new(None, None);
 
     let entry = gtk::Entry::builder()
         .placeholder_text(&*crate::i18n::tr("fm.dir_name_placeholder"))
@@ -72,6 +65,8 @@ pub fn show_create_dir_dialog(
             ))
             .use_markup(true)
             .halign(gtk::Align::Start)
+            .wrap(true)
+            .wrap_mode(gtk::pango::WrapMode::WordChar)
             .build(),
     );
 
@@ -98,7 +93,7 @@ pub fn show_create_dir_dialog(
         }
         d.close();
     });
-    dialog.present();
+    dialog.present(Some(window));
 }
 
 pub fn show_delete_dialog(
@@ -165,16 +160,13 @@ pub fn show_delete_dialog(
             .use_markup(true)
             .halign(gtk::Align::Start)
             .wrap(true)
+            .wrap_mode(gtk::pango::WrapMode::WordChar)
             .build(),
     );
     extra_box.append(&title_box);
     extra_box.append(&info_vbox);
 
-    let dialog = adw::MessageDialog::builder()
-        .transient_for(window)
-        .modal(true)
-        .extra_child(&extra_box)
-        .build();
+    let dialog = adw::AlertDialog::builder().extra_child(&extra_box).build();
     dialog.add_response("cancel", &crate::i18n::tr("fm.cancel"));
     dialog.add_response("delete", &crate::i18n::tr("fm.context.delete"));
     dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
@@ -194,7 +186,7 @@ pub fn show_delete_dialog(
         }
         d.close();
     });
-    dialog.present();
+    dialog.present(Some(window));
 }
 
 pub fn show_rename_dialog(
@@ -235,11 +227,7 @@ pub fn rename_dialog_for(
     };
     let old_path = format!("{}{}", safe_parent, old_name);
 
-    let dialog = adw::MessageDialog::new(
-        Some(window),
-        Some(&*crate::i18n::tr("fm.rename_title")),
-        None,
-    );
+    let dialog = adw::AlertDialog::new(Some(&*crate::i18n::tr("fm.rename_title")), None);
     let entry = gtk::Entry::builder()
         .text(old_name)
         .activates_default(true)
@@ -263,7 +251,7 @@ pub fn rename_dialog_for(
         }
         d.close();
     });
-    dialog.present();
+    dialog.present(Some(window));
 }
 
 fn mode_from_checks(checks: &[(gtk::CheckButton, u32)]) -> u32 {
@@ -312,8 +300,7 @@ pub fn chmod_dialog_for(
     initial_mode: u32,
     sender: ComponentSender<FmPanelModel>,
 ) {
-    let dialog = adw::MessageDialog::new(
-        Some(window),
+    let dialog = adw::AlertDialog::new(
         Some("Permissions"),
         Some(&format!("Permissions for: {file_name}")),
     );
@@ -433,7 +420,7 @@ pub fn chmod_dialog_for(
         }
         d.close();
     });
-    dialog.present();
+    dialog.present(Some(window));
 }
 
 fn current_drive_info(shared: &Shared) -> (String, String, bool) {

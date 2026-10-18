@@ -69,14 +69,21 @@ pub fn create_source_selector(
         header.pack_end(&button);
     }
 
+    // A phone is narrower than the list is wide: there it fills the width instead.
+    let mobile = crate::mobile();
+    let list_width = if mobile { -1 } else { 450 };
     let selector_box = Box::builder()
         .orientation(Orientation::Vertical)
-        .halign(Align::Center)
+        .halign(if mobile { Align::Fill } else { Align::Center })
         .valign(Align::Center)
         .spacing(16)
         .hexpand(true)
         .vexpand(true)
         .build();
+    if mobile {
+        selector_box.set_margin_start(12);
+        selector_box.set_margin_end(12);
+    }
     container.append(&selector_box);
 
     let selector_title = Label::builder()
@@ -88,12 +95,12 @@ pub fn create_source_selector(
     selector_box.append(&selector_title);
 
     let list_box = ListBox::builder()
-        .width_request(450)
+        .width_request(list_width)
         .css_classes(vec!["boxed-list"])
         .build();
 
     let scrolled_list = gtk::ScrolledWindow::builder()
-        .width_request(450)
+        .width_request(list_width)
         .propagate_natural_height(true)
         .max_content_height(800)
         .hscrollbar_policy(gtk::PolicyType::Never)
@@ -122,7 +129,7 @@ pub fn create_source_selector(
     let config_check = config.clone();
     favorites_only_check.connect_toggled(move |cb| {
         let active = cb.is_active();
-        hint_lbl_clone.set_visible(active);
+        hint_lbl_clone.set_visible(active && !mobile);
         let current = crate::favorites::is_favorites_only(&config_check);
         if active != current {
             crate::favorites::set_favorites_only(&config_check, active);
@@ -218,7 +225,7 @@ pub fn create_source_selector(
             if favorites_only_check.is_active() != favorites_only {
                 favorites_only_check.set_active(favorites_only);
             }
-            favorites_hint_label.set_visible(favorites_only);
+            favorites_hint_label.set_visible(favorites_only && !mobile);
 
             while let Some(child) = list_box.first_child() {
                 list_box.remove(&child);

@@ -13,8 +13,8 @@ pub mod view_factories;
 pub use file_entry::FileEntry;
 pub use fm_core::rpc::{PathSegment, RemoteFileEntry};
 pub use fm_view::{
-    BreadcrumbSegment, FmPanelInit, FmPanelInput, FmPanelModel, FmPanelOutput, SourceInfo,
-    ThumbnailFn,
+    on_files_line, BreadcrumbSegment, FmPanelInit, FmPanelInput, FmPanelModel, FmPanelOutput,
+    SourceInfo, ThumbnailFn, TOOLBAR_FILES_LINE,
 };
 pub use utils::build_path_string;
 

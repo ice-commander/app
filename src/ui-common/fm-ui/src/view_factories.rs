@@ -78,7 +78,6 @@ fn add_right_click_gesture<W: IsA<gtk::Widget>>(
     btn_refresh: &gtk::Button,
     btn_chmod: &gtk::Button,
 ) {
-    let gesture = gtk::GestureClick::builder().button(3).build();
     let shared_c = shared.clone();
     let sender_c = sender.clone();
     let item_clone = list_item.clone();
@@ -87,7 +86,7 @@ fn add_right_click_gesture<W: IsA<gtk::Widget>>(
     let btn_refresh_c = btn_refresh.clone();
     let btn_chmod_c = btn_chmod.clone();
 
-    gesture.connect_pressed(move |g, _, x, y| {
+    let open = std::rc::Rc::new(move |g: &gtk::Gesture, x: f64, y: f64| {
         if let Some(obj) = item_clone.item() {
             if let Ok(entry) = obj.downcast::<crate::file_entry::FileEntry>() {
                 if entry.name() == ".." {
@@ -123,7 +122,14 @@ fn add_right_click_gesture<W: IsA<gtk::Widget>>(
             }
         }
     });
+    let gesture = gtk::GestureClick::builder().button(3).build();
+    let clicked = open.clone();
+    gesture.connect_pressed(move |g, _, x, y| clicked(g.upcast_ref(), x, y));
     widget.add_controller(gesture);
+    // A finger has no second button: holding it on the file asks for the same menu.
+    let hold = gtk::GestureLongPress::builder().touch_only(true).build();
+    hold.connect_pressed(move |g, x, y| open(g.upcast_ref(), x, y));
+    widget.add_controller(hold);
 }
 
 pub fn list_row_metrics(config: &client_config::AppConfig) -> (i32, i32) {

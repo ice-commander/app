@@ -39,6 +39,7 @@
     <file compressed="true" preprocess="xml-stripblanks">cellular-network.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">save.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">setting.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">more.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">stop.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">tune.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">unix-console.svg</file>

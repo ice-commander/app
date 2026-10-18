@@ -32,6 +32,21 @@ GTK stack — LGPL-2.1-or-later                                       Windows, m
     License:  LGPL-2.1.txt
 
 
+GTK stack for Android — android-rust-gtk4-adwaita 0.1.0             Android
+    The GTK 4 / libadwaita stack for Android the APK's GTK, libadwaita, GLib, Pango, cairo,
+    gdk-pixbuf and their supporting libraries come from. Its build scripts are MIT OR
+    Apache-2.0; its patches to GTK, GLib and gdk-pixbuf, which are in the shipped libraries,
+    are LGPL-2.1-or-later and included in its release, in
+    src/gtk-stack/subprojects/packagefiles/. The release's THIRD-PARTY.md lists every
+    library in the stack with its exact version and license.
+
+    Source:   https://github.com/savchenko-igor/android-rust-gtk4-adwaita, tag v0.1.0 —
+              the build configuration and the patches; the upstream sources are the ones
+              its meson wraps pin.
+    License:  LGPL-2.1.txt (the patches); the build scripts' MIT and Apache-2.0 texts are
+              LICENSE-MIT.txt and LICENSE-APACHE-2.0.txt.
+
+
 fakelzo (in place of lzo2) — MIT                                    Windows, macOS
     NO GPL CODE IS SHIPPED IN EITHER BUNDLE. The file named liblzo2.2.dylib (macOS) or
     liblzo2-2.dll (Windows) is NOT Oberhumer's LZO, which is GPL-2.0-or-later. It is

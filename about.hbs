@@ -28,6 +28,15 @@ Nothing here links libssh2 or OpenSSL any more: the application speaks TLS throu
 `rustls`, and SSH left with the SFTP transport when it became a plugin. Both libraries are
 still in the Windows bundle because the MSYS2 GTK tree brings them.
 
+**On Android the GTK stack is
+[android-rust-gtk4-adwaita](https://github.com/savchenko-igor/android-rust-gtk4-adwaita) 0.1.0**,
+the GTK 4 / libadwaita stack for Android the APK's GTK, libadwaita, GLib, Pango, cairo,
+gdk-pixbuf and their supporting libraries come from. Its build scripts are MIT OR Apache-2.0;
+its patches to GTK, GLib and gdk-pixbuf, which are in the shipped libraries, are
+LGPL-2.1-or-later and included in its release (`src/gtk-stack/subprojects/packagefiles/`). Its
+[THIRD-PARTY.md](https://github.com/savchenko-igor/android-rust-gtk4-adwaita/blob/v0.1.0/THIRD-PARTY.md)
+lists every library in the stack with its version and license.
+
 **Plugins carry their own dependencies and their own licence file.** A plugin is a separate
 library from a separate repository — what it links is listed there, not here.
 
