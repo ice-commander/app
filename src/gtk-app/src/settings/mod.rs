@@ -61,6 +61,8 @@ pub fn show_settings_dialog(
         .margin_bottom(8)
         .build();
     reset_btn.add_css_class("flat");
+    // Without this the sidebar can never be narrower than this label, which in German is 284px.
+    reset_btn.set_can_shrink(true);
     reset_btn.set_cursor_from_name(Some("pointer"));
     {
         let config = config.clone();
@@ -96,6 +98,9 @@ pub fn show_settings_dialog(
         .transition_type(StackTransitionType::Crossfade)
         .hexpand(true)
         .vexpand(true)
+        // Homogeneous by default, so one wide page would widen every other one it has shown.
+        .hhomogeneous(false)
+        .vhomogeneous(false)
         .build();
 
     type PageBuilder = std::boxed::Box<dyn Fn(&Box)>;
@@ -137,6 +142,7 @@ pub fn show_settings_dialog(
         let label = Label::builder()
             .label(display_name.as_str())
             .xalign(0.0)
+            .ellipsize(gtk::pango::EllipsizeMode::End)
             .margin_start(16)
             .margin_end(16)
             .margin_top(10)
@@ -247,12 +253,45 @@ pub fn show_settings_dialog(
     }
 
     if let Some(row) = first_row {
-        sidebar_list.select_row(Some(&row));
+        if !crate::mobile() {
+            sidebar_list.select_row(Some(&row));
+        }
     }
 
     main_box.append(&sidebar_box);
     main_box.append(&separator);
+
     main_box.append(&stack);
+
+    // A phone shows one of the two at a time: the categories fill the screen, and choosing
+    // one puts the page in their place. The window's own back arrow returns to the list.
+    if crate::mobile() {
+        sidebar_box.set_hexpand(true);
+        separator.set_visible(false);
+        stack.set_visible(false);
+
+        // Activation, not selection: a ListBox picks a row by itself when it is first shown,
+        // which would open a page nobody asked for.
+        let to_page = stack.clone();
+        let hide_list = sidebar_box.clone();
+        sidebar_list.connect_row_activated(move |_, _| {
+            hide_list.set_visible(false);
+            to_page.set_visible(true);
+        });
+
+        let back_list = sidebar_box.clone();
+        let back_stack = stack.clone();
+        let back_rows = sidebar_list.clone();
+        settings_dialog.connect_close_request(move || {
+            if back_stack.is_visible() {
+                back_stack.set_visible(false);
+                back_list.set_visible(true);
+                back_rows.unselect_all();
+                return gtk::glib::Propagation::Stop;
+            }
+            gtk::glib::Propagation::Proceed
+        });
+    }
 
     settings_dialog.set_child(&main_box);
 

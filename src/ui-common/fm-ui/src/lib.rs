@@ -22,6 +22,19 @@ use std::sync::Once;
 
 static RESOURCES_INIT: Once = Once::new();
 
+thread_local! {
+    static COMPACT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// One panel, touch first. Settled when a panel is built, asked by what must differ.
+pub fn set_compact(on: bool) {
+    COMPACT.with(|held| held.set(on));
+}
+
+pub fn compact() -> bool {
+    COMPACT.with(|held| held.get())
+}
+
 pub fn init_resources() {
     RESOURCES_INIT.call_once(|| {
         gtk::gio::resources_register_include!("fm.gresource")
