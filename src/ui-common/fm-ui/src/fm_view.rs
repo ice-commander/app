@@ -685,6 +685,7 @@ impl SimpleComponent for FmPanelModel {
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
         crate::init_resources();
+        crate::set_compact(init.compact);
         let config = init.config.clone();
         let panel_id = init.panel_id.clone();
 
@@ -1862,9 +1863,14 @@ impl SimpleComponent for FmPanelModel {
                     self.views.filter_bar.set_visible(true);
                 }
                 self.breadcrumb = breadcrumb;
-                self.views
-                    .source_label
-                    .set_text(&fs_label.map(|l| format!("{l},")).unwrap_or_default());
+                // Not on a phone: an untranslated prefix in front of what was come for.
+                self.views.source_label.set_text(
+                    &(if crate::compact() {
+                        String::new()
+                    } else {
+                        fs_label.map(|l| format!("{l},")).unwrap_or_default()
+                    }),
+                );
 
                 let root_str = self.shared.root_path.borrow().clone();
                 let root_parts: Vec<String> = root_str
@@ -2186,7 +2192,9 @@ fn append_root_chip(model: &FmPanelModel, sender: &ComponentSender<FmPanelModel>
         None => gtk::Image::from_resource(&root_icon),
     };
     root_img.set_pixel_size(crate::utils::TOOLBAR_ICON_SIZE);
-    let root_child: gtk::Widget = if let Some(name) = source.display_name.clone() {
+    // On a phone the picture says it: the machine's name costs a third of the line.
+    let named = source.display_name.clone().filter(|_| !crate::compact());
+    let root_child: gtk::Widget = if let Some(name) = named {
         let chip = gtk::Box::builder()
             .orientation(gtk::Orientation::Horizontal)
             .spacing(4)

@@ -34,15 +34,16 @@ fn push_listing(state: &Rc<RouterState>, sender: &relm4::Sender<FmPanelInput>) {
     ) = {
         let nav = state.path.borrow();
         let root = &nav.levels()[0];
+        let shown = nav.active().shown_as();
         (
             nav.absolute_path(),
             (*nav.active().entries()).clone(),
             root.fs.clone(),
             root.relative_path.clone(),
-            nav.active().shown_as().columns,
-            nav.active().shown_as().columns_replace_defaults,
-            nav.active().shown_as().read_only,
-            nav.active().shown_as().wants_quick_filter,
+            shown.columns,
+            shown.columns_replace_defaults,
+            shown.read_only,
+            shown.wants_quick_filter,
             nav.active().fs.supports_permissions(),
         )
     };
@@ -489,6 +490,24 @@ impl PanelRouter {
 
     pub fn current_resource_id(&self) -> String {
         self.resource_id.borrow().clone()
+    }
+
+    /// The key of the row this mount was opened from. Asked of the foot of the path:
+    /// inside an archive on a server the active filesystem came from no row at all.
+    pub fn mount_key(&self) -> Option<String> {
+        self.state.path.borrow().levels()[0].fs.connection_id()
+    }
+
+    /// What the mount calls itself, for whoever must show it when no row claims it.
+    pub fn mount_name(&self) -> Option<String> {
+        self.state.path.borrow().levels()[0].fs.display_name()
+    }
+
+    /// The picture the mount brought, if it brought one.
+    pub fn mount_icon_svg(&self) -> Option<String> {
+        let nav = self.state.path.borrow();
+        let root = &nav.levels()[0];
+        root.fs.get_icon_svg(&root.relative_path)
     }
 
     pub fn core_selected_name(&self) -> Option<String> {

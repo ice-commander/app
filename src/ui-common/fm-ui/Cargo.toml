@@ -24,3 +24,4 @@ glib-build-tools = "0.20"
 
 [dev-dependencies]
 ic-plugin-api = { workspace = true }
+serde_json = { workspace = true }

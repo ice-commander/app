@@ -2525,6 +2525,7 @@ pub fn mount_through_plugin(
         Some(fm_core::plugin_fs::Shown {
             name: conn.name.clone(),
             icon_svg,
+            key: connection_form::connection_key(conn),
         }),
     )
 }

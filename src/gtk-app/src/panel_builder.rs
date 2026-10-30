@@ -116,8 +116,6 @@ pub fn build_panel(
     let panel_box = Box::builder().orientation(Orientation::Vertical).build();
     panel_box.add_css_class("panel-container");
 
-    let tab_title = tab_title_for(&initial_path);
-
     let config_for_addtab = config.clone();
 
     let clipboard_tabs = clipboard.clone();
@@ -311,7 +309,7 @@ pub fn build_panel(
 
     {
         let page = tab_view.append(&first.content);
-        page.set_title(&tab_title);
+        page.set_title(&tab_title_for_router(&first.router));
         add_tab_widget(&page, &first.tab_switch, &first.tab_header);
         tabs.borrow_mut().push((page.clone(), first.clone()));
         tab_view.set_selected_page(&page);
@@ -361,6 +359,7 @@ pub fn build_panel(
         {
             let info_for_switch = panel_info.clone();
             panel_info.tab_view.connect_selected_page_notify(move |_| {
+                info_for_switch.refresh_tab_titles();
                 info_for_switch.refresh_terminal_button();
                 crate::api::notify_side(side_str, &info_for_switch);
             });
@@ -385,6 +384,7 @@ pub fn build_panel(
                         .collect();
                     clip_nav.drop_if_unreachable(&live);
                 }
+                info_for_nav.refresh_tab_titles();
                 info_for_nav.refresh_terminal_button();
                 crate::api::notify_side(side_str, &info_for_nav)
             }));
@@ -495,6 +495,16 @@ impl PanelInfo {
         (self.add_tab_fn)(path, true);
     }
 
+    /// Set once at creation, a title would still name where the tab was opened.
+    pub fn refresh_tab_titles(&self) {
+        for (page, tab) in self.tabs.borrow().iter() {
+            let title = tab_title_for_router(&tab.router);
+            if page.title() != title {
+                page.set_title(&title);
+            }
+        }
+    }
+
     pub fn read_tabs(&self) -> Vec<crate::api::ApiTab> {
         self.tabs
             .borrow()
@@ -545,19 +555,6 @@ fn tab_title_for_router(router: &panel_router::PanelRouter) -> String {
         .last()
         .map(|l| l.name.clone())
         .filter(|n| !n.is_empty())
-        .unwrap_or_else(|| "/".to_string())
-}
-
-fn tab_title_for(initial_path: &Option<String>) -> String {
-    initial_path
-        .as_deref()
-        .filter(|p| !p.is_empty())
-        .and_then(|p| {
-            std::path::Path::new(p)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map(|s| s.to_string())
-        })
         .unwrap_or_else(|| "/".to_string())
 }
 

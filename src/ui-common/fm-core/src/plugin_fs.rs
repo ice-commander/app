@@ -343,6 +343,8 @@ unsafe impl Send for Carried {}
 pub struct Shown {
     pub name: String,
     pub icon_svg: Option<String>,
+    /// The key of the row this mount was opened from; empty when it came from none.
+    pub key: String,
 }
 
 /// Where a copy whose destination names a file some plugin claims actually
@@ -992,6 +994,13 @@ impl crate::rpc::FileSystemRpc for PluginFsRpc {
             return true;
         }
         (self.plugin.read_only_fn().expect("checked at registration"))(handle) != 0
+    }
+
+    fn connection_id(&self) -> Option<String> {
+        self.shown
+            .as_ref()
+            .map(|shown| shown.key.clone())
+            .filter(|key| !key.is_empty())
     }
 
     fn display_name(&self) -> Option<String> {
@@ -2593,6 +2602,7 @@ mod tests {
         let _lease = lease_registry_for_test();
         let plain = writable_filesystem(".shownprobe");
         assert_eq!(plain.display_name(), None, "nobody named it");
+        assert_eq!(plain.connection_id(), None, "and it came from no row");
         assert_eq!(
             plain.get_icon_svg(""),
             None,
@@ -2602,8 +2612,14 @@ mod tests {
         let shown = writable_filesystem(".shownprobe2").shown_as(Shown {
             name: "work files".to_string(),
             icon_svg: Some("<svg id=\"brought\"/>".to_string()),
+            key: "sftp://work".to_string(),
         });
         assert_eq!(shown.display_name().as_deref(), Some("work files"));
+        assert_eq!(
+            shown.connection_id().as_deref(),
+            Some("sftp://work"),
+            "the row it was opened from is what the toolbar matches on"
+        );
         assert_eq!(
             shown.get_icon_svg("").as_deref(),
             Some("<svg id=\"brought\"/>")
@@ -2617,8 +2633,10 @@ mod tests {
         let nameless = writable_filesystem(".shownprobe3").shown_as(Shown {
             name: "   ".to_string(),
             icon_svg: None,
+            key: String::new(),
         });
         assert_eq!(nameless.display_name(), None);
+        assert_eq!(nameless.connection_id(), None);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use crate::connection_manager::Connection;
 use gtk::prelude::*;
-use localfs::utils::{get_drives, DriveInfo};
+use localfs::utils::get_drives;
 use panel_router::PanelRouter;
 use std::rc::Rc;
 
@@ -37,24 +37,11 @@ pub struct AppDrive {
     pub key: String, // e.g., "local_fs:/", "ftp://..."
     pub is_favorite: bool,
     pub is_online: bool,
-    #[allow(dead_code)]
-    pub drive_info: Option<DriveInfo>,
 }
 
 pub enum DriveActivation {
     Shown,
     NeedsAsyncMount(gtk::gio::Volume),
-}
-
-impl AppDrive {
-    #[allow(dead_code)] // distinct from the `DriveInfo::is_mounted` field the other crates read
-    pub fn is_mounted(&self) -> bool {
-        match &self.item {
-            AppDriveItem::RootFs | AppDriveItem::UserHome | AppDriveItem::LocalDrive(_) => true,
-            AppDriveItem::Volume(vol) => vol.get_mount().is_some(),
-            AppDriveItem::NetConnection(_) | AppDriveItem::Offered { .. } => false,
-        }
-    }
 }
 
 pub fn get_all_app_drives(config: &client_config::AppConfig) -> Vec<AppDrive> {
@@ -76,7 +63,6 @@ pub fn get_all_app_drives(config: &client_config::AppConfig) -> Vec<AppDrive> {
             is_favorite: favorites.contains(&root_key),
             is_online: true,
             svg: Vec::new(),
-            drive_info: None,
         });
     }
 
@@ -94,7 +80,6 @@ pub fn get_all_app_drives(config: &client_config::AppConfig) -> Vec<AppDrive> {
         is_favorite: favorites.contains(&home_key),
         is_online: true,
         svg: Vec::new(),
-        drive_info: None,
     });
 
     for drive in get_drives() {
@@ -109,7 +94,6 @@ pub fn get_all_app_drives(config: &client_config::AppConfig) -> Vec<AppDrive> {
                 is_online: true,
                 svg: Vec::new(),
                 key,
-                drive_info: Some(drive),
             });
         }
     }
@@ -128,14 +112,6 @@ pub fn get_all_app_drives(config: &client_config::AppConfig) -> Vec<AppDrive> {
                 is_online: false,
                 svg: Vec::new(),
                 key,
-                drive_info: Some(DriveInfo {
-                    path: name.clone(),
-                    name,
-                    is_mounted: false,
-                    can_eject: volume.can_eject(),
-                    volume: Some(volume),
-                    mount: None,
-                }),
             });
         }
     }
@@ -158,7 +134,6 @@ pub fn get_all_app_drives(config: &client_config::AppConfig) -> Vec<AppDrive> {
             is_online: true,
             svg,
             key,
-            drive_info: None,
         });
     }
 
@@ -184,14 +159,14 @@ fn offered_drives(favorites: &[String]) -> Vec<AppDrive> {
             is_favorite: favorites.contains(&drive.key),
             is_online: drive.online,
             svg: drive.svg.clone(),
-            key: drive.key,
-            drive_info: None,
+            key: drive.key.clone(),
             item: AppDriveItem::Offered {
                 kind: drive.kind,
                 settings: drive.settings,
                 shown: fm_core::plugin_fs::Shown {
                     name: drive.name.clone(),
                     icon_svg: String::from_utf8(drive.svg.clone()).ok(),
+                    key: drive.key,
                 },
             },
         })

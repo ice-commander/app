@@ -104,13 +104,13 @@ fn is_currently_active(
             }
             false
         }
-        crate::drives::AppDriveItem::Offered { .. } => false,
-        // The mount answers with the key favourites hang off, not with an address.
-        crate::drives::AppDriveItem::NetConnection(conn) => router
-            .provider()
-            .connection_id()
-            .map(|open| open == connection_form::connection_key(conn))
-            .unwrap_or(false),
+        // Both are mounted through a plugin, and the mount carries its row's key back.
+        crate::drives::AppDriveItem::Offered { shown, .. } => {
+            !shown.key.is_empty() && router.mount_key().as_deref() == Some(shown.key.as_str())
+        }
+        crate::drives::AppDriveItem::NetConnection(conn) => {
+            router.mount_key() == Some(connection_form::connection_key(conn))
+        }
     }
 }
 
@@ -276,19 +276,19 @@ pub fn create_drives_toolbar(
                 }
             }
 
-            let mut active_idx = gtk::INVALID_LIST_POSITION;
-            for (idx, item) in items.iter().enumerate() {
-                if is_currently_active(&router, &item.item, &stack) {
-                    active_idx = idx as u32;
-                }
-            }
+            // A GtkDropDown cannot be left unselected (can-unselect is false on the
+            // GtkSingleSelection it wraps the model in), so a miss lands on the first row.
+            let active = items
+                .iter()
+                .position(|item| is_currently_active(&router, &item.item, &stack))
+                .unwrap_or(0) as u32;
 
             let dropdown_refs: Vec<&str> = dropdown_strings.iter().map(|s| s.as_str()).collect();
 
             is_syncing_vol.set(true);
             *drive_items.borrow_mut() = items;
             string_list.splice(0, string_list.n_items(), &dropdown_refs);
-            drive_dropdown_vol.set_selected(active_idx);
+            drive_dropdown_vol.set_selected(active);
             is_syncing_vol.set(false);
         })
     };
@@ -422,6 +422,7 @@ pub fn create_drives_toolbar(
 
     let update_vol_sync = update_volumes_ui.clone();
     let is_syncing_sync = is_syncing.clone();
+    let update_switch_sync = show_title.clone();
     let sync_selection = Rc::new(move || {
         let items = drive_items_sync.borrow();
         let mut matched_idx = None;
@@ -443,12 +444,10 @@ pub fn create_drives_toolbar(
             if is_in_fm {
                 drop(items);
                 update_vol_sync();
-            } else if drive_dropdown_sync.selected() != gtk::INVALID_LIST_POSITION {
-                is_syncing_sync.set(true);
-                drive_dropdown_sync.set_selected(gtk::INVALID_LIST_POSITION);
-                is_syncing_sync.set(false);
             }
         }
+        // Outright: a selection that did not move emits no signal to redraw the button.
+        update_switch_sync();
     });
 
     router.set_on_navigated({

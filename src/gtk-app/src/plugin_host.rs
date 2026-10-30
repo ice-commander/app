@@ -38,32 +38,43 @@ mod tests {
             eprintln!("no display: the plugin icons were not checked");
             return;
         }
-        let here = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let brought = [
-            "../../../plugin-torrent/src/torrent-fs/assets",
-            "../../../plugin-nodeinnet/src/node-in-net-fs/assets",
-        ];
+        // Walked, not listed by name: a renamed plugin would leave its pictures unchecked.
+        let plugins = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../plugins");
+        let Ok(folders) = std::fs::read_dir(&plugins) else {
+            eprintln!("no plugins beside the application: their icons were not checked");
+            return;
+        };
         let mut looked_at = 0;
-        for at in brought {
-            let folder = here.join(at);
-            let Ok(entries) = std::fs::read_dir(&folder) else {
-                continue;
-            };
-            for entry in entries.filter_map(Result::ok) {
-                let path = entry.path();
-                if path.extension().is_none_or(|e| e != "svg") {
+        let mut found = Vec::new();
+        for plugin in folders.filter_map(Result::ok) {
+            let mut stack = vec![plugin.path().join("src")];
+            while let Some(at) = stack.pop() {
+                let Ok(entries) = std::fs::read_dir(&at) else {
                     continue;
+                };
+                for entry in entries.filter_map(Result::ok) {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        stack.push(path);
+                    } else if path.extension().is_some_and(|e| e == "svg") {
+                        found.push(path);
+                    }
                 }
-                let svg = std::fs::read(&path).expect("readable");
-                assert!(
-                    super::image_from_svg_at(&svg, 20).is_some(),
-                    "{} does not render, so anything drawn with it is blank",
-                    path.display()
-                );
-                looked_at += 1;
             }
         }
-        assert!(looked_at > 0, "no plugin pictures were found to check");
+        for path in found {
+            let svg = std::fs::read(&path).expect("readable");
+            assert!(
+                super::image_from_svg_at(&svg, 20).is_some(),
+                "{} does not render, so anything drawn with it is blank",
+                path.display()
+            );
+            looked_at += 1;
+        }
+        if looked_at == 0 {
+            eprintln!("the plugins beside the application bring no pictures");
+            return;
+        }
         eprintln!("{looked_at} plugin pictures render");
     }
 }

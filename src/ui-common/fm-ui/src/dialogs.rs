@@ -5,8 +5,17 @@ use crate::fm_view::{FmPanelModel, FmPanelOutput, Shared};
 use crate::utils::build_path_string;
 
 // Dialogs sit inside the window they belong to: a separate window is a whole new screen on a phone.
+/// Not `Auto`: it decides by width, and a phone window is wide enough to look like a desktop.
+fn placed(dialog: &adw::AlertDialog) {
+    use adw::prelude::AdwDialogExt;
+    if crate::compact() {
+        dialog.set_presentation_mode(adw::DialogPresentationMode::BottomSheet);
+    }
+}
+
 pub fn present_error(window: Option<&gtk::Window>, title: &str, body: &str) {
     let dialog = adw::AlertDialog::new(Some(title), Some(body));
+    placed(&dialog);
     dialog.add_response("ok", "OK");
     dialog.present(window);
 }
@@ -18,6 +27,7 @@ pub fn show_create_dir_dialog(
 ) {
     let Some(window) = window else { return };
     let dialog = adw::AlertDialog::new(None, None);
+    placed(&dialog);
 
     let entry = gtk::Entry::builder()
         .placeholder_text(&*crate::i18n::tr("fm.dir_name_placeholder"))
@@ -167,6 +177,7 @@ pub fn show_delete_dialog(
     extra_box.append(&info_vbox);
 
     let dialog = adw::AlertDialog::builder().extra_child(&extra_box).build();
+    placed(&dialog);
     dialog.add_response("cancel", &crate::i18n::tr("fm.cancel"));
     dialog.add_response("delete", &crate::i18n::tr("fm.context.delete"));
     dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
@@ -228,6 +239,7 @@ pub fn rename_dialog_for(
     let old_path = format!("{}{}", safe_parent, old_name);
 
     let dialog = adw::AlertDialog::new(Some(&*crate::i18n::tr("fm.rename_title")), None);
+    placed(&dialog);
     let entry = gtk::Entry::builder()
         .text(old_name)
         .activates_default(true)
@@ -304,6 +316,7 @@ pub fn chmod_dialog_for(
         Some("Permissions"),
         Some(&format!("Permissions for: {file_name}")),
     );
+    placed(&dialog);
 
     let grid = gtk::Grid::builder()
         .row_spacing(8)
@@ -424,16 +437,25 @@ pub fn chmod_dialog_for(
 }
 
 fn current_drive_info(shared: &Shared) -> (String, String, bool) {
-    let conn_id = shared.source.borrow().connection_id.clone();
-    let key = if let Some(cid) = conn_id {
-        cid
-    } else {
-        format!(
+    let (conn_id, named) = {
+        let source = shared.source.borrow();
+        (source.connection_id.clone(), source.display_name.clone())
+    };
+    let Some(key) = conn_id else {
+        let key = format!(
             "local_fs:{}",
             build_path_string(&shared.current_path.borrow())
-        )
+        );
+        return resolve_drive_details(&key, &shared.config);
     };
-    resolve_drive_details(&key, &shared.config)
+    // The row's own name, rather than a guess from the path, which was wrong off the disk.
+    let (fallback, icon, _) = resolve_drive_details(&key, &shared.config);
+    let favourite = shared
+        .config
+        .get::<Vec<String>>("ui.favorites")
+        .unwrap_or_default()
+        .contains(&key);
+    (named.unwrap_or(fallback), icon, favourite)
 }
 
 pub fn resolve_drive_details(
@@ -444,7 +466,7 @@ pub fn resolve_drive_details(
         .get::<Vec<String>>("ui.favorites")
         .unwrap_or_default();
 
-    let mut name = "Local Filesystem".to_string();
+    let mut name = crate::i18n::tr("fm.drive_local").to_string();
     let mut icon = "/com/fm-ui/gtk/ssd.svg".to_string();
     let mut key_for_fav = key.to_string();
 
@@ -460,7 +482,7 @@ pub fn resolve_drive_details(
             || path_norm == home_path
             || path_norm.starts_with(&format!("{}/", home_path))
         {
-            name = "User Home".to_string();
+            name = crate::i18n::tr("fm.drive_user_home").to_string();
             icon = "/com/fm-ui/gtk/at-home.svg".to_string();
             key_for_fav = "local_fs:~".to_string();
         } else {
@@ -503,7 +525,7 @@ pub fn resolve_drive_details(
                     }
                 }
                 if !resolved {
-                    name = "System Root".to_string();
+                    name = crate::i18n::tr("fm.drive_system_root").to_string();
                     icon = "/com/fm-ui/gtk/home.svg".to_string();
                     key_for_fav = "local_fs:/".to_string();
                 }
