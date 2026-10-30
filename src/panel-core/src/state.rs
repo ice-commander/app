@@ -197,8 +197,12 @@ impl RouterState {
             self.save_last_selected(leaving, name);
         }
 
+        // Deepest first, and build_levels reads no directory to decide where a filesystem
+        // begins, so stopping at the first one that lists is the longest usable prefix. A
+        // folder in the middle of the path may be closed while its child is open — Android
+        // forbids /storage and allows /storage/emulated/0 — and a walk inwards never arrived.
         let mut valid = 0usize;
-        for i in 0..segs.len() {
+        for i in (0..segs.len()).rev() {
             let levels = crate::nav::build_levels(&segs[..=i], walk_base.clone());
             let (fs, rel) = {
                 let last = levels
@@ -210,9 +214,12 @@ impl RouterState {
             // a moment ago on the way in is the same folder now, and on a
             // server inside an archive each of these used to be the whole
             // container over the network again.
-            match fm_core::listing::list(&fs, &rel, fm_core::listing::Freshness::Remembered).await {
-                Ok(_) => valid = i + 1,
-                Err(_) => break,
+            if fm_core::listing::list(&fs, &rel, fm_core::listing::Freshness::Remembered)
+                .await
+                .is_ok()
+            {
+                valid = i + 1;
+                break;
             }
         }
 
@@ -260,26 +267,37 @@ impl RouterState {
         out
     }
 
-    pub async fn go_up(&self) -> Result<(), AppError> {
-        if !self.path.borrow_mut().pop() {
-            return Ok(());
+    /// Where the panel stands once a move has failed: the move never happened. Without this the
+    /// state walks on while the screen still shows the folder left behind, and the next step is
+    /// taken from a place the user never saw.
+    async fn moved_or_stay(&self, before: crate::nav::NavPath) -> Result<(), AppError> {
+        if let Err(e) = self.show_active().await {
+            *self.path.borrow_mut() = before;
+            return Err(e);
         }
-        self.show_active().await?;
         self.record_history_snapshot();
         Ok(())
     }
 
+    pub async fn go_up(&self) -> Result<(), AppError> {
+        let before = self.path.borrow().clone();
+        if !self.path.borrow_mut().pop() {
+            return Ok(());
+        }
+        self.moved_or_stay(before).await
+    }
+
     pub async fn go_to_level(&self, idx: usize) -> Result<(), AppError> {
+        let before = self.path.borrow().clone();
         self.path.borrow_mut().truncate_to(idx);
-        self.show_active().await?;
-        self.record_history_snapshot();
-        Ok(())
+        self.moved_or_stay(before).await
     }
 
     pub async fn enter(&self, name: &str) -> Result<(), AppError> {
         let parent_abs = self.path.borrow().absolute_path();
         self.save_last_selected(parent_abs, name.to_string());
         self.set_selected(Some(name.to_string()));
+        let before = self.path.borrow().clone();
         {
             let mut path = self.path.borrow_mut();
             let (parent_fs, parent_rel) = {
@@ -300,7 +318,10 @@ impl RouterState {
                 path.push(PathLevel::new(name, child_rel, parent_fs));
             }
         }
-        self.list_active().await?;
+        if let Err(e) = self.list_active().await {
+            *self.path.borrow_mut() = before;
+            return Err(e);
+        }
         self.record_history_snapshot();
         Ok(())
     }

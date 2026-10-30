@@ -29,7 +29,7 @@ pub type DirWithDate = (String, String);
 pub type FileWithDate = (String, u64, String);
 pub type DirectoryListing = (Vec<DirWithDate>, Vec<FileWithDate>);
 
-pub fn list_local_directory(target_dir: &Path) -> DirectoryListing {
+pub fn list_local_directory(target_dir: &Path) -> std::io::Result<DirectoryListing> {
     let mut directories = Vec::new();
     let mut files = Vec::new();
 
@@ -48,35 +48,33 @@ pub fn list_local_directory(target_dir: &Path) -> DirectoryListing {
                     directories.push((drive, "".to_string()));
                 }
             }
-            return (directories, files);
+            return Ok((directories, files));
         }
     }
 
     let safe_target = sanitize_windows_path(target_dir);
 
-    if let Ok(read_dir) = std::fs::read_dir(&safe_target) {
-        for entry_result in read_dir.flatten() {
-            if let Ok(file_type) = entry_result.file_type() {
-                let name = entry_result.file_name().to_string_lossy().to_string();
-                let date_str = entry_result
-                    .metadata()
-                    .ok()
-                    .and_then(|m| m.modified().ok())
-                    .map(|t| {
-                        let datetime: chrono::DateTime<chrono::Local> = t.into();
-                        datetime.format("%Y-%m-%d %H:%M:%S").to_string()
-                    })
-                    .unwrap_or_default();
-                if file_type.is_dir() {
-                    directories.push((name, date_str));
-                } else {
-                    let size = entry_result.metadata().map(|m| m.len()).unwrap_or(0);
-                    files.push((name, size, date_str));
-                }
+    for entry_result in std::fs::read_dir(&safe_target)?.flatten() {
+        if let Ok(file_type) = entry_result.file_type() {
+            let name = entry_result.file_name().to_string_lossy().to_string();
+            let date_str = entry_result
+                .metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .map(|t| {
+                    let datetime: chrono::DateTime<chrono::Local> = t.into();
+                    datetime.format("%Y-%m-%d %H:%M:%S").to_string()
+                })
+                .unwrap_or_default();
+            if file_type.is_dir() {
+                directories.push((name, date_str));
+            } else {
+                let size = entry_result.metadata().map(|m| m.len()).unwrap_or(0);
+                files.push((name, size, date_str));
             }
         }
     }
-    (directories, files)
+    Ok((directories, files))
 }
 
 pub fn get_local_metadata(target_entry: &Path) -> Option<EntryInfo> {
@@ -378,7 +376,7 @@ mod tests {
     #[test]
     fn list_empty_dir_returns_empty() {
         let dir = tempdir().unwrap();
-        let (dirs, files) = list_local_directory(dir.path());
+        let (dirs, files) = list_local_directory(dir.path()).unwrap();
         assert!(dirs.is_empty());
         assert!(files.is_empty());
     }
@@ -389,7 +387,7 @@ mod tests {
         fs::create_dir(dir.path().join("subdir")).unwrap();
         fs::write(dir.path().join("file.txt"), b"hello").unwrap();
 
-        let (dirs, files) = list_local_directory(dir.path());
+        let (dirs, files) = list_local_directory(dir.path()).unwrap();
         assert_eq!(dirs.len(), 1);
         assert_eq!(dirs[0].0, "subdir");
         assert_eq!(files.len(), 1);
@@ -398,10 +396,13 @@ mod tests {
     }
 
     #[test]
-    fn list_nonexistent_dir_returns_empty() {
-        let (dirs, files) = list_local_directory(Path::new("/this/does/not/exist/xyz123"));
-        assert!(dirs.is_empty());
-        assert!(files.is_empty());
+    fn list_nonexistent_dir_reports_the_error() {
+        let failed = list_local_directory(Path::new("/this/does/not/exist/xyz123"));
+        assert_eq!(
+            failed.unwrap_err().kind(),
+            std::io::ErrorKind::NotFound,
+            "a directory that cannot be read must not pass for an empty one"
+        );
     }
 
     #[test]

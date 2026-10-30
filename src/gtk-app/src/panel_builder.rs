@@ -1251,15 +1251,24 @@ fn build_tab(
         });
     }
 
-    if let Some(ref path) = initial_path {
-        if !path.is_empty() && std::path::Path::new(path).exists() {
+    // Readable, not merely present: on Android "/" passes exists() and then lists nothing,
+    // which left the panel in a place no drive row could take it out of.
+    let browsable = |path: &str| !path.is_empty() && std::fs::read_dir(path).is_ok();
+    let opening = initial_path
+        .as_deref()
+        .filter(|path| browsable(path))
+        .map(str::to_string)
+        .or_else(|| {
+            dirs::home_dir()
+                .map(|home| home.to_string_lossy().to_string())
+                .filter(|home| crate::mobile() && browsable(home))
+        });
+    match opening {
+        Some(path) => {
             stack.set_visible_child_name("filemanager");
-            router.open_path(path.clone());
-        } else {
-            stack.set_visible_child_name("selector");
+            router.open_path(path);
         }
-    } else {
-        stack.set_visible_child_name("selector");
+        None => stack.set_visible_child_name("selector"),
     }
 
     let content = Box::builder().orientation(Orientation::Vertical).build();

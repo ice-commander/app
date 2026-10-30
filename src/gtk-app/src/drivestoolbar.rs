@@ -16,6 +16,27 @@ fn show_drive_icon(image: &gtk::Image, drive: &crate::drives::AppDrive) {
     image.set_resource(Some(&drive.icon));
 }
 
+/// GtkDropDown holds its rows in a GtkListView inside its popover. Picking the row that is
+/// already selected moves nothing, so notify::selected never comes — and on a phone the list
+/// holds a single row, which made the chip unable to take the panel anywhere. The list's own
+/// activate fires on every pick. (GTK 4.24: dropdown > popup > box > scrolledwindow > popup_list.)
+fn popup_list(dropdown: &DropDown) -> Option<gtk::ListView> {
+    fn walk(widget: &gtk::Widget) -> Option<gtk::ListView> {
+        if let Some(list) = widget.downcast_ref::<gtk::ListView>() {
+            return Some(list.clone());
+        }
+        let mut child = widget.first_child();
+        while let Some(current) = child {
+            if let Some(found) = walk(&current) {
+                return Some(found);
+            }
+            child = current.next_sibling();
+        }
+        None
+    }
+    walk(dropdown.upcast_ref())
+}
+
 fn is_currently_active(
     router: &Rc<PanelRouter>,
     item: &crate::drives::AppDriveItem,
@@ -316,7 +337,10 @@ pub fn create_drives_toolbar(
     let drive_items_dd = drive_items.clone();
 
     let is_syncing_dd = is_syncing.clone();
-    drive_dropdown.connect_selected_notify(move |dd| {
+    // A volume answers "not mine yet" until its mount finishes, so picking its row again while
+    // the password dialog is still up would ask the device to mount a second time.
+    let mounting = Rc::new(std::cell::Cell::new(false));
+    let open_selected: Rc<dyn Fn(&DropDown)> = Rc::new(move |dd: &DropDown| {
         if is_syncing_dd.get() {
             return;
         }
@@ -335,6 +359,11 @@ pub fn create_drives_toolbar(
                     stack_dd.set_visible_child_name("filemanager");
                 }
                 crate::drives::DriveActivation::NeedsAsyncMount(vol_inner) => {
+                    if mounting.get() {
+                        return;
+                    }
+                    mounting.set(true);
+                    let mounting_inner = mounting.clone();
                     let router_inner = router_dd.clone();
                     let stack_inner = stack_dd.clone();
                     let dd_inner = dd.clone();
@@ -409,11 +438,25 @@ pub fn create_drives_toolbar(
                                 );
                             }
                         }
+                        mounting_inner.set(false);
                     });
                 }
             }
         }
     });
+
+    // One path or the other, never both: an activate that also moved the selection would
+    // otherwise mount the same volume twice.
+    match popup_list(&drive_dropdown) {
+        Some(list) => {
+            let open = open_selected.clone();
+            let dd = drive_dropdown.clone();
+            list.connect_activate(move |_, _| open(&dd));
+        }
+        None => {
+            drive_dropdown.connect_selected_notify(move |dd| open_selected(dd));
+        }
+    }
 
     let drive_dropdown_sync = drive_dropdown.clone();
     let drive_items_sync = drive_items.clone();

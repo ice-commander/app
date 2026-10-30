@@ -602,10 +602,11 @@ mod walking_a_typed_path {
         );
     }
 
-    /// Walking a path reads each folder along it once, and the one it lands on
-    /// is not read a second time to be shown.
+    /// A path that is there costs one read, of its own end: the folders above
+    /// it are never asked about, which is what lets the panel reach a folder
+    /// whose parent is closed to it.
     #[tokio::test]
-    async fn each_folder_along_a_typed_path_is_read_once() {
+    async fn a_typed_path_that_exists_reads_only_where_it_lands() {
         fm_core::listing::forget_everything();
         let fs = Rc::new(Counting {
             reads: RefCell::new(Vec::new()),
@@ -617,7 +618,43 @@ mod walking_a_typed_path {
             .navigate_typed("/a/b/c".to_string())
             .await
             .expect("the walk finished"));
-        assert_eq!(fs.reads.borrow().as_slice(), ["/a", "/a/b", "/a/b/c"]);
+        assert_eq!(fs.reads.borrow().as_slice(), ["/a/b/c"]);
+    }
+
+    /// A filesystem that refuses one directory and serves the rest, the way
+    /// Android closes /storage and opens /storage/emulated/0.
+    struct Closed {
+        closed: String,
+    }
+
+    #[async_trait::async_trait(?Send)]
+    impl FileSystemRpc for Closed {
+        async fn list_dir(&self, path: String) -> Result<Vec<RemoteFileEntry>, common::AppError> {
+            if path == self.closed {
+                return Err(common::AppError::from(std::io::Error::from(
+                    std::io::ErrorKind::PermissionDenied,
+                )));
+            }
+            Ok(Vec::new())
+        }
+        fn fs_id(&self) -> String {
+            "closed".to_string()
+        }
+    }
+
+    #[tokio::test]
+    async fn a_folder_is_reached_although_its_parent_is_closed() {
+        fm_core::listing::forget_everything();
+        let fs: Rc<dyn FileSystemRpc> = Rc::new(Closed {
+            closed: "/storage".to_string(),
+        });
+        let state = RouterState::new(fs.clone(), fs, "/".to_string());
+
+        assert!(state
+            .navigate_typed("/storage/emulated/0".to_string())
+            .await
+            .expect("the walk finished"));
+        assert_eq!(state.path.borrow().absolute_path(), "/storage/emulated/0");
     }
 
     /// And walking it again reads nothing at all: every folder on the way is

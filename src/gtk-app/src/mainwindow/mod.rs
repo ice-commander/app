@@ -609,11 +609,18 @@ impl MainWindow {
         let wiz_updaters = selector_updaters.clone();
 
         // The activity behind the window exists once it is mapped.
-        window.connect_map(|window| {
+        let map_updaters = selector_updaters.clone();
+        window.connect_map(move |window| {
             let window = window.clone().upcast::<gtk::Window>();
+            let updaters = map_updaters.clone();
             glib::idle_add_local_once(move || {
                 crate::platform().attach_services(&window);
                 crate::platform().ensure_storage_access(&window);
+                // The drive list was built before the platform could be asked anything; on
+                // Android that is where removable media come from.
+                for update in updaters.borrow().iter() {
+                    update();
+                }
             });
         });
         window.present();
