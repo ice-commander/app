@@ -169,7 +169,8 @@ impl fm_core::rpc::FileSystemRpc for LocalFileSystemRpc {
         res
     }
     async fn list_dir(&self, path: String) -> Result<Vec<fm_core::rpc::RemoteFileEntry>, AppError> {
-        let (dirs, files) = fs_local::list_local_directory(std::path::Path::new(&path));
+        let (dirs, files) = fs_local::list_local_directory(std::path::Path::new(&path))
+            .map_err(AppError::from)?;
         let mut entries = Vec::new();
         for d in dirs {
             let mut permissions = None;

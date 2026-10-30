@@ -82,6 +82,22 @@ pub fn get_all_app_drives(config: &client_config::AppConfig) -> Vec<AppDrive> {
         svg: Vec::new(),
     });
 
+    // No volume monitor reaches these: an app may not read /storage, so only the system knows.
+    #[cfg(target_os = "android")]
+    for (path, name) in crate::android::storage_volumes() {
+        let key = format!("local_fs:{path}");
+        drives.push(AppDrive {
+            item: AppDriveItem::LocalDrive(path.clone()),
+            name,
+            subtitle: path.clone(),
+            icon: "/com/icecommander/gtk/ssd.svg".to_string(),
+            is_favorite: favorites.contains(&key),
+            is_online: true,
+            svg: Vec::new(),
+            key,
+        });
+    }
+
     for drive in get_drives() {
         if drive.is_mounted {
             let key = format!("local_fs:{}", drive.path);

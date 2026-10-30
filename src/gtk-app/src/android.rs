@@ -19,6 +19,10 @@ extern "C" {
 
 struct Android;
 
+/// ndk-context panics when it is asked before `attach_services` has filled it in, and the drive
+/// list is built while the application activates, long before the window is mapped.
+static SERVICES_ATTACHED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 impl Platform for Android {
     fn mobile(&self) -> bool {
         true
@@ -69,7 +73,10 @@ impl Platform for Android {
             Ok(())
         });
         match attached {
-            Ok(()) => ATTACHED.with(|done| done.set(true)),
+            Ok(()) => {
+                ATTACHED.with(|done| done.set(true));
+                SERVICES_ATTACHED.store(true, std::sync::atomic::Ordering::Release);
+            }
             Err(e) => gtk::glib::g_warning!("ice-commander", "cannot attach Android services: {e}"),
         }
     }
@@ -139,6 +146,95 @@ impl Platform for Android {
             gtk::glib::g_warning!("ice-commander", "cannot ask for All-files access: {e}");
         }
     }
+}
+
+/// The removable media the system knows of — an SD card, a stick — which nothing on the
+/// filesystem lists, because /storage is closed to an app. The primary volume is left out: it
+/// is $HOME, and the drive list already names it. Empty until `attach_services` has run.
+pub fn storage_volumes() -> Vec<(String, String)> {
+    if !SERVICES_ATTACHED.load(std::sync::atomic::Ordering::Acquire) {
+        return Vec::new();
+    }
+    match ask_android_for_volumes() {
+        Ok(volumes) => volumes,
+        Err(e) => {
+            gtk::glib::g_warning!("ice-commander", "cannot ask Android for its volumes: {e}");
+            Vec::new()
+        }
+    }
+}
+
+fn ask_android_for_volumes() -> Result<Vec<(String, String)>, String> {
+    let android = ndk_context::android_context();
+    // SAFETY: both come from the context attach_services() handed to ndk-context, which holds
+    // the process's VM and a global reference that is never released.
+    let vm = unsafe { jni::JavaVM::from_raw(android.vm().cast()) }.map_err(|e| e.to_string())?;
+    let context = unsafe { JObject::from_raw(android.context().cast()) };
+    let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
+
+    let asked = env.with_local_frame(16, |env| -> JniResult<Vec<(String, String)>> {
+        let service = env.new_string("storage")?;
+        let manager = env
+            .call_method(
+                &context,
+                "getSystemService",
+                "(Ljava/lang/String;)Ljava/lang/Object;",
+                &[JValue::Object(&service)],
+            )?
+            .l()?;
+        let volumes = env
+            .call_method(&manager, "getStorageVolumes", "()Ljava/util/List;", &[])?
+            .l()?;
+        let count = env.call_method(&volumes, "size", "()I", &[])?.i()?;
+
+        let mut found = Vec::new();
+        for index in 0..count {
+            let volume = env
+                .call_method(
+                    &volumes,
+                    "get",
+                    "(I)Ljava/lang/Object;",
+                    &[JValue::Int(index)],
+                )?
+                .l()?;
+            if env.call_method(&volume, "isPrimary", "()Z", &[])?.z()? {
+                continue;
+            }
+            let directory = env
+                .call_method(&volume, "getDirectory", "()Ljava/io/File;", &[])?
+                .l()?;
+            // Null while the card is unmounted or being ejected.
+            if directory.is_null() {
+                continue;
+            }
+            let path = env
+                .call_method(&directory, "getAbsolutePath", "()Ljava/lang/String;", &[])?
+                .l()?;
+            let path: String = env.get_string((&path).into())?.into();
+            let described = env
+                .call_method(
+                    &volume,
+                    "getDescription",
+                    "(Landroid/content/Context;)Ljava/lang/String;",
+                    &[JValue::Object(&context)],
+                )?
+                .l()?;
+            let name = if described.is_null() {
+                path.clone()
+            } else {
+                env.get_string((&described).into())?.into()
+            };
+            found.push((path, name));
+        }
+        Ok(found)
+    });
+    // jni leaves a throw pending, and the next JNI call GTK makes on this thread would abort on
+    // it. The exception lives on the thread, not in the frame, so clearing it here is in time.
+    if env.exception_check().unwrap_or(false) {
+        let _ = env.exception_describe();
+        let _ = env.exception_clear();
+    }
+    asked.map_err(|e| e.to_string())
 }
 
 fn with_activity<T>(

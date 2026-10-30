@@ -2078,7 +2078,10 @@ impl SimpleComponent for FmPanelModel {
             widgets.list_view.sort_by_column(Some(col), dir);
         }
 
-        if widgets.rendered_generation != self.listing_generation {
+        // render_listing switches the stack away, so a re-render for any other reason would
+        // replace "this could not be read" with an empty folder. The generation is left behind
+        // on purpose: the listing is drawn once the error clears.
+        if widgets.rendered_generation != self.listing_generation && self.error_message.is_none() {
             widgets.rendered_generation = self.listing_generation;
             render_listing(self, &sender);
         }
