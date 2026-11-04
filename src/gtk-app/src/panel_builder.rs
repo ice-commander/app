@@ -555,6 +555,19 @@ fn tab_title_for_router(router: &panel_router::PanelRouter) -> String {
         .unwrap_or_else(|| "/".to_string())
 }
 
+fn tab_title_for(initial_path: &Option<String>) -> String {
+    initial_path
+        .as_deref()
+        .filter(|p| !p.is_empty())
+        .and_then(|p| {
+            std::path::Path::new(p)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|s| s.to_string())
+        })
+        .unwrap_or_else(|| "/".to_string())
+}
+
 pub fn selection_of(router: &panel_router::PanelRouter) -> Vec<crate::plugin_host::SelectedItem> {
     let key_column = router
         .state
