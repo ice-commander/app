@@ -98,8 +98,11 @@
     <file compressed="true" preprocess="xml-stripblanks">low-volume.svg</file>
     <file compressed="true" preprocess="xml-stripblanks">eject.svg</file>
 
-    <!-- Theme preview screenshots for the setup wizard's clickable theme picker. -->
+    <!-- Theme preview screenshots for the setup wizard's clickable theme picker. The phone pair
+         shows one panel upright, which is the only layout a phone has. -->
     <file>ice-commander-gtk-light.jpg</file>
     <file>ice-commander-gtk-dark.jpg</file>
+    <file>ice-commander-phone-light.jpg</file>
+    <file>ice-commander-phone-dark.jpg</file>
   </gresource>
 </gresources>

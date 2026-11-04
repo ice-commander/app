@@ -69,5 +69,52 @@ pub(super) fn build(page_box: &Box, parent: &gtk::Window) {
     update_btn.set_visible(cfg!(not(target_os = "android")));
     about_box.append(&update_btn);
 
+    let licences_btn = Button::builder()
+        .label(&*crate::i18n::tr("settings.licences"))
+        .margin_top(4)
+        .halign(Align::Center)
+        .css_classes(vec!["flat"])
+        .build();
+    licences_btn.set_cursor_from_name(Some("pointer"));
+    let for_licences = parent.clone();
+    licences_btn.connect_clicked(move |_| show_the_licences(&for_licences));
+    about_box.append(&licences_btn);
+
     page_box.append(&about_box);
+}
+
+fn show_the_licences(parent: &gtk::Window) {
+    let surface =
+        crate::ui::surface::Surface::new(parent, &crate::i18n::tr("settings.licences"), 760, 600);
+
+    let tabs = gtk::Notebook::builder()
+        .scrollable(true)
+        .margin_start(8)
+        .margin_end(8)
+        .margin_top(8)
+        .margin_bottom(8)
+        .build();
+
+    for document in common::licences::all() {
+        let text = gtk::TextView::builder()
+            .editable(false)
+            .cursor_visible(false)
+            .monospace(true)
+            .left_margin(12)
+            .right_margin(12)
+            .top_margin(8)
+            .bottom_margin(8)
+            .wrap_mode(gtk::WrapMode::Word)
+            .build();
+        text.buffer().set_text(document.text);
+        let scroller = gtk::ScrolledWindow::builder()
+            .hexpand(true)
+            .vexpand(true)
+            .child(&text)
+            .build();
+        tabs.append_page(&scroller, Some(&Label::new(Some(document.title))));
+    }
+
+    surface.set_child_fitted(&tabs);
+    surface.present();
 }

@@ -17,6 +17,8 @@ pub trait Platform {
     fn attach_services(&self, _window: &gtk::Window) {}
     /// While a film is on: the screen does not dim and lock under it.
     fn keep_screen_on(&self, _window: &gtk::Window, _on: bool) {}
+
+    fn paint_system_bars(&self, _window: &gtk::Window, _argb: i32) {}
 }
 
 /// The desktop. `IC_MOBILE=1` gives it the phone's layout, for trying it without a phone.

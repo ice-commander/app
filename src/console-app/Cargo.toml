@@ -27,6 +27,7 @@ ic-plugin-api = { workspace = true }
 panel-core = { workspace = true }
 localfs = { path = "../localfs", default-features = false }
 fm-core = { workspace = true }
+common = { workspace = true }
 ic-platform = { workspace = true }
 client-config = { workspace = true }
 secret-store = { workspace = true }
@@ -64,4 +65,3 @@ assets = [
 
 [dev-dependencies]
 async-trait = "0.1"
-common = { workspace = true }

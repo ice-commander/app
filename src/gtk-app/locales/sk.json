@@ -436,5 +436,6 @@
   "wizard.toolbar_sub": "Vyberte tlačidlá pre panel. Neskôr to možno zmeniť v nastaveniach.",
   "wizard.toolbar_title": "Tlačidlá panela",
   "wizard.welcome_sub": "Poďme si všetko nastaviť. Ktorékoľvek z týchto nastavení môžete neskôr zmeniť v Nastaveniach.",
-  "wizard.welcome_title": "Vitajte v Ice Commander"
+  "wizard.welcome_title": "Vitajte v Ice Commander",
+  "settings.licences": "Licencie a komponenty"
 }

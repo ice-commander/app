@@ -473,6 +473,12 @@ mod tests {
             action_state: None,
             cell_clicked: None,
             set_permissions: None,
+            stream_open: None,
+            stream_read: None,
+            stream_write: None,
+            stream_close: None,
+            copy_within: None,
+            on_disk: None,
         };
         let lease = fm_core::plugin_fs::lease_registry_for_test();
         let declared = std::ffi::CString::new(extensions).unwrap();

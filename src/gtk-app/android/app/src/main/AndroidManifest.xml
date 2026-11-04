@@ -10,6 +10,11 @@
     <uses-permission
         android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:ignore="ScopedStorage" />
+    <!-- Music goes on while the app is hidden. POST_NOTIFICATIONS is not among these: Android 13
+         exempts a notification that carries a media session, which this one always does. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
         android:name="com.icecommander.gtkapp.IceCommanderApplication"
@@ -21,9 +26,12 @@
         <!-- lib<value>.so must export main(); GTK's RuntimeApplication runs it on the GTK thread. -->
         <meta-data android:name="gtk.android.lib_name" android:value="ice_commander_gtk" />
 
+        <!-- singleTask: standard put a second activity on top of the live one when the launcher
+             opened the app, and GDK had no window left to give it, so the screen stayed blank. -->
         <activity
-            android:name="org.gtk.android.ToplevelActivity"
-            android:configChanges="density|orientation|screenLayout|screenSize|smallestScreenSize|touchscreen|uiMode"
+            android:name="com.icecommander.gtkapp.MainActivity"
+            android:launchMode="singleTask"
+            android:configChanges="colorMode|density|fontScale|fontWeightAdjustment|keyboard|keyboardHidden|layoutDirection|locale|mcc|mnc|navigation|orientation|screenLayout|screenSize|smallestScreenSize|touchscreen|uiMode"
             android:windowSoftInputMode="adjustResize"
             android:enableOnBackInvokedCallback="true"
             android:resizeableActivity="true"
@@ -33,5 +41,21 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- GTK starts any further toplevel window with this class, which must stay standard. -->
+        <activity
+            android:name="org.gtk.android.ToplevelActivity"
+            android:configChanges="colorMode|density|fontScale|fontWeightAdjustment|keyboard|keyboardHidden|layoutDirection|locale|mcc|mnc|navigation|orientation|screenLayout|screenSize|smallestScreenSize|touchscreen|uiMode"
+            android:windowSoftInputMode="adjustResize"
+            android:enableOnBackInvokedCallback="true"
+            android:resizeableActivity="true"
+            android:exported="false" />
+
+        <!-- stopWithTask: the task swiped away ends the playback with it. -->
+        <service
+            android:name="com.icecommander.gtkapp.PlaybackService"
+            android:foregroundServiceType="mediaPlayback"
+            android:stopWithTask="true"
+            android:exported="false" />
     </application>
 </manifest>

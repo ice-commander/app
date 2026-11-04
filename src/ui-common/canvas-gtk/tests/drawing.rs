@@ -23,10 +23,7 @@ fn recording(said: &Said, accepting: bool) -> ic_canvas_gtk::Slots {
     ic_canvas_gtk::Slots {
         ready: Rc::new(move |instance, canvas: &IcCanvas| {
             let sized = canvas.struct_size as usize == std::mem::size_of::<IcCanvas>();
-            let found = (canvas.get_proc_address)(
-                canvas.proc_ctx,
-                c"glGetIntegerv".as_ptr(),
-            );
+            let found = (canvas.get_proc_address)(canvas.proc_ctx, c"glGetIntegerv".as_ptr());
             on_ready.borrow_mut().push(format!(
                 "ready instance={instance} api={} sized={sized} gl={}",
                 canvas.api,

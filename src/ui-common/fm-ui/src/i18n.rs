@@ -40,10 +40,17 @@ mod tests {
                 .keys()
                 .cloned()
                 .collect();
-            let name = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+            let name = path
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
             catalogues.push((name, keys));
         }
-        assert!(catalogues.len() > 1, "there should be catalogues to compare");
+        assert!(
+            catalogues.len() > 1,
+            "there should be catalogues to compare"
+        );
 
         let (ref first_name, ref first) = catalogues[0];
         for (name, keys) in &catalogues[1..] {

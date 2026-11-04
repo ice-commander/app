@@ -427,32 +427,35 @@ fn build_page_appearance(
         })
     };
 
-    let make_card =
-        |retrans: &Retrans, label: fn() -> String, resource: &str| -> gtk::ToggleButton {
-            let v = Box::builder()
-                .orientation(Orientation::Vertical)
-                .spacing(6)
-                .build();
-            let pic = gtk::Picture::for_resource(resource);
-            if crate::mobile() {
-                pic.set_size_request(120, 75);
-            } else {
-                pic.set_size_request(200, 125);
-            }
-            pic.set_content_fit(gtk::ContentFit::Cover);
-            v.append(&pic);
-            v.append(&tr_label(retrans, label));
-            gtk::ToggleButton::builder().child(&v).build()
-        };
+    let shot_of = |tone: &str| {
+        let shape = if crate::mobile() { "phone" } else { "gtk" };
+        format!("/com/icecommander/gtk/ice-commander-{shape}-{tone}.jpg")
+    };
+    let make_card = |retrans: &Retrans, label: fn() -> String, tone: &str| -> gtk::ToggleButton {
+        let v = Box::builder()
+            .orientation(Orientation::Vertical)
+            .spacing(6)
+            .build();
+        let pic = gtk::Picture::for_resource(&shot_of(tone));
+        if crate::mobile() {
+            pic.set_size_request(90, 120);
+        } else {
+            pic.set_size_request(200, 125);
+        }
+        pic.set_content_fit(gtk::ContentFit::Cover);
+        v.append(&pic);
+        v.append(&tr_label(retrans, label));
+        gtk::ToggleButton::builder().child(&v).build()
+    };
     let light_card = make_card(
         retrans,
         || crate::i18n::tr("settings.theme_light").to_string(),
-        "/com/icecommander/gtk/ice-commander-gtk-light.jpg",
+        "light",
     );
     let dark_card = make_card(
         retrans,
         || crate::i18n::tr("settings.theme_dark").to_string(),
-        "/com/icecommander/gtk/ice-commander-gtk-dark.jpg",
+        "dark",
     );
     dark_card.set_group(Some(&light_card));
     if theme_idx == 2 {

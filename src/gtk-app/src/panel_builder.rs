@@ -16,7 +16,6 @@ pub fn set_phone_actions(handler: std::rc::Rc<dyn Fn(&str)>) {
     PHONE_ACTIONS.with(|slot| *slot.borrow_mut() = Some(handler));
 }
 
-/// What the F-keys do on the desktop, for the panel a phone shows: copy and move elsewhere, view, edit.
 fn phone_buttons() -> Vec<gtk::Widget> {
     let name = |key: &str| {
         let label = crate::i18n::tr(key).to_string();
@@ -27,16 +26,6 @@ fn phone_buttons() -> Vec<gtk::Widget> {
     [
         ("view", "open-document.svg", name("f_buttons.f3")),
         ("edit", "edit-file.svg", name("f_buttons.f4")),
-        (
-            "copy_to",
-            "open.svg",
-            crate::i18n::tr("mobile.copy_to").to_string(),
-        ),
-        (
-            "move_to",
-            "arrow-right.svg",
-            crate::i18n::tr("mobile.move_to").to_string(),
-        ),
     ]
     .into_iter()
     .map(|(action, icon, tooltip)| {
@@ -92,6 +81,7 @@ struct TabInfo {
     /// Buttons a plugin put on its own filesystem's toolbar, held with the
     /// extensions they belong to and the id the plugin knows them by.
     fs_actions: Vec<(gtk::Widget, Vec<String>, String)>,
+    phone_buttons: Vec<gtk::Widget>,
     header_hide_widgets: Vec<gtk::Widget>,
     open_terminal: std::rc::Rc<dyn Fn()>,
     toggle_terminal: std::rc::Rc<dyn Fn()>,
@@ -446,7 +436,11 @@ impl PanelInfo {
             .state
             .active_provider()
             .supports_terminal();
-        self.active_term_btn().set_sensitive(supported);
+        let btn = self.active_term_btn();
+        btn.set_sensitive(supported);
+        if crate::mobile() {
+            btn.set_visible(supported);
+        }
         self.refresh_plugin_actions();
     }
 
@@ -465,6 +459,9 @@ impl PanelInfo {
             .fm
             .sender()
             .send(gtk_fm_ui::FmPanelInput::ShowDefaultToolbar(shown));
+        for widget in self.with_active(|t| t.phone_buttons.clone()) {
+            widget.set_visible(shown);
+        }
         let owned = self.with_active(|t| t.fs_actions.clone());
         for (widget, extensions, action_id) in owned {
             let mine = !scope.is_empty() && extensions.iter().any(|e| *e == scope);
@@ -757,9 +754,13 @@ fn build_tab(
         fs_action_clicks.push((btn, action));
     }
 
-    if crate::mobile() && panel_id == "left" {
-        toolbar_start_extras.splice(0..0, phone_buttons());
-    }
+    let phone_buttons = if crate::mobile() && panel_id == "left" {
+        let made = phone_buttons();
+        toolbar_start_extras.splice(0..0, made.clone());
+        made
+    } else {
+        Vec::new()
+    };
 
     let (out_tx, out_rx) = relm4::channel::<gtk_fm_ui::FmPanelOutput>();
     let init = gtk_fm_ui::FmPanelInit {
@@ -1043,7 +1044,6 @@ fn build_tab(
     }
     {
         let router = router.clone();
-        let player_view = player_view.clone();
         let audio_player = audio_player.clone();
         let drop_hook = drop_hook.clone();
         let config = config.clone();
@@ -1110,9 +1110,9 @@ fn build_tab(
                                     playlist.push((e.name.clone(), full));
                                 }
                             }
-                            audio_player.set_playlist(playlist, active_idx);
+                            audio_player.set_playlist(playlist, active_idx, router.provider());
                             if let Some(idx) = active_idx {
-                                player_view.play_track_at(idx);
+                                audio_player.play_at(idx);
                             }
                         } else if let Some(win) =
                             router.fm.widget().root().and_downcast::<gtk::Window>()
@@ -1279,6 +1279,7 @@ fn build_tab(
         content,
         plugin_actions,
         fs_actions,
+        phone_buttons,
         tab_header,
         tab_switch,
         router,
@@ -1314,7 +1315,7 @@ fn build_bottom_pane(
     let terminal_view = crate::terminal::TerminalView::new(config.clone(), term_output_tx);
     terminal_view.container.set_visible(false);
 
-    let player_view = crate::player_ui::AudioPlayerView::new(audio_player.clone(), router.clone());
+    let player_view = crate::player_ui::AudioPlayerView::new(audio_player.clone());
     player_view.container.set_visible(false);
 
     let bottom_box = Box::builder().orientation(Orientation::Vertical).build();

@@ -1100,7 +1100,9 @@ mod tests {
             .map(|issue| issue.message)
             .collect();
         assert!(
-            complaints.iter().any(|m| m.contains("not a declared field")),
+            complaints
+                .iter()
+                .any(|m| m.contains("not a declared field")),
             "{complaints:?}"
         );
 

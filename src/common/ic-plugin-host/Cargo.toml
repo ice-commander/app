@@ -26,3 +26,9 @@ md5 = "0.8.0"
 [dev-dependencies]
 libloading = "0.8"
 futures = "0.3"
+# Only for the end-to-end copy check: the engine the application itself drives, and somewhere
+# real to copy to.
+transfer-core = { workspace = true }
+localfs = { workspace = true, default-features = false }
+tokio = { version = "1.36", features = ["rt", "sync", "macros"] }
+tempfile = "3"

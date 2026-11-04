@@ -436,5 +436,6 @@
   "wizard.toolbar_sub": "Wählen Sie die Schaltflächen für das Panel. Das lässt sich später in den Einstellungen ändern.",
   "wizard.toolbar_title": "Schaltflächen der Leiste",
   "wizard.welcome_sub": "Richten wir alles ein. Sie können all das später in den Einstellungen ändern.",
-  "wizard.welcome_title": "Willkommen bei Ice Commander"
+  "wizard.welcome_title": "Willkommen bei Ice Commander",
+  "settings.licences": "Lizenzen und Komponenten"
 }

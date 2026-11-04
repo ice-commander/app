@@ -17,6 +17,62 @@ pub enum ActivePanelSide {
     None,
 }
 
+fn screen_asked_for() -> Option<(u32, u32, f32)> {
+    screen_spelled(&std::env::var("IC_SCREEN").ok()?)
+}
+
+fn screen_spelled(said: &str) -> Option<(u32, u32, f32)> {
+    let (size, scale) = said.split_once('@').unwrap_or((said, "1"));
+    let (width, height) = size.split_once(['x', 'X'])?;
+    Some((
+        width.trim().parse().ok()?,
+        height.trim().parse().ok()?,
+        scale.trim().parse().ok()?,
+    ))
+}
+
+fn tell_plugins_the_screen(window: &gtk::Window) {
+    if let Some((width, height, scale)) = screen_asked_for() {
+        ic_logging::info!("screen: {width}x{height} dp at {scale}x, from IC_SCREEN");
+        ic_plugin_host::set_screen(width, height, scale);
+        crate::plugin_view::redescribe_all();
+        return;
+    }
+    let Some(surface) = window.surface() else {
+        return;
+    };
+    let display = WidgetExt::display(window);
+    let monitor = display.monitor_at_surface(&surface).or_else(|| {
+        display
+            .monitors()
+            .item(0)
+            .and_downcast::<gtk::gdk::Monitor>()
+    });
+    let Some(monitor) = monitor else {
+        return;
+    };
+    let said = |monitor: &gtk::gdk::Monitor| {
+        let area = monitor.geometry();
+        if area.width() <= 0 || area.height() <= 0 {
+            return;
+        }
+        ic_logging::info!(
+            "screen: {}x{} dp at {}x",
+            area.width(),
+            area.height(),
+            monitor.scale_factor()
+        );
+        ic_plugin_host::set_screen(
+            area.width().max(0) as u32,
+            area.height().max(0) as u32,
+            monitor.scale_factor().max(1) as f32,
+        );
+        crate::plugin_view::redescribe_all();
+    };
+    said(&monitor);
+    monitor.connect_geometry_notify(said);
+}
+
 pub struct MainWindow;
 
 impl MainWindow {
@@ -408,7 +464,7 @@ impl MainWindow {
 
         // A phone has no F-keys: their actions are on the panel's own toolbar.
         if crate::mobile() {
-            destination::install_phone_actions(&window, &left_info, &right_info);
+            destination::install_phone_actions(&window, &left_info);
         } else {
             root_vbox.append(&bottom_box);
         }
@@ -422,6 +478,9 @@ impl MainWindow {
                 background: alpha(currentColor, 0.05);
             }
             .f-button { font-weight: bold; }
+            /* Drawn from the theme's own success and error colours, so both themes suit. */
+            .ic-added { background: alpha(@success_color, 0.22); }
+            .ic-removed { background: alpha(@error_color, 0.22); }
             .panel-container {
                 margin: 4px;
             }
@@ -616,6 +675,7 @@ impl MainWindow {
             glib::idle_add_local_once(move || {
                 crate::platform().attach_services(&window);
                 crate::platform().ensure_storage_access(&window);
+                tell_plugins_the_screen(&window);
                 // The drive list was built before the platform could be asked anything; on
                 // Android that is where removable media come from.
                 for update in updaters.borrow().iter() {
@@ -671,6 +731,25 @@ impl MainWindow {
         #[cfg(not(target_os = "android"))]
         if !std::env::args().any(|a| a == "--no-check-update") {
             crate::updater::auto_check(window.clone().upcast::<gtk::Window>());
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::screen_spelled;
+
+    #[test]
+    fn a_screen_can_be_asked_for_by_hand() {
+        assert_eq!(screen_spelled("393x852"), Some((393, 852, 1.0)));
+        assert_eq!(screen_spelled("393x852@2.75"), Some((393, 852, 2.75)));
+        assert_eq!(screen_spelled(" 393 X 852 "), Some((393, 852, 1.0)));
+    }
+
+    #[test]
+    fn a_screen_spelled_wrong_is_no_screen_at_all() {
+        for said in ["", "393", "393*852", "wide x tall", "393x852@soon"] {
+            assert_eq!(screen_spelled(said), None, "{said:?}");
         }
     }
 }

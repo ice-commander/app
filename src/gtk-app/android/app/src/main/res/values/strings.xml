@@ -1,3 +1,9 @@
 <resources>
     <string name="app_name">Ice Commander</string>
+    <!-- The notification channel of the playback controls (Android's notification settings). -->
+    <string name="playback_channel">Playback</string>
+    <string name="play">Play</string>
+    <string name="pause">Pause</string>
+    <string name="previous">Previous</string>
+    <string name="next">Next</string>
 </resources>

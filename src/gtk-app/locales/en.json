@@ -436,5 +436,6 @@
   "wizard.toolbar_sub": "Pick the buttons you want on the panel toolbar. You can change this later in the settings.",
   "wizard.toolbar_title": "Toolbar buttons",
   "wizard.welcome_sub": "Let's set things up. You can change any of this later in Settings.",
-  "wizard.welcome_title": "Welcome to Ice Commander"
+  "wizard.welcome_title": "Welcome to Ice Commander",
+  "settings.licences": "Licences and components"
 }

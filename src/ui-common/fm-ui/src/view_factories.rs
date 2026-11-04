@@ -207,6 +207,7 @@ pub fn setup_column_view(
             let name_vbox = gtk::Box::builder()
                 .orientation(gtk::Orientation::Vertical)
                 .hexpand(true)
+                .width_request(140)
                 .build();
             name_vbox.append(&name_label);
             name_vbox.append(&name_entry);

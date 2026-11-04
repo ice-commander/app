@@ -41,8 +41,7 @@ extern "C" fn opens(_: u64, _: IcFsSource, _: *const c_char, _: *mut c_void) -> 
 
 extern "C" fn ready(instance: u64, canvas: *const IcCanvas, user: *mut c_void) -> c_int {
     let held = unsafe { *canvas };
-    let found =
-        (held.get_proc_address)(held.proc_ctx, c"nothing_at_all".as_ptr());
+    let found = (held.get_proc_address)(held.proc_ctx, c"nothing_at_all".as_ptr());
     said().lock().unwrap().push(format!(
         "ready instance={instance} api={} sized={} mine={} answered={}",
         held.api,

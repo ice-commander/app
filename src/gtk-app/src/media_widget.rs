@@ -1,7 +1,5 @@
 //! The transport a `media` node is drawn as: play, pause, where we are.
 //!
-//! The sound is the application's own — `rodio`, the same player the panel uses — rather
-//! than the toolkit's, which would load a second decoder stack. A plugin says only what to play.
 
 use gtk::prelude::*;
 use std::cell::{Cell, RefCell};

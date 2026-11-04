@@ -13,6 +13,8 @@ pub const TRUSTED: &str = "https://github.com/ice-commander/";
 const WAITING: &str = "new";
 const PARTIAL: &str = "part";
 
+const GOING: &str = "replaced";
+
 /// A file of a plugin as the site lists it: where it goes inside the plugin folder, what it must be, where it is.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Offered {
@@ -31,6 +33,8 @@ pub struct OfferedPlugin {
     #[serde(default)]
     pub description: String,
     pub files: Vec<Offered>,
+    #[serde(default)]
+    pub replaces: Vec<String>,
 }
 
 /// Where a plugin the site offers stands in the plugin folder.
@@ -190,6 +194,54 @@ pub fn plan(
     fetch
 }
 
+pub fn note_what_goes(folder: &Path, offer: &OfferedPlugin) -> Result<(), String> {
+    let going: Vec<&String> = offer
+        .replaces
+        .iter()
+        .filter(|path| inside(path))
+        .filter(|path| folder.join(path).exists())
+        .collect();
+    if going.is_empty() {
+        return Ok(());
+    }
+    let mut lines = String::new();
+    for path in going {
+        lines.push_str(path);
+        lines.push('\n');
+    }
+    std::fs::create_dir_all(folder).map_err(|e| format!("{}: {e}", folder.display()))?;
+    let at = folder.join(format!("{GOING}.{WAITING}"));
+    std::fs::write(&at, lines).map_err(|e| format!("{}: {e}", at.display()))
+}
+
+fn apply_what_goes(folder: &Path) {
+    let note = folder.join(format!("{GOING}.{WAITING}"));
+    let Ok(lines) = std::fs::read_to_string(&note) else {
+        return;
+    };
+    let mut all_gone = true;
+    for named in lines.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        if !inside(named) {
+            ic_logging::warn!("plugin update: {named:?} is not a path inside the plugin folder");
+            continue;
+        }
+        let path = folder.join(named);
+        if !path.exists() {
+            continue;
+        }
+        match remove_when_free(&path) {
+            Ok(()) => ic_logging::info!("plugin it replaces removed: {}", path.display()),
+            Err(e) => {
+                ic_logging::warn!("the plugin it replaces waits: {} {e}", path.display());
+                all_gone = false;
+            }
+        }
+    }
+    if all_gone {
+        let _ = std::fs::remove_file(&note);
+    }
+}
+
 /// Puts a download beside the file it replaces as `<path>.new`, once its size and md5 are what the listing said.
 pub fn stage(folder: &Path, file: &Offered, bytes: &[u8]) -> Result<(), String> {
     if !inside(&file.path) {
@@ -247,6 +299,9 @@ pub fn apply_pending(folder: &Path) -> Vec<PathBuf> {
                 let _ = std::fs::remove_file(&path);
                 continue;
             }
+            if name == format!("{GOING}.{WAITING}") {
+                continue;
+            }
             let Some(target) = name.strip_suffix(&format!(".{WAITING}")) else {
                 continue;
             };
@@ -266,6 +321,7 @@ pub fn apply_pending(folder: &Path) -> Vec<PathBuf> {
             }
         }
     }
+    apply_what_goes(folder);
     applied
 }
 
@@ -311,15 +367,16 @@ mod tests {
 
     fn video(version: &str, library: &[u8], codecs: &[u8]) -> BTreeMap<String, OfferedPlugin> {
         BTreeMap::from([(
-            "ic_video_view".to_string(),
+            "ic_codecs".to_string(),
             OfferedPlugin {
                 version: version.to_string(),
                 name: "Video".to_string(),
                 description: String::new(),
                 files: vec![
-                    offered("libic_video_view.dylib", library),
-                    offered("video-codecs/libmpv.2.dylib", codecs),
+                    offered("libic_codecs.dylib", library),
+                    offered("codecs/libmpv.2.dylib", codecs),
                 ],
+                replaces: Vec::new(),
             },
         )])
     }
@@ -327,27 +384,27 @@ mod tests {
     #[test]
     fn only_what_differs_is_fetched_and_a_newer_installed_plugin_is_left_alone() {
         let at = folder("plan");
-        std::fs::create_dir_all(at.join("video-codecs")).unwrap();
-        std::fs::write(at.join("libic_video_view.dylib"), b"old library").unwrap();
-        std::fs::write(at.join("video-codecs/libmpv.2.dylib"), b"same codecs").unwrap();
+        std::fs::create_dir_all(at.join("codecs")).unwrap();
+        std::fs::write(at.join("libic_codecs.dylib"), b"old library").unwrap();
+        std::fs::write(at.join("codecs/libmpv.2.dylib"), b"same codecs").unwrap();
         let offer = video("0.2.0", b"new library", b"same codecs");
 
         let fetch = plan(
             &at,
             &offer,
-            &[("ic_video_view".to_string(), Some("0.1.0".to_string()))],
+            &[("ic_codecs".to_string(), Some("0.1.0".to_string()))],
         );
         assert_eq!(fetch.len(), 1);
-        assert_eq!(fetch[0].file.path, "libic_video_view.dylib");
+        assert_eq!(fetch[0].file.path, "libic_codecs.dylib");
 
         let developer = plan(
             &at,
             &offer,
-            &[("ic_video_view".to_string(), Some("0.3.0".to_string()))],
+            &[("ic_codecs".to_string(), Some("0.3.0".to_string()))],
         );
         assert!(developer.is_empty());
 
-        let unknown = plan(&at, &offer, &[("ic_video_view".to_string(), None)]);
+        let unknown = plan(&at, &offer, &[("ic_codecs".to_string(), None)]);
         assert_eq!(
             unknown.len(),
             1,
@@ -364,9 +421,9 @@ mod tests {
     #[test]
     fn a_staged_download_is_put_in_place_at_the_next_start_and_not_fetched_again() {
         let at = folder("stage");
-        std::fs::write(at.join("libic_video_view.dylib"), b"old library").unwrap();
+        std::fs::write(at.join("libic_codecs.dylib"), b"old library").unwrap();
         let offer = video("0.2.0", b"new library", b"new codecs");
-        let installed = [("ic_video_view".to_string(), Some("0.1.0".to_string()))];
+        let installed = [("ic_codecs".to_string(), Some("0.1.0".to_string()))];
 
         for fetch in plan(&at, &offer, &installed) {
             let bytes: &[u8] = if fetch.file.path.contains('/') {
@@ -381,21 +438,21 @@ mod tests {
             "what waits is not fetched twice"
         );
         assert_eq!(
-            std::fs::read(at.join("libic_video_view.dylib")).unwrap(),
+            std::fs::read(at.join("libic_codecs.dylib")).unwrap(),
             b"old library"
         );
 
         let applied = apply_pending(&at);
         assert_eq!(applied.len(), 2);
         assert_eq!(
-            std::fs::read(at.join("libic_video_view.dylib")).unwrap(),
+            std::fs::read(at.join("libic_codecs.dylib")).unwrap(),
             b"new library"
         );
         assert_eq!(
-            std::fs::read(at.join("video-codecs/libmpv.2.dylib")).unwrap(),
+            std::fs::read(at.join("codecs/libmpv.2.dylib")).unwrap(),
             b"new codecs"
         );
-        assert!(!at.join("libic_video_view.dylib.new").exists());
+        assert!(!at.join("libic_codecs.dylib.new").exists());
         let _ = std::fs::remove_dir_all(&at);
     }
 
@@ -403,7 +460,7 @@ mod tests {
     fn a_plugin_not_installed_is_fetched_whole_and_then_waits_for_the_start() {
         let at = folder("install");
         let offer = video("0.2.0", b"new library", b"new codecs");
-        let video = &offer["ic_video_view"];
+        let video = &offer["ic_codecs"];
         assert_eq!(standing(&at, video, None), Standing::Absent);
         let files = missing(&at, video);
         assert_eq!(files.len(), 2, "the library and what it carries");
@@ -420,7 +477,7 @@ mod tests {
         assert_eq!(standing(&at, video, Some(Some("0.2.0"))), Standing::Current);
         assert_eq!(standing(&at, video, Some(Some("0.3.0"))), Standing::Current);
 
-        std::fs::write(at.join("video-codecs/libmpv.2.dylib"), b"damaged").unwrap();
+        std::fs::write(at.join("codecs/libmpv.2.dylib"), b"damaged").unwrap();
         assert_eq!(standing(&at, video, Some(Some("0.2.0"))), Standing::Behind);
         assert_eq!(
             standing(&at, video, Some(Some("0.3.0"))),
@@ -433,7 +490,7 @@ mod tests {
     #[test]
     fn a_download_that_is_not_what_was_listed_is_refused() {
         let at = folder("refuse");
-        let file = offered("libic_video_view.dylib", b"right bytes");
+        let file = offered("libic_codecs.dylib", b"right bytes");
         assert!(stage(&at, &file, b"wrong bytes").is_err());
         assert!(stage(&at, &file, b"short").is_err());
         let outside = Offered {
@@ -451,21 +508,21 @@ mod tests {
     #[test]
     fn a_listing_cannot_send_files_outside_the_folder_or_from_elsewhere() {
         let at = folder("listing");
-        std::fs::write(at.join("libic_video_view.dylib"), b"old").unwrap();
+        std::fs::write(at.join("libic_codecs.dylib"), b"old").unwrap();
         let mut offer = video("0.2.0", b"new", b"codecs");
-        let files = &mut offer.get_mut("ic_video_view").unwrap().files;
-        files[0].url = "https://example.com/libic_video_view.dylib".to_string();
+        let files = &mut offer.get_mut("ic_codecs").unwrap().files;
+        files[0].url = "https://example.com/libic_codecs.dylib".to_string();
         files[1].path = "../../evil.dylib".to_string();
-        assert!(plan(&at, &offer, &[("ic_video_view".to_string(), None)]).is_empty());
+        assert!(plan(&at, &offer, &[("ic_codecs".to_string(), None)]).is_empty());
         let _ = std::fs::remove_dir_all(&at);
     }
 
     #[test]
     fn a_download_cut_off_half_way_is_thrown_away() {
         let at = folder("partial");
-        std::fs::write(at.join("libic_video_view.dylib.new.part"), b"half").unwrap();
+        std::fs::write(at.join("libic_codecs.dylib.new.part"), b"half").unwrap();
         assert!(apply_pending(&at).is_empty());
-        assert!(!at.join("libic_video_view.dylib.new.part").exists());
+        assert!(!at.join("libic_codecs.dylib.new.part").exists());
         let _ = std::fs::remove_dir_all(&at);
     }
 
@@ -482,6 +539,96 @@ mod tests {
             ]
             .contains(&named.as_str()),
             "{named}"
+        );
+    }
+
+    fn renamed(replaces: &[&str]) -> OfferedPlugin {
+        OfferedPlugin {
+            version: "0.2.0".to_string(),
+            name: "Codecs".to_string(),
+            description: String::new(),
+            files: vec![offered("libic_codecs.dylib", b"the new library")],
+            replaces: replaces.iter().map(|path| (*path).to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn the_plugin_it_replaces_is_gone_once_the_new_one_is_in_place() {
+        let at = folder("replacing");
+        std::fs::write(at.join("libic_video_view.dylib"), b"the old library").unwrap();
+
+        let offer = renamed(&["libic_video_view.dylib"]);
+        stage(&at, &offer.files[0], b"the new library").unwrap();
+        note_what_goes(&at, &offer).unwrap();
+        assert!(at.join("libic_video_view.dylib").exists());
+
+        apply_pending(&at);
+        assert!(
+            !at.join("libic_video_view.dylib").exists(),
+            "the plugin it replaces is gone"
+        );
+        assert_eq!(
+            std::fs::read(at.join("libic_codecs.dylib")).unwrap(),
+            b"the new library",
+            "and the one replacing it is in place"
+        );
+        assert!(
+            !at.join(format!("{GOING}.{WAITING}")).exists(),
+            "the note is not left behind to run again"
+        );
+    }
+
+    #[test]
+    fn with_no_old_plugin_installed_nothing_is_noted() {
+        let at = folder("replacing-nothing");
+        note_what_goes(&at, &renamed(&["libic_video_view.dylib"])).unwrap();
+        assert!(!at.join(format!("{GOING}.{WAITING}")).exists());
+    }
+
+    #[test]
+    fn a_path_leading_out_of_the_plugin_folder_is_refused() {
+        let at = folder("replacing-elsewhere");
+        let elsewhere = at.parent().expect("a folder has a parent").join(format!(
+            "ic-not-a-plugin-{}-{}.txt",
+            std::process::id(),
+            "guard"
+        ));
+        std::fs::write(&elsewhere, b"someone else's file").unwrap();
+        let named = elsewhere
+            .file_name()
+            .expect("it has a name")
+            .to_string_lossy()
+            .into_owned();
+
+        std::fs::write(
+            at.join(format!("{GOING}.{WAITING}")),
+            format!("../{named}\n/etc/hosts\n"),
+        )
+        .unwrap();
+        apply_pending(&at);
+        assert!(
+            elsewhere.exists(),
+            "a file outside the plugin folder is left alone"
+        );
+        assert!(
+            std::path::Path::new("/etc/hosts").exists(),
+            "and an absolute path is not followed either"
+        );
+        let _ = std::fs::remove_file(&elsewhere);
+    }
+
+    #[test]
+    fn what_cannot_go_yet_is_left_for_the_next_start() {
+        let at = folder("replacing-held");
+        std::fs::write(
+            at.join(format!("{GOING}.{WAITING}")),
+            "libic_video_view.dylib\n",
+        )
+        .unwrap();
+        apply_pending(&at);
+        assert!(
+            !at.join(format!("{GOING}.{WAITING}")).exists(),
+            "nothing left to do, so the note goes"
         );
     }
 }

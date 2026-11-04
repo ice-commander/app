@@ -10,9 +10,14 @@ pub struct UpdaterInit {
 
 #[derive(Debug)]
 pub enum UpdaterInput {
-    UpdateAvailable { version: String, notes: String },
+    UpdateAvailable {
+        version: String,
+        notes: String,
+    },
     UpToDate,
-    Downloading { version: String },
+    Downloading {
+        version: String,
+    },
     Installing,
     Installed,
     /// New versions of these plugins wait beside the old ones and take their place at the next start.

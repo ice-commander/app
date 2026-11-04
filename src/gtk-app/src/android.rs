@@ -104,6 +104,29 @@ impl Platform for Android {
         }
     }
 
+    fn paint_system_bars(&self, window: &gtk::Window, argb: i32) {
+        let painted = with_activity(window, |env, activity| {
+            let application = env
+                .call_method(
+                    activity,
+                    "getApplication",
+                    "()Landroid/app/Application;",
+                    &[],
+                )?
+                .l()?;
+            env.call_method(
+                &application,
+                "systemBars",
+                "(Landroid/app/Activity;I)V",
+                &[JValue::Object(activity), JValue::Int(argb)],
+            )?;
+            Ok(())
+        });
+        if let Err(e) = painted {
+            gtk::glib::g_warning!("ice-commander", "cannot colour the system bars: {e}");
+        }
+    }
+
     fn ensure_storage_access(&self, window: &gtk::Window) {
         let app_id = self.app_id();
         let asked = with_activity(window, |env, activity| {
@@ -235,6 +258,120 @@ fn ask_android_for_volumes() -> Result<Vec<(String, String)>, String> {
         let _ = env.exception_clear();
     }
     asked.map_err(|e| e.to_string())
+}
+
+fn with_playback<T>(f: impl FnOnce(&mut JNIEnv, &JObject) -> JniResult<T>) -> Result<T, String> {
+    if !SERVICES_ATTACHED.load(std::sync::atomic::Ordering::Acquire) {
+        return Err("the Android context is not attached yet".to_string());
+    }
+    let android = ndk_context::android_context();
+    let vm = unsafe { jni::JavaVM::from_raw(android.vm().cast()) }.map_err(|e| e.to_string())?;
+    let application = unsafe { JObject::from_raw(android.context().cast()) };
+    let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
+
+    let called = env.with_local_frame(8, |env| -> JniResult<T> {
+        let playback = env
+            .call_method(
+                &application,
+                "playback",
+                "()Lcom/icecommander/gtkapp/BackgroundPlayback;",
+                &[],
+            )?
+            .l()?;
+        f(env, &playback)
+    });
+    if env.exception_check().unwrap_or(false) {
+        let _ = env.exception_describe();
+        let _ = env.exception_clear();
+    }
+    called.map_err(|e| e.to_string())
+}
+
+fn told(what: &str, done: Result<(), String>) {
+    if let Err(e) = done {
+        gtk::glib::g_warning!("ice-commander", "cannot tell Android {what}: {e}");
+    }
+}
+
+pub fn media_begin() {
+    told(
+        "a playback began",
+        with_playback(|env, playback| {
+            env.call_method(playback, "begin", "(Z)V", &[JValue::Bool(1)])?;
+            Ok(())
+        }),
+    );
+}
+
+pub fn media_now_playing(title: &str, duration_ms: i64, track: i32, tracks: i32) {
+    told(
+        "what is playing",
+        with_playback(|env, playback| {
+            let title = env.new_string(title)?;
+            let nothing = JObject::null();
+            env.call_method(
+                playback,
+                "nowPlaying",
+                "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;JII)V",
+                &[
+                    JValue::Object(&title),
+                    JValue::Object(&nothing),
+                    JValue::Object(&nothing),
+                    JValue::Long(duration_ms),
+                    JValue::Int(track),
+                    JValue::Int(tracks),
+                ],
+            )?;
+            Ok(())
+        }),
+    );
+}
+
+pub fn media_transport(
+    state: i32,
+    position_ms: i64,
+    speed: f32,
+    has_previous: bool,
+    has_next: bool,
+) {
+    told(
+        "the transport",
+        with_playback(|env, playback| {
+            env.call_method(
+                playback,
+                "transport",
+                "(IJFZZ)V",
+                &[
+                    JValue::Int(state),
+                    JValue::Long(position_ms),
+                    JValue::Float(speed),
+                    JValue::Bool(u8::from(has_previous)),
+                    JValue::Bool(u8::from(has_next)),
+                ],
+            )?;
+            Ok(())
+        }),
+    );
+}
+
+pub fn media_end() {
+    told(
+        "the playback ended",
+        with_playback(|env, playback| {
+            env.call_method(playback, "end", "()V", &[])?;
+            Ok(())
+        }),
+    );
+}
+
+#[no_mangle]
+pub extern "C" fn Java_com_icecommander_gtkapp_BackgroundPlayback_command(
+    _env: JNIEnv,
+    _class: JObject,
+    command: jni::sys::jint,
+    arg: jni::sys::jlong,
+) {
+    gtk::glib::idle_add_once(move || crate::media::obey(command, arg));
 }
 
 fn with_activity<T>(

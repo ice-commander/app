@@ -828,6 +828,35 @@ pub fn create_manage_ftp_widget(
     right_stack.add_named(&right_vbox, Some("form"));
     main_hbox.append(&right_stack);
 
+    let show_the_list: Rc<dyn Fn() -> bool> = if crate::mobile() {
+        separator.set_visible(false);
+        right_stack.set_visible(false);
+        left_vbox.set_hexpand(true);
+        let back_left = left_vbox.clone();
+        let back_right = right_stack.clone();
+        let back: Rc<dyn Fn() -> bool> = Rc::new(move || {
+            if !back_right.is_visible() {
+                return false;
+            }
+            back_right.set_visible(false);
+            back_left.set_visible(true);
+            true
+        });
+        BACK_TO_LIST.with(|slot| *slot.borrow_mut() = Some(back.clone()));
+        let open_left = left_vbox.clone();
+        let open_right = right_stack.clone();
+        SHOW_THE_FORM.with(|slot| {
+            *slot.borrow_mut() = Some(Rc::new(move || {
+                open_left.set_visible(false);
+                open_right.set_visible(true);
+            }))
+        });
+        back
+    } else {
+        Rc::new(|| false)
+    };
+    let _ = &show_the_list;
+
     let update_visibility = Rc::new({
         let protocol_dropdown = protocol_dropdown.clone();
         let kinds_visible = kinds.clone();
@@ -998,6 +1027,7 @@ pub fn create_manage_ftp_widget(
             selection.set_selected(gtk::INVALID_LIST_POSITION);
             update_ui_state();
             right_stack.set_visible_child_name("form");
+            show_the_form();
         }
     };
     let clear_form = Rc::new(clear_form);
@@ -1144,6 +1174,7 @@ pub fn create_manage_ftp_widget(
             }
             *pinned_shown.borrow_mut() = Some(pin.id.clone());
             right_stack.set_visible_child_name("pinned");
+            show_the_form();
         })
     };
 
@@ -1222,6 +1253,7 @@ pub fn create_manage_ftp_widget(
                         load_conn(&conn_c);
                         update_ui_state();
                         right_stack.set_visible_child_name("form");
+                        show_the_form();
                     }
                 });
                 folder_list.append(&row);
@@ -1257,6 +1289,7 @@ pub fn create_manage_ftp_widget(
         Rc::new(move |path: String| {
             *folder_state.borrow_mut() = Some(path);
             right_stack.set_visible_child_name("folder");
+            show_the_form();
             populate_folder();
         })
     };
@@ -1708,6 +1741,7 @@ pub fn create_manage_ftp_widget(
                     load_conn(conn);
                     update_ui_state();
                     right_stack.set_visible_child_name("form");
+                    show_the_form();
                 }
                 ConnNode::Folder(path) => {
                     show_folder(path.clone());
@@ -1942,7 +1976,10 @@ pub fn create_manage_ftp_widget(
 
     {
         let clear_form = clear_form.clone();
-        btn_tb_new_conn.connect_clicked(move |_| clear_form());
+        btn_tb_new_conn.connect_clicked(move |_| {
+            clear_form();
+            show_the_form();
+        });
     }
 
     {
@@ -2411,6 +2448,22 @@ pub fn create_manage_ftp_widget(
 thread_local! {
     static OPEN_DIALOG: std::cell::RefCell<Option<crate::ui::surface::Surface>> =
         const { std::cell::RefCell::new(None) };
+    static BACK_TO_LIST: std::cell::RefCell<Option<Rc<dyn Fn() -> bool>>> =
+        const { std::cell::RefCell::new(None) };
+    static SHOW_THE_FORM: std::cell::RefCell<Option<Rc<dyn Fn()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+fn show_the_form() {
+    let held = SHOW_THE_FORM.with(|slot| slot.borrow().clone());
+    if let Some(show) = held {
+        show();
+    }
+}
+
+pub fn went_back_to_the_list() -> bool {
+    let held = BACK_TO_LIST.with(|slot| slot.borrow().clone());
+    held.map(|back| back()).unwrap_or(false)
 }
 
 pub fn connections_dialog_open() -> bool {
@@ -2458,7 +2511,12 @@ pub fn show_manage_ftp_dialog(
     crate::api::notify_connections_dialog(true);
     window.connect_closed(move || {
         OPEN_DIALOG.with(|slot| *slot.borrow_mut() = None);
+        BACK_TO_LIST.with(|slot| *slot.borrow_mut() = None);
         crate::api::notify_connections_dialog(false);
+    });
+    window.connect_close_request(|| match went_back_to_the_list() {
+        true => gtk::glib::Propagation::Stop,
+        false => gtk::glib::Propagation::Proceed,
     });
 
     window.present();

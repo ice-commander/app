@@ -71,6 +71,10 @@ function roleStyle(role: string | undefined): React.CSSProperties {
       return { fontFamily: 'var(--mono, monospace)' }
     case 'error':
       return { color: 'var(--danger, #e05252)' }
+    case 'added':
+      return { background: 'var(--added-bg, rgba(46, 160, 67, 0.22))' }
+    case 'removed':
+      return { background: 'var(--removed-bg, rgba(248, 81, 73, 0.22))' }
     default:
       return {}
   }

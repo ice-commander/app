@@ -85,11 +85,7 @@ fn slider_part(node: &ic_view::Node, state: &ic_view::State) -> f64 {
         .value_key
         .as_deref()
         .and_then(|key| state.data.get(key))
-        .or_else(|| {
-            node.bind
-                .as_deref()
-                .and_then(|bind| state.state.get(bind))
-        })
+        .or_else(|| node.bind.as_deref().and_then(|bind| state.state.get(bind)))
         .and_then(|value| value.as_f64())
         .unwrap_or(low);
     if high > low {

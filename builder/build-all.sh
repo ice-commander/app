@@ -40,7 +40,9 @@ docker compose -f ./builder/ice-commander-builder.yml run --rm rpm
 docker compose -f ./builder/ice-commander-builder.yml run --rm rpm-webserver
 docker compose -f ./builder/ice-commander-builder.yml run --rm rpm-console
 
-
+# On the host, not in a builder image: the NDK and the Android GTK stack live outside them.
+# A machine without either says so and the rest of the build still finishes.
+./builder/android.sh
 
 echo ""
 echo "=== BUILD COMPLETED ==="

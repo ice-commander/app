@@ -436,5 +436,6 @@
   "wizard.toolbar_sub": "Изберете бутоните за панела. Може да промените това по-късно в настройките.",
   "wizard.toolbar_title": "Бутони в лентата",
   "wizard.welcome_sub": "Нека настроим всичко. Можете да промените всеки от тези параметри по-късно в настройките.",
-  "wizard.welcome_title": "Добре дошли в Ice Commander"
+  "wizard.welcome_title": "Добре дошли в Ice Commander",
+  "settings.licences": "Лицензи и компоненти"
 }

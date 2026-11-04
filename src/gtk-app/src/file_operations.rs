@@ -565,7 +565,7 @@ fn run_transfer_with_progress(
         let mut files_copied = 0usize;
         let mut state_changed = true;
 
-        glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+        glib::timeout_add_local(std::time::Duration::from_millis(40), move || {
             let mut disconnected = false;
 
             loop {
@@ -602,7 +602,17 @@ fn run_transfer_with_progress(
                 }
             }
 
-            if state_changed && !disconnected {
+            if state_changed {
+                ic_logging::info!(
+                    "copy progress: {} {}/{} bytes, overall {}/{} bytes, {}/{} files",
+                    current_file_name,
+                    current_file_copied,
+                    current_file_size,
+                    overall_copied_bytes,
+                    total_bytes,
+                    files_copied,
+                    total_files
+                );
                 api_op.update(&current_file_name, overall_copied_bytes, files_copied);
                 current_file_label_c.set_text(&crate::i18n::trf(
                     "fm.transferring_file",
@@ -613,7 +623,7 @@ fn run_transfer_with_progress(
                         (current_file_copied as f64 / current_file_size as f64).clamp(0.0, 1.0);
                     current_file_progress_c.set_fraction(frac);
                 } else {
-                    current_file_progress_c.set_fraction(1.0);
+                    current_file_progress_c.set_fraction(0.0);
                 }
 
                 if total_bytes > 0 {
@@ -634,7 +644,12 @@ fn run_transfer_with_progress(
                         ],
                     ));
                 } else {
-                    overall_progress_c.set_fraction(1.0);
+                    let frac = if total_files > 0 {
+                        (files_copied as f64 / total_files as f64).clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    };
+                    overall_progress_c.set_fraction(frac);
                     overall_label_c.set_text(&crate::i18n::trf(
                         "fm.overall_progress_files",
                         &[
