@@ -436,5 +436,6 @@
   "wizard.toolbar_sub": "Wybierz przyciski dla panelu. Możesz to zmienić później w ustawieniach.",
   "wizard.toolbar_title": "Przyciski paska",
   "wizard.welcome_sub": "Skonfigurujmy wszystko. Każde z tych ustawień możesz zmienić później w Ustawieniach.",
-  "wizard.welcome_title": "Witamy w Ice Commander"
+  "wizard.welcome_title": "Witamy w Ice Commander",
+  "settings.licences": "Licencje i komponenty"
 }

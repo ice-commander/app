@@ -26,6 +26,7 @@ mod i18n;
 mod logging;
 mod mainwindow;
 mod master_password;
+mod media;
 mod media_widget;
 mod panel_builder;
 mod player;
@@ -64,6 +65,11 @@ pub(crate) fn mobile() -> bool {
     platform().mobile()
 }
 
+pub(crate) fn screen_width_dp() -> Option<u32> {
+    let said = ic_plugin_host::screen().width_dp;
+    (said > 0).then_some(said)
+}
+
 /// Runs the client until its window closes; needs a Tokio runtime entered on this thread.
 pub fn run(platform: Rc<dyn Platform>) -> glib::ExitCode {
     let app_id = platform.app_id();
@@ -91,6 +97,7 @@ pub fn run(platform: Rc<dyn Platform>) -> glib::ExitCode {
             existing.present();
             return;
         }
+        media::follow(&player::the_one());
         app::Application::run(app, config_clone.clone());
     });
     let gtk_args: Vec<String> = std::env::args().take(1).collect();

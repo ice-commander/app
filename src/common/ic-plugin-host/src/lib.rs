@@ -143,6 +143,7 @@ pub fn host_table() -> IcHost {
         struct_size: std::mem::size_of::<IcHost>() as u32,
         abi_version: IC_ABI_VERSION,
         host_version,
+        screen: host_screen,
         log_warn: host_log_warn,
         add_toolbar_button: host_add_toolbar_button,
         selection: host_selection,
@@ -171,6 +172,7 @@ pub fn host_table() -> IcHost {
         fs_local_path: fm_core::host_fs::fs_local_path,
         fs_changed: host_fs_changed,
         register_viewer: host_register_viewer,
+        register_player: host_register_player,
         settings_read: host_settings_read,
         settings_write: host_settings_write,
         register_panel_tree: host_register_panel_tree,
@@ -775,6 +777,41 @@ extern "C" fn host_open_panel_source(id: *const c_char) -> c_int {
     }
 }
 
+fn screen_slot() -> &'static std::sync::Mutex<ic_plugin_api::IcScreen> {
+    static HELD: std::sync::OnceLock<std::sync::Mutex<ic_plugin_api::IcScreen>> =
+        std::sync::OnceLock::new();
+    HELD.get_or_init(|| {
+        std::sync::Mutex::new(ic_plugin_api::IcScreen {
+            width_dp: 0,
+            height_dp: 0,
+            scale: 1.0,
+        })
+    })
+}
+
+pub fn set_screen(width_dp: u32, height_dp: u32, scale: f32) {
+    let said = ic_plugin_api::IcScreen {
+        width_dp,
+        height_dp,
+        scale,
+    };
+    match screen_slot().lock() {
+        Ok(mut held) => *held = said,
+        Err(poisoned) => *poisoned.into_inner() = said,
+    }
+}
+
+pub fn screen() -> ic_plugin_api::IcScreen {
+    match screen_slot().lock() {
+        Ok(held) => *held,
+        Err(poisoned) => *poisoned.into_inner(),
+    }
+}
+
+extern "C" fn host_screen() -> ic_plugin_api::IcScreen {
+    screen()
+}
+
 /// Which application the plugins are being loaded into; said before any is loaded.
 fn host_kind_slot() -> &'static std::sync::Mutex<String> {
     static HELD: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new();
@@ -1199,8 +1236,13 @@ pub fn connection_document(id: &str) -> Option<ic_view::Document> {
     let Some((describe, user_data)) = connection_describe_of(id) else {
         return Some(registered);
     };
-    let answered = answer_of(describe(std::ptr::null(), 0, user_data as *mut c_void))
-        .and_then(|source| accepted_document(id, &source));
+    let context = ic_view_session::context(&facts(), "").to_string();
+    let answered = answer_of(describe(
+        context.as_ptr(),
+        context.len() as u64,
+        user_data as *mut c_void,
+    ))
+    .and_then(|source| accepted_document(id, &source));
     Some(answered.unwrap_or(registered))
 }
 
@@ -1460,6 +1502,172 @@ extern "C" fn host_register_viewer(
         Err(poisoned) => poisoned.into_inner(),
     };
     match list.iter().position(|viewer| viewer.id == id) {
+        Some(index) => list[index] = entry,
+        None => list.push(entry),
+    }
+    IC_OK
+}
+
+///
+pub struct PlayerPlugin {
+    pub id: String,
+    pub extensions: Vec<String>,
+    pub priority: i32,
+    pub user_data: usize,
+    table: ic_plugin_api::BoundedVTable,
+}
+
+impl PlayerPlugin {
+    pub fn open_fn(&self) -> Option<ic_plugin_api::IcPlayerOpenFn> {
+        self.table
+            .field::<ic_plugin_api::IcPlayerOpenFn>(std::mem::offset_of!(
+                ic_plugin_api::IcPlayerVTable,
+                open
+            ))
+    }
+
+    pub fn played_so_far_fn(&self) -> Option<ic_plugin_api::IcPlayerWhereFn> {
+        self.table
+            .field::<ic_plugin_api::IcPlayerWhereFn>(std::mem::offset_of!(
+                ic_plugin_api::IcPlayerVTable,
+                played_so_far
+            ))
+    }
+
+    pub fn pause_fn(&self) -> Option<ic_plugin_api::IcPlayerPauseFn> {
+        self.table
+            .field::<ic_plugin_api::IcPlayerPauseFn>(std::mem::offset_of!(
+                ic_plugin_api::IcPlayerVTable,
+                pause
+            ))
+    }
+
+    pub fn stop_fn(&self) -> Option<ic_plugin_api::IcPlayerStopFn> {
+        self.table
+            .field::<ic_plugin_api::IcPlayerStopFn>(std::mem::offset_of!(
+                ic_plugin_api::IcPlayerVTable,
+                stop
+            ))
+    }
+
+    pub fn seek_fn(&self) -> Option<ic_plugin_api::IcPlayerSeekFn> {
+        self.table
+            .field::<Option<ic_plugin_api::IcPlayerSeekFn>>(std::mem::offset_of!(
+                ic_plugin_api::IcPlayerVTable,
+                seek
+            ))
+            .flatten()
+    }
+
+    pub fn volume_fn(&self) -> Option<ic_plugin_api::IcPlayerVolumeFn> {
+        self.table
+            .field::<Option<ic_plugin_api::IcPlayerVolumeFn>>(std::mem::offset_of!(
+                ic_plugin_api::IcPlayerVTable,
+                volume
+            ))
+            .flatten()
+    }
+}
+
+fn players_registry() -> &'static std::sync::Mutex<Vec<PlayerPlugin>> {
+    static PLAYERS: std::sync::OnceLock<std::sync::Mutex<Vec<PlayerPlugin>>> =
+        std::sync::OnceLock::new();
+    PLAYERS.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+}
+
+pub fn with_players<R>(reader: impl FnOnce(&[PlayerPlugin]) -> R) -> R {
+    match players_registry().lock() {
+        Ok(list) => reader(&list),
+        Err(poisoned) => reader(&poisoned.into_inner()),
+    }
+}
+
+pub fn player_for(name: &str) -> Option<String> {
+    with_players(|players| {
+        let mut best: Option<(usize, i32, &PlayerPlugin)> = None;
+        for player in players {
+            let Some(claim) = fm_core::suffix::longest_match(name, &player.extensions) else {
+                continue;
+            };
+            let better = match best {
+                None => true,
+                Some((len, priority, _)) => {
+                    claim.len() > len || (claim.len() == len && player.priority > priority)
+                }
+            };
+            if better {
+                best = Some((claim.len(), player.priority, player));
+            }
+        }
+        best.map(|(_, _, player)| player.id.clone())
+    })
+}
+
+pub fn players_offered() -> Vec<(String, Vec<String>, i32)> {
+    with_players(|players| {
+        players
+            .iter()
+            .map(|player| {
+                (
+                    player.id.clone(),
+                    player.extensions.clone(),
+                    player.priority,
+                )
+            })
+            .collect()
+    })
+}
+
+extern "C" fn host_register_player(
+    player_id: *const c_char,
+    extensions: *const c_char,
+    priority: i32,
+    vtable: *const ic_plugin_api::IcPlayerVTable,
+    user_data: *mut c_void,
+) -> c_int {
+    let id = cstr(player_id);
+    if id.trim().is_empty() {
+        ic_logging::warn!("plugin: a player was registered without an id");
+        return ic_plugin_api::IC_ERR_INIT_FAILED;
+    }
+    let claimed = extensions_of(extensions);
+    if claimed.is_empty() {
+        ic_logging::warn!("plugin: player {id} claimed no extensions");
+        return ic_plugin_api::IC_ERR_INIT_FAILED;
+    }
+    let Some(table) = (unsafe {
+        ic_plugin_api::BoundedVTable::adopt(
+            vtable as *const u8,
+            std::mem::size_of::<ic_plugin_api::IcPlayerVTable>(),
+        )
+    }) else {
+        ic_logging::warn!("plugin: player {id} was registered without a table");
+        return ic_plugin_api::IC_ERR_INIT_FAILED;
+    };
+    let entry = PlayerPlugin {
+        id: id.clone(),
+        extensions: claimed,
+        priority,
+        user_data: user_data as usize,
+        table,
+    };
+    if entry.open_fn().is_none()
+        || entry.played_so_far_fn().is_none()
+        || entry.pause_fn().is_none()
+        || entry.stop_fn().is_none()
+    {
+        ic_logging::warn!("plugin: player {id} cannot play, pause, stop or say where it is");
+        return ic_plugin_api::IC_ERR_INIT_FAILED;
+    }
+    ic_logging::info!(
+        "plugin: player {id} claims {} at priority {priority}",
+        entry.extensions.join(" ")
+    );
+    let mut list = match players_registry().lock() {
+        Ok(list) => list,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    match list.iter().position(|player| player.id == id) {
         Some(index) => list[index] = entry,
         None => list.push(entry),
     }
@@ -1980,6 +2188,8 @@ thread_local! {
         const { RefCell::new(None) };
     static VIEW_INVALIDATE_REQUEST: RefCell<Option<std::rc::Rc<dyn Fn(&str)>>> =
         const { RefCell::new(None) };
+    static FACTS: RefCell<Option<std::rc::Rc<dyn Fn() -> ic_view_session::HostFacts>>> =
+        const { RefCell::new(None) };
     /// Puts one question on the screen. The frontend answers by calling the
     /// closure it is handed; a frontend with nothing to show it never calls.
     #[allow(clippy::type_complexity)]
@@ -2046,7 +2256,6 @@ fn waker_slot() -> &'static std::sync::Mutex<Option<Waker>> {
 }
 
 /// Installs the way back onto the frontend's own thread.
-///
 /// A plugin learns things on a thread of its own — a peer appeared, a transfer
 /// finished — and the handlers above touch widgets, so they may only run where
 /// the frontend lives. The frontend leaves a `Send + Sync` closure here that
@@ -2203,6 +2412,19 @@ pub fn set_canvas_redraw_handler(handler: std::rc::Rc<dyn Fn(u64)>) {
 
 pub fn set_view_invalidate_handler(handler: std::rc::Rc<dyn Fn(&str)>) {
     VIEW_INVALIDATE_REQUEST.with(|slot| *slot.borrow_mut() = Some(handler));
+}
+
+pub fn set_facts_provider(provider: std::rc::Rc<dyn Fn() -> ic_view_session::HostFacts>) {
+    FACTS.with(|slot| *slot.borrow_mut() = Some(provider));
+}
+
+pub fn facts() -> ic_view_session::HostFacts {
+    if let Some(provider) = FACTS.with(|slot| slot.borrow().clone()) {
+        return provider();
+    }
+    let screen = screen();
+    ic_view_session::HostFacts::new(&host_kind(), "en", &[])
+        .on_screen(screen.width_dp, screen.height_dp)
 }
 
 /// Installs what redraws a header button's text. The host has already stored
@@ -3303,6 +3525,12 @@ mod tests {
             action_state: None,
             cell_clicked: None,
             set_permissions: None,
+            stream_open: None,
+            stream_read: None,
+            stream_write: None,
+            stream_close: None,
+            copy_within: None,
+            on_disk: None,
         }
     }
 
@@ -3411,12 +3639,7 @@ mod tests {
         assert!(asset_names().contains(&"sysinfo/os-test".to_string()));
         assert!(asset("sysinfo/os-missing").is_none());
         assert_eq!(
-            host_register_plugin_asset(
-                owner.as_ptr(),
-                name.as_ptr(),
-                std::ptr::null(),
-                0
-            ),
+            host_register_plugin_asset(owner.as_ptr(), name.as_ptr(), std::ptr::null(), 0),
             ic_plugin_api::IC_ERR_INIT_FAILED
         );
     }
@@ -4729,5 +4952,122 @@ mod panel_tree_tests {
         let source = super::panel_source("probe.flat").expect("registered");
         assert!(!source.is_a_tree());
         assert_eq!(source.snapshot_at("anything").1.len(), 0);
+    }
+
+    extern "C" fn played_open(
+        _source: ic_plugin_api::IcFsSource,
+        _path: *const std::os::raw::c_char,
+        _user: *mut std::os::raw::c_void,
+    ) -> std::os::raw::c_int {
+        ic_plugin_api::IC_OK
+    }
+
+    extern "C" fn played_where(_user: *mut std::os::raw::c_void) -> ic_plugin_api::IcPlayedSoFar {
+        ic_plugin_api::IcPlayedSoFar {
+            at: 0.0,
+            of: 0.0,
+            paused: 0,
+            ended: 0,
+        }
+    }
+
+    extern "C" fn played_pause(
+        _paused: std::os::raw::c_int,
+        _user: *mut std::os::raw::c_void,
+    ) -> std::os::raw::c_int {
+        ic_plugin_api::IC_OK
+    }
+
+    extern "C" fn played_stop(_user: *mut std::os::raw::c_void) {}
+
+    fn player_table() -> ic_plugin_api::IcPlayerVTable {
+        ic_plugin_api::IcPlayerVTable {
+            struct_size: std::mem::size_of::<ic_plugin_api::IcPlayerVTable>() as u32,
+            open: played_open,
+            played_so_far: played_where,
+            pause: played_pause,
+            stop: played_stop,
+            seek: None,
+            volume: None,
+        }
+    }
+
+    fn register_a_player(id: &str, extensions: &str, priority: i32) -> std::os::raw::c_int {
+        let host = super::host_table();
+        let (id, extensions) = (CString::new(id).unwrap(), CString::new(extensions).unwrap());
+        let table = Box::leak(Box::new(player_table()));
+        (host.register_player)(
+            id.as_ptr(),
+            extensions.as_ptr(),
+            priority,
+            table as *const ic_plugin_api::IcPlayerVTable,
+            std::ptr::null_mut(),
+        )
+    }
+
+    #[test]
+    fn with_no_plugin_the_application_keeps_the_sound() {
+        assert_eq!(super::player_for("song.never-claimed-by-anyone"), None);
+    }
+
+    #[test]
+    fn a_plugin_takes_the_formats_it_claimed_and_leaves_the_rest() {
+        assert_eq!(
+            register_a_player("probe.codec", ".mp3,.flac", 10),
+            ic_plugin_api::IC_OK
+        );
+        assert_eq!(
+            super::player_for("song.mp3").as_deref(),
+            Some("probe.codec")
+        );
+        assert_eq!(
+            super::player_for("song.flac").as_deref(),
+            Some("probe.codec")
+        );
+        assert_eq!(super::player_for("song.wav"), None);
+    }
+
+    #[test]
+    fn the_larger_priority_wins_the_same_format() {
+        assert_eq!(
+            register_a_player("probe.quiet", ".ogg", 1),
+            ic_plugin_api::IC_OK
+        );
+        assert_eq!(
+            super::player_for("song.ogg").as_deref(),
+            Some("probe.quiet")
+        );
+        assert_eq!(
+            register_a_player("probe.better", ".ogg", 50),
+            ic_plugin_api::IC_OK
+        );
+        assert_eq!(
+            super::player_for("song.ogg").as_deref(),
+            Some("probe.better"),
+            "the one that says it is better takes it"
+        );
+    }
+
+    #[test]
+    fn a_player_that_cannot_play_is_not_taken() {
+        let host = super::host_table();
+        let (id, extensions) = (
+            CString::new("probe.useless").unwrap(),
+            CString::new(".aiff").unwrap(),
+        );
+        let mut table = player_table();
+        table.struct_size =
+            std::mem::offset_of!(ic_plugin_api::IcPlayerVTable, played_so_far) as u32;
+        assert_ne!(
+            (host.register_player)(
+                id.as_ptr(),
+                extensions.as_ptr(),
+                0,
+                &table as *const ic_plugin_api::IcPlayerVTable,
+                std::ptr::null_mut(),
+            ),
+            ic_plugin_api::IC_OK
+        );
+        assert_eq!(super::player_for("song.aiff"), None);
     }
 }

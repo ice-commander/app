@@ -87,15 +87,36 @@ pub fn set_panel_host(host: PanelHost) {
 }
 
 pub(crate) fn facts() -> HostFacts {
+    let screen = ic_plugin_host::screen();
     HostFacts::new(
-        ic_plugin_api::IC_HOST_GTK,
+        crate::plugin_host::host_kind(),
         &crate::i18n::current_lang(),
         &["copy"],
     )
+    .on_screen(screen.width_dp, screen.height_dp)
 }
 
-/// A phone is narrower than any width a plugin asks for.
+pub fn redescribe_all() {
+    let showing: Vec<String> = OPEN.with(|open| open.borrow().keys().cloned().collect());
+    for slot in showing {
+        update(&slot);
+    }
+}
+
 const MOBILE_WIDTH: i32 = 320;
+
+const PADDING_DP: u32 = 24;
+
+fn room_within(screen_dp: Option<u32>) -> i32 {
+    screen_dp
+        .map(|width| width.saturating_sub(PADDING_DP) as i32)
+        .unwrap_or(MOBILE_WIDTH)
+        .max(MOBILE_WIDTH)
+}
+
+fn widest_a_view_may_be() -> Option<i32> {
+    crate::mobile().then(|| room_within(crate::screen_width_dp()))
+}
 
 fn renderer() -> ic_view_gtk::Renderer {
     let icons: ic_view_gtk::IconSource = Rc::new(|name: &str, size: u32| {
@@ -104,7 +125,7 @@ fn renderer() -> ic_view_gtk::Renderer {
         crate::plugin_host::image_from_svg_at(&bytes, size).map(|image| image.upcast())
     });
     ic_view_gtk::Renderer::new(Rc::new(crate::connection_manager::translate_optional))
-        .with_max_width(crate::mobile().then_some(MOBILE_WIDTH))
+        .with_max_width(widest_a_view_may_be())
         .with_icons(icons)
 }
 
@@ -519,6 +540,7 @@ pub fn install(parent: &gtk::Window) {
         open(&opener, id, argument);
     }));
     crate::plugin_canvas::install();
+    ic_plugin_host::set_facts_provider(Rc::new(facts));
     ic_plugin_host::set_view_invalidate_handler(Rc::new(|id: &str| {
         let showing: Vec<String> = OPEN.with(|open| {
             open.borrow()
@@ -896,4 +918,26 @@ fn update(id: &str) {
             follow(id, &view.built, &applying);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_view_gets_the_safe_width_until_the_screen_has_said_otherwise() {
+        assert_eq!(room_within(None), MOBILE_WIDTH);
+    }
+
+    #[test]
+    fn a_wider_phone_gives_a_view_the_room_it_has() {
+        assert_eq!(room_within(Some(448)), 448 - PADDING_DP as i32);
+        assert_eq!(room_within(Some(393)), 393 - PADDING_DP as i32);
+    }
+
+    #[test]
+    fn an_unusually_narrow_screen_never_goes_below_the_safe_width() {
+        assert_eq!(room_within(Some(300)), MOBILE_WIDTH);
+        assert_eq!(room_within(Some(1)), MOBILE_WIDTH);
+    }
 }

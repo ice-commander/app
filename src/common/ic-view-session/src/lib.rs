@@ -21,6 +21,8 @@ pub struct HostFacts {
     pub kind: String,
     pub locale: String,
     pub can: Vec<String>,
+    pub width_dp: u32,
+    pub height_dp: u32,
 }
 
 impl HostFacts {
@@ -29,17 +31,51 @@ impl HostFacts {
             kind: kind.to_string(),
             locale: locale.to_string(),
             can: can.iter().map(|name| name.to_string()).collect(),
+            width_dp: 0,
+            height_dp: 0,
         }
     }
 
+    pub fn on_screen(mut self, width_dp: u32, height_dp: u32) -> HostFacts {
+        self.width_dp = width_dp;
+        self.height_dp = height_dp;
+        self
+    }
+
+    pub fn orientation(&self) -> Option<&'static str> {
+        if self.width_dp == 0 || self.height_dp == 0 {
+            return None;
+        }
+        Some(if self.height_dp >= self.width_dp {
+            "portrait"
+        } else {
+            "landscape"
+        })
+    }
+
     pub fn to_json(&self) -> Value {
-        json!({ "kind": self.kind, "locale": self.locale, "can": self.can })
+        let mut said = json!({
+            "kind": self.kind,
+            "locale": self.locale,
+            "can": self.can,
+            "width_dp": self.width_dp,
+            "height_dp": self.height_dp,
+        });
+        if let Some(orientation) = self.orientation() {
+            said["orientation"] = json!(orientation);
+        }
+        said
     }
 
     pub fn seed(&self, state: &mut State) {
         state.set_host("kind", json!(self.kind));
         state.set_host("locale", json!(self.locale));
         state.set_host("can", json!(self.can));
+        state.set_host("width_dp", json!(self.width_dp));
+        state.set_host("height_dp", json!(self.height_dp));
+        if let Some(orientation) = self.orientation() {
+            state.set_host("orientation", json!(orientation));
+        }
         for name in &self.can {
             state.set_host(&format!("can_{name}"), json!(true));
         }
@@ -388,6 +424,7 @@ impl Session {
         };
         if self.document.shows_the_same_tree_as(&fresh) {
             self.state.data = fresh.data.clone();
+            facts.seed(&mut self.state);
             self.document = fresh;
             let _held = self.applying.hold();
             surface.refresh(&self.state);
@@ -1070,5 +1107,47 @@ mod tests {
             Redescribed::Nothing
         );
         assert_eq!(*widgets.redraws.borrow(), 0);
+    }
+
+    #[test]
+    fn the_orientation_comes_from_the_two_numbers() {
+        let plain = HostFacts::new("gtk", "en", &[]);
+        assert_eq!(plain.orientation(), None, "an unknown screen says nothing");
+        assert_eq!(
+            plain.clone().on_screen(392, 786).orientation(),
+            Some("portrait")
+        );
+        assert_eq!(
+            plain.clone().on_screen(786, 392).orientation(),
+            Some("landscape")
+        );
+        assert_eq!(
+            plain.clone().on_screen(500, 500).orientation(),
+            Some("portrait")
+        );
+        assert_eq!(
+            plain.clone().on_screen(392, 0).orientation(),
+            None,
+            "half a screen is no screen"
+        );
+    }
+
+    #[test]
+    fn the_screen_reaches_the_document() {
+        let mut state = State::default();
+        HostFacts::new("gtk", "en", &[])
+            .on_screen(392, 786)
+            .seed(&mut state);
+        assert_eq!(state.lookup("host.width_dp"), Some(&json!(392)));
+        assert_eq!(state.lookup("host.height_dp"), Some(&json!(786)));
+        assert_eq!(state.lookup("host.orientation"), Some(&json!("portrait")));
+
+        let mut blind = State::default();
+        HostFacts::new("console", "en", &[]).seed(&mut blind);
+        assert_eq!(
+            blind.lookup("host.orientation"),
+            None,
+            "no screen, no claim about its shape"
+        );
     }
 }

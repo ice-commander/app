@@ -436,5 +436,6 @@
   "wizard.toolbar_sub": "Выберыце кнопкі для панэлі. Гэта можна змяніць пазней у наладах.",
   "wizard.toolbar_title": "Кнопкі на панэлі",
   "wizard.welcome_sub": "Давайце ўсё наладзім. Любы з гэтых параметраў можна змяніць пазней у наладах.",
-  "wizard.welcome_title": "Вітаем у Ice Commander"
+  "wizard.welcome_title": "Вітаем у Ice Commander",
+  "settings.licences": "Ліцэнзіі і кампаненты"
 }

@@ -436,5 +436,6 @@
   "wizard.toolbar_sub": "Scegli i pulsanti del pannello. Potrai cambiarlo più tardi nelle impostazioni.",
   "wizard.toolbar_title": "Pulsanti della barra",
   "wizard.welcome_sub": "Configuriamo tutto. Potrai modificare ognuna di queste opzioni in seguito nelle Impostazioni.",
-  "wizard.welcome_title": "Benvenuto in Ice Commander"
+  "wizard.welcome_title": "Benvenuto in Ice Commander",
+  "settings.licences": "Licenze e componenti"
 }

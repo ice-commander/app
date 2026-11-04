@@ -9,6 +9,7 @@ publish = false
 # registry + notifier, the `ApiCmd` command enum and the JSON DTOs. Clients own the
 # command dispatcher (GTK app: on the GLib loop; webserver-app: a tokio LocalSet) and
 [dependencies]
+common = { workspace = true }
 actix-web = { workspace = true }
 actix-ws = { workspace = true }
 serde = { version = "1.0", features = ["derive"] }

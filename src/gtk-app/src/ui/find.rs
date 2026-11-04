@@ -108,6 +108,8 @@ pub fn show_search_dialog<P: glib::object::IsA<gtk::Window>>(
         .use_markup(true)
         .halign(Align::Start)
         .css_classes(vec!["dim-label"])
+        .ellipsize(gtk::pango::EllipsizeMode::Middle)
+        .xalign(0.0)
         .build();
     main_box.append(&path_label);
 
@@ -130,6 +132,8 @@ pub fn show_search_dialog<P: glib::object::IsA<gtk::Window>>(
 
     main_box.append(&input_box);
 
+    let narrow = crate::mobile();
+
     let header_box = Box::builder()
         .orientation(Orientation::Horizontal)
         .spacing(12)
@@ -137,6 +141,7 @@ pub fn show_search_dialog<P: glib::object::IsA<gtk::Window>>(
         .margin_end(8)
         .margin_top(8)
         .margin_bottom(4)
+        .visible(!narrow)
         .build();
 
     let lbl_name_hdr = Label::builder()
@@ -192,10 +197,12 @@ pub fn show_search_dialog<P: glib::object::IsA<gtk::Window>>(
         .label(&*crate::i18n::tr("find.status_ready"))
         .halign(Align::Start)
         .css_classes(vec!["dim-label"])
+        .ellipsize(gtk::pango::EllipsizeMode::Middle)
+        .xalign(0.0)
         .build();
     main_box.append(&status_label);
 
-    dialog.set_child(&main_box);
+    dialog.set_child_fitted(&main_box);
 
     let searching = Rc::new(RefCell::new(false));
     let cancel_flag = Rc::new(RefCell::new(false));
@@ -777,26 +784,22 @@ pub fn show_search_dialog<P: glib::object::IsA<gtk::Window>>(
                     for res in matches_to_add {
                         let size_str = format_size(res.size);
                         let row_box = Box::builder()
-                            .orientation(Orientation::Horizontal)
-                            .spacing(12)
-                            .margin_start(8)
-                            .margin_end(8)
-                            .margin_top(4)
-                            .margin_bottom(4)
+                            .orientation(if narrow {
+                                Orientation::Vertical
+                            } else {
+                                Orientation::Horizontal
+                            })
+                            .spacing(if narrow { 2 } else { 12 })
+                            .margin_start(if narrow { 12 } else { 8 })
+                            .margin_end(if narrow { 12 } else { 8 })
+                            .margin_top(if narrow { 8 } else { 4 })
+                            .margin_bottom(if narrow { 8 } else { 4 })
                             .build();
 
                         let lbl_name = Label::builder()
                             .label(&res.name)
                             .halign(Align::Start)
                             .ellipsize(gtk::pango::EllipsizeMode::End)
-                            .build();
-                        let lbl_size = Label::builder()
-                            .label(&size_str)
-                            .halign(Align::Start)
-                            .build();
-                        let lbl_date = Label::builder()
-                            .label(&res.date)
-                            .halign(Align::Start)
                             .build();
                         let lbl_folder = Label::builder()
                             .label(&res.folder)
@@ -805,14 +808,43 @@ pub fn show_search_dialog<P: glib::object::IsA<gtk::Window>>(
                             .hexpand(true)
                             .build();
 
-                        lbl_name.set_width_request(180);
-                        lbl_size.set_width_request(80);
-                        lbl_date.set_width_request(140);
+                        if narrow {
+                            lbl_name.set_xalign(0.0);
+                            lbl_folder.set_xalign(0.0);
+                            lbl_folder.add_css_class("dim-label");
+                            lbl_folder.add_css_class("caption");
+                            let details = Label::builder()
+                                .label(if res.date == "N/A" {
+                                    size_str.clone()
+                                } else {
+                                    format!("{}  ·  {}", size_str, res.date)
+                                })
+                                .halign(Align::Start)
+                                .xalign(0.0)
+                                .css_classes(vec!["dim-label", "caption"])
+                                .build();
+                            row_box.append(&lbl_name);
+                            row_box.append(&details);
+                            row_box.append(&lbl_folder);
+                        } else {
+                            let lbl_size = Label::builder()
+                                .label(&size_str)
+                                .halign(Align::Start)
+                                .build();
+                            let lbl_date = Label::builder()
+                                .label(&res.date)
+                                .halign(Align::Start)
+                                .build();
 
-                        row_box.append(&lbl_name);
-                        row_box.append(&lbl_size);
-                        row_box.append(&lbl_date);
-                        row_box.append(&lbl_folder);
+                            lbl_name.set_width_request(180);
+                            lbl_size.set_width_request(80);
+                            lbl_date.set_width_request(140);
+
+                            row_box.append(&lbl_name);
+                            row_box.append(&lbl_size);
+                            row_box.append(&lbl_date);
+                            row_box.append(&lbl_folder);
+                        }
 
                         let row = ListBoxRow::new();
                         row.set_child(Some(&row_box));

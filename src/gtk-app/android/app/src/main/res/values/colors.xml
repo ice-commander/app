@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="adw_window_bg">#FFFAFAFB</color>
+    <bool name="adw_light_bars">true</bool>
 </resources>

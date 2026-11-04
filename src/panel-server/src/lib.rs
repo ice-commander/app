@@ -2180,6 +2180,14 @@ async fn health() -> impl Responder {
     HttpResponse::Ok().json(serde_json::json!({ "status": "ok" }))
 }
 
+async fn licences() -> impl Responder {
+    let said: Vec<serde_json::Value> = common::licences::all()
+        .iter()
+        .map(|document| serde_json::json!({ "title": document.title, "text": document.text }))
+        .collect();
+    HttpResponse::Ok().json(serde_json::json!({ "documents": said }))
+}
+
 async fn webui_index(state: web::Data<ApiState>) -> impl Responder {
     let css = String::from_utf8_lossy(&state.webui_css);
     let js = String::from_utf8_lossy(&state.webui_js);
@@ -2246,6 +2254,7 @@ pub fn start_api_server(
                     .app_data(state.clone())
                     .app_data(web::PayloadConfig::new(512 * 1024 * 1024))
                     .route("/api/health", web::get().to(health))
+                    .route("/api/licences", web::get().to(licences))
                     .route("/api/ws", web::get().to(ws_handler))
                     .route(
                         "/api/panel/{side}/terminal/ws",

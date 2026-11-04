@@ -137,6 +137,67 @@ pub struct LocalFileSystemRpc {
     pub config: client_config::AppConfig,
 }
 
+struct LocalRead {
+    file: tokio::fs::File,
+}
+
+#[async_trait::async_trait(?Send)]
+impl fm_core::rpc::ReadStream for LocalRead {
+    async fn fill(&mut self, into: &mut [u8]) -> Result<usize, AppError> {
+        use tokio::io::AsyncReadExt;
+        self.file.read(into).await.map_err(AppError::from)
+    }
+}
+
+struct LocalWrite {
+    file: tokio::fs::File,
+    path: PathBuf,
+    permissions: Option<u32>,
+}
+
+#[async_trait::async_trait(?Send)]
+impl fm_core::rpc::WriteStream for LocalWrite {
+    async fn put(&mut self, bytes: &[u8]) -> Result<(), AppError> {
+        use tokio::io::AsyncWriteExt;
+        self.file.write_all(bytes).await.map_err(AppError::from)
+    }
+
+    async fn finish(mut self: Box<Self>) -> Result<(), AppError> {
+        use tokio::io::AsyncWriteExt;
+        self.file.flush().await.map_err(AppError::from)?;
+        #[cfg(unix)]
+        if let Some(mode) = self.permissions {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(mode));
+        }
+        Ok(())
+    }
+}
+
+async fn write_reporting(
+    path: &std::path::Path,
+    content: &[u8],
+    report: &(dyn Fn(u64) + 'static),
+) -> Result<(), AppError> {
+    use tokio::io::AsyncWriteExt;
+
+    const TURN: usize = 1024 * 1024;
+    let mut file = tokio::fs::File::create(path)
+        .await
+        .map_err(AppError::from)?;
+    let mut written = 0usize;
+    while written < content.len() {
+        let end = (written + TURN).min(content.len());
+        file.write_all(&content[written..end])
+            .await
+            .map_err(AppError::from)?;
+        written = end;
+        report(written as u64);
+    }
+    file.flush().await.map_err(AppError::from)?;
+    Ok(())
+}
+
 impl LocalFileSystemRpc {
     pub fn new(config: client_config::AppConfig) -> Self {
         Self { config }
@@ -146,7 +207,7 @@ impl LocalFileSystemRpc {
 #[async_trait::async_trait(?Send)]
 impl fm_core::rpc::FileSystemRpc for LocalFileSystemRpc {
     fn supports_terminal(&self) -> bool {
-        true
+        !cfg!(target_os = "android")
     }
 
     fn as_any(&self) -> Option<&dyn std::any::Any> {
@@ -169,8 +230,8 @@ impl fm_core::rpc::FileSystemRpc for LocalFileSystemRpc {
         res
     }
     async fn list_dir(&self, path: String) -> Result<Vec<fm_core::rpc::RemoteFileEntry>, AppError> {
-        let (dirs, files) = fs_local::list_local_directory(std::path::Path::new(&path))
-            .map_err(AppError::from)?;
+        let (dirs, files) =
+            fs_local::list_local_directory(std::path::Path::new(&path)).map_err(AppError::from)?;
         let mut entries = Vec::new();
         for d in dirs {
             let mut permissions = None;
@@ -320,6 +381,8 @@ impl fm_core::rpc::FileSystemRpc for LocalFileSystemRpc {
         const SYNC_WRITE_MAX: usize = 8 * 1024 * 1024;
         let res = if content.len() <= SYNC_WRITE_MAX {
             std::fs::write(&path_buf, &content).map_err(AppError::from)
+        } else if let Some(ref cb) = progress_callback {
+            write_reporting(&path_buf, &content, cb).await
         } else {
             tokio::fs::write(&path_buf, content)
                 .await
@@ -336,6 +399,28 @@ impl fm_core::rpc::FileSystemRpc for LocalFileSystemRpc {
             }
         }
         res
+    }
+
+    async fn open_read(&self, path: String) -> Option<Box<dyn fm_core::rpc::ReadStream>> {
+        let file = tokio::fs::File::open(PathBuf::from(path)).await.ok()?;
+        Some(Box::new(LocalRead { file }))
+    }
+
+    async fn open_write(
+        &self,
+        path: String,
+        permissions: Option<u32>,
+    ) -> Option<Box<dyn fm_core::rpc::WriteStream>> {
+        let path = PathBuf::from(path);
+        if let Some(parent) = path.parent() {
+            let _ = tokio::fs::create_dir_all(parent).await;
+        }
+        let file = tokio::fs::File::create(&path).await.ok()?;
+        Some(Box::new(LocalWrite {
+            file,
+            path,
+            permissions,
+        }))
     }
 
     fn is_local(&self) -> bool {
@@ -577,13 +662,72 @@ fn sanitize_windows_path(path: &std::path::Path) -> std::path::PathBuf {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn a_large_file_says_how_much_of_it_has_landed() {
+        use fm_core::rpc::FileSystemRpc;
+        let folder = tempfile::tempdir().expect("somewhere to write");
+        let path = folder.path().join("big.bin");
+        let local = LocalFileSystemRpc::new(client_config::AppConfig::new(
+            "ice-commander-local-write-probe",
+        ));
+
+        let said = std::rc::Rc::new(std::cell::RefCell::new(Vec::<u64>::new()));
+        let said_c = said.clone();
+        let body = vec![7u8; 24 * 1024 * 1024];
+        local
+            .write_file(
+                path.to_string_lossy().to_string(),
+                body.clone(),
+                None,
+                Some(Box::new(move |landed| said_c.borrow_mut().push(landed))),
+            )
+            .await
+            .expect("it writes");
+
+        assert_eq!(std::fs::read(&path).expect("it is there"), body);
+        let said = said.borrow();
+        assert!(
+            said.len() > 2,
+            "a file of this size is reported as it lands, got {said:?}"
+        );
+        for pair in said.windows(2) {
+            assert!(pair[1] >= pair[0], "the count never goes back: {said:?}");
+        }
+        assert!(said.iter().filter(|n| **n < body.len() as u64).count() > 2);
+        assert_eq!(said.last().copied(), Some(body.len() as u64));
+    }
+
+    #[tokio::test]
+    async fn a_small_file_is_still_written_in_one_go() {
+        use fm_core::rpc::FileSystemRpc;
+        let folder = tempfile::tempdir().expect("somewhere to write");
+        let path = folder.path().join("small.txt");
+        let local = LocalFileSystemRpc::new(client_config::AppConfig::new(
+            "ice-commander-local-write-probe-small",
+        ));
+
+        let said = std::rc::Rc::new(std::cell::RefCell::new(Vec::<u64>::new()));
+        let said_c = said.clone();
+        local
+            .write_file(
+                path.to_string_lossy().to_string(),
+                b"not much to say".to_vec(),
+                None,
+                Some(Box::new(move |landed| said_c.borrow_mut().push(landed))),
+            )
+            .await
+            .expect("it writes");
+
+        assert_eq!(*said.borrow(), vec![15]);
+    }
+
     #[test]
     fn the_local_disk_allows_a_terminal_and_leaves_the_shell_to_the_application() {
         use fm_core::rpc::FileSystemRpc;
         let local = LocalFileSystemRpc::new(client_config::AppConfig::new(
             "ice-commander-local-terminal-probe",
         ));
-        assert!(local.supports_terminal());
+        assert_eq!(local.supports_terminal(), !cfg!(target_os = "android"));
         assert!(
             !local.carries_shell(),
             "F9 on a local panel would ask the disk for a shell it has not got"

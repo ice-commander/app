@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod error;
 pub mod installer;
+pub mod licences;
 pub mod version;
 
 pub use error::AppError;

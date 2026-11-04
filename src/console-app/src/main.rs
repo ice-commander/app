@@ -218,6 +218,22 @@ async fn event_loop(
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> io::Result<()> {
+    if let Some(asked) = std::env::args().nth(1) {
+        if asked == "--licences" || asked == "--licenses" {
+            said_licences();
+            return Ok(());
+        }
+    }
     let local = tokio::task::LocalSet::new();
     local.run_until(run()).await
+}
+
+fn said_licences() {
+    use std::io::Write;
+    let out = io::stdout();
+    let mut out = out.lock();
+    for document in common::licences::all() {
+        let _ = writeln!(out, "\n=== {} ===\n", document.title);
+        let _ = out.write_all(document.text.as_bytes());
+    }
 }

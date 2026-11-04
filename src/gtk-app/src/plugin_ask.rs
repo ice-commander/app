@@ -12,11 +12,9 @@ use std::rc::Rc;
 
 pub fn install(parent: &gtk::Window) {
     let holder = parent.clone();
-    ic_plugin_host::set_ask_handler(Rc::new(
-        move |spec: &str, answer: Box<dyn FnOnce(&str)>| {
-            show(&holder, spec, answer);
-        },
-    ));
+    ic_plugin_host::set_ask_handler(Rc::new(move |spec: &str, answer: Box<dyn FnOnce(&str)>| {
+        show(&holder, spec, answer);
+    }));
 }
 
 /// Text in a spec is either a plain string or the `{tr, en}` pair the view
@@ -172,7 +170,11 @@ fn show(parent: &gtk::Window, spec: &str, answer: Box<dyn FnOnce(&str)>) {
             .spacing(8)
             .build();
         if let Some(said) = detail {
-            let label = gtk::Label::builder().label(said).xalign(0.0).wrap(true).build();
+            let label = gtk::Label::builder()
+                .label(said)
+                .xalign(0.0)
+                .wrap(true)
+                .build();
             label.add_css_class("dim-label");
             holder.append(&label);
         }
@@ -246,7 +248,10 @@ mod tests {
     fn plain_text_and_the_translatable_pair_both_read() {
         assert_eq!(phrase(&json!("Delete?")), "Delete?");
         assert_eq!(phrase(&json!({ "en": "Delete?" })), "Delete?");
-        assert_eq!(phrase(&json!({ "tr": "nothing.here", "en": "Delete?" })), "Delete?");
+        assert_eq!(
+            phrase(&json!({ "tr": "nothing.here", "en": "Delete?" })),
+            "Delete?"
+        );
         assert_eq!(phrase(&json!(7)), "");
     }
 }

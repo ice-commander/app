@@ -1,9 +1,9 @@
 use adw::prelude::*;
+use gtk::glib;
 use ic_view::{
     as_text, choice_index, is_truthy, resolve, resolve_text, visible, Chrome, Cond, Document, Fit,
     InputVariant, InputVariant as Variant, Node, NodeKind, Scroll, State, Text,
 };
-use gtk::glib;
 use serde_json::Value;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
@@ -119,9 +119,7 @@ fn same_cells(before: &Value, after: &Value) -> bool {
         return before == after;
     };
     let shown = |key: &str| key != "children" && key != "expanded";
-    let count = |map: &serde_json::Map<String, Value>| {
-        map.keys().filter(|key| shown(key)).count()
-    };
+    let count = |map: &serde_json::Map<String, Value>| map.keys().filter(|key| shown(key)).count();
     count(was) == count(now)
         && was
             .iter()
@@ -739,8 +737,15 @@ impl Renderer {
     fn slider(&self, node: &Node, state: &State) -> (gtk::Widget, Control) {
         let low = node.min.unwrap_or(0.0);
         let high = node.max.unwrap_or(low + 1.0);
-        let (low, high) = if high > low { (low, high) } else { (low, low + 1.0) };
-        let step = node.step.filter(|step| *step > 0.0).unwrap_or((high - low) / 100.0);
+        let (low, high) = if high > low {
+            (low, high)
+        } else {
+            (low, low + 1.0)
+        };
+        let step = node
+            .step
+            .filter(|step| *step > 0.0)
+            .unwrap_or((high - low) / 100.0);
         let scale = gtk::Scale::with_range(gtk::Orientation::Horizontal, low, high, step);
         scale.set_draw_value(false);
         // No hexpand here: taking the spare room is `weight`'s to say, as for every node.
@@ -972,7 +977,9 @@ impl Renderer {
                         glib::idle_add_local_once(move || say(value, open));
                     }
                 });
-                let before = watched.borrow_mut().insert(item.as_ptr() as usize, (row, watch));
+                let before = watched
+                    .borrow_mut()
+                    .insert(item.as_ptr() as usize, (row, watch));
                 if let Some((was, old)) = before {
                     was.disconnect(old);
                 }
@@ -1283,8 +1290,7 @@ fn sync_level(
 ) {
     let named: Vec<String> = rows.iter().map(|row| identity(row, under)).collect();
     still_there.extend(named.iter().cloned());
-    let wanted: std::collections::HashSet<&str> =
-        named.iter().map(String::as_str).collect();
+    let wanted: std::collections::HashSet<&str> = named.iter().map(String::as_str).collect();
 
     // Backwards, so the places of the rows not yet looked at keep their numbers.
     for at in (0..store.n_items()).rev() {
@@ -1363,7 +1369,11 @@ fn open_what_the_data_says(tree: &TreeView) {
 /// Whether a table answers back. A table nobody listens to stays as it was:
 /// plain cells, nothing to select, no row under the pointer lighting up.
 fn picks_rows(node: &Node) -> bool {
-    node.bind.is_some() || matches!(node.intent.as_ref(), Some(Cond::Fixed(ic_view::Intent::Emit { .. })))
+    node.bind.is_some()
+        || matches!(
+            node.intent.as_ref(),
+            Some(Cond::Fixed(ic_view::Intent::Emit { .. }))
+        )
 }
 
 fn fill_table(
@@ -1492,7 +1502,11 @@ fn zoom_by_hand(scroller: &gtk::ScrolledWindow, picture: &gtk::Picture) {
     // The point to bring back under (x, y), as fractions of the picture, once it is laid out anew.
     let pending = Rc::new(std::cell::Cell::new(None::<(f64, f64, f64, f64)>));
     let place = {
-        let (h, v, pending) = (scroller.hadjustment(), scroller.vadjustment(), pending.clone());
+        let (h, v, pending) = (
+            scroller.hadjustment(),
+            scroller.vadjustment(),
+            pending.clone(),
+        );
         move || {
             if let Some((fx, fy, x, y)) = pending.take() {
                 h.set_value(fx * h.upper() - x);
@@ -1798,6 +1812,8 @@ fn apply_text_role(label: &gtk::Label, role: Option<&str>) {
         "dim-label",
         "monospace",
         "error",
+        "ic-added",
+        "ic-removed",
     ] {
         label.remove_css_class(class);
     }
@@ -1810,6 +1826,8 @@ fn apply_text_role(label: &gtk::Label, role: Option<&str>) {
         Some("dim") => "dim-label",
         Some("mono") => "monospace",
         Some("error") => "error",
+        Some("added") => "ic-added",
+        Some("removed") => "ic-removed",
         _ => return,
     };
     label.add_css_class(class);
@@ -2023,8 +2041,7 @@ fn write_control(bound: &Bound, value: &Value) -> bool {
 impl BuiltView {
     /// Nothing to follow otherwise, and following it anyway redraws on every twitch of the mouse.
     pub fn keeps_a_value(&self, id: &str) -> bool {
-        self.slot(id)
-            .is_some_and(|bound| bound.node.bind.is_some())
+        self.slot(id).is_some_and(|bound| bound.node.bind.is_some())
     }
 
     pub fn on_change(&self, id: &str, handler: impl Fn(String, Value) + 'static) -> bool {
@@ -2150,10 +2167,9 @@ impl BuiltView {
                     handler(bind.clone(), tree.selected_row().unwrap_or(Value::Null));
                 });
             }
-            Control::Plain
-            | Control::Button(_)
-            | Control::Label(_)
-            | Control::Chart(_, _, _) => return false,
+            Control::Plain | Control::Button(_) | Control::Label(_) | Control::Chart(_, _, _) => {
+                return false
+            }
         }
         true
     }
@@ -2319,9 +2335,7 @@ impl BuiltView {
                 Control::Table(table) => {
                     fill_table(table, &bound.node, state, &|key| translate(key))
                 }
-                Control::Tree(tree) => {
-                    fill_tree(tree, &bound.node, state, &|key| translate(key))
-                }
+                Control::Tree(tree) => fill_tree(tree, &bound.node, state, &|key| translate(key)),
                 Control::Chart(area, samples, caption) => {
                     if let Some(key) = bound.node.series_key.as_deref() {
                         *samples.borrow_mut() = ic_view::series_of(state, key);
@@ -2451,7 +2465,12 @@ mod tree_tests {
         json!({ "name": name, "path": name, "expandable": true, "children": children })
     }
 
-    fn store_of(rows: &[Value]) -> (gtk::gio::ListStore, Rc<RefCell<HashMap<String, gtk::gio::ListStore>>>) {
+    fn store_of(
+        rows: &[Value],
+    ) -> (
+        gtk::gio::ListStore,
+        Rc<RefCell<HashMap<String, gtk::gio::ListStore>>>,
+    ) {
         let store = gtk::gio::ListStore::new::<glib::BoxedAnyObject>();
         let kids = Rc::new(RefCell::new(HashMap::new()));
         let mut seen = std::collections::HashSet::new();

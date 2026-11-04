@@ -1,6 +1,16 @@
 use adw::prelude::*;
 use gtk::{Button, Label, Orientation};
 
+const DARK_WINDOW: i32 = 0xFF222226u32 as i32;
+const LIGHT_WINDOW: i32 = 0xFFFAFAFBu32 as i32;
+
+fn paint_system_bars(anchor: &Button, dark: bool) {
+    let Some(window) = anchor.root().and_downcast::<gtk::Window>() else {
+        return;
+    };
+    crate::platform().paint_system_bars(&window, if dark { DARK_WINDOW } else { LIGHT_WINDOW });
+}
+
 thread_local! {
     static PLUGIN_LABELS: std::cell::RefCell<std::collections::HashMap<String, Label>> =
         std::cell::RefCell::new(std::collections::HashMap::new());
@@ -68,12 +78,14 @@ pub(super) fn build_header_bar(
     feedback_btn.connect_clicked(|b| crate::feedback::show(b));
 
     let theme_btn_img_notify = theme_btn_img.clone();
+    let theme_btn_for_bars = theme_btn.clone();
     adw::StyleManager::default().connect_dark_notify(move |sm| {
         if sm.is_dark() {
             theme_btn_img_notify.set_resource(Some("/com/icecommander/gtk/afternoon.svg"));
         } else {
             theme_btn_img_notify.set_resource(Some("/com/icecommander/gtk/night.svg"));
         }
+        paint_system_bars(&theme_btn_for_bars, sm.is_dark());
     });
 
     let config_theme = config.clone();

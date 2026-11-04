@@ -295,25 +295,32 @@ pub(crate) fn fetch_plugin(
             ic_plugin_host::loader::plugin_directory().ok_or("no plugin folder on this system")?;
         let files = {
             let folder = folder.clone();
+            let offer = offer.clone();
             tokio::task::spawn_blocking(move || updates::missing(&folder, &offer))
                 .await
                 .map_err(|e| e.to_string())?
         };
-        download_and_stage(folder, files).await
+        download_and_stage(folder, files, &offer).await
     })
 }
 
 /// A plugin's files are written all or none: half of them would pair a new plugin with old codecs.
-async fn download_and_stage(folder: PathBuf, files: Vec<Offered>) -> Result<(), String> {
+async fn download_and_stage(
+    folder: PathBuf,
+    files: Vec<Offered>,
+    offer: &OfferedPlugin,
+) -> Result<(), String> {
     let mut arrived = Vec::new();
     for file in files {
         let bytes = fetch_bytes(&file.url).await?;
         arrived.push((file, bytes));
     }
+    let offer = offer.clone();
     tokio::task::spawn_blocking(move || {
         arrived
             .iter()
-            .try_for_each(|(file, bytes)| updates::stage(&folder, file, bytes))
+            .try_for_each(|(file, bytes)| updates::stage(&folder, file, bytes))?;
+        updates::note_what_goes(&folder, &offer)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -358,6 +365,7 @@ async fn stage_plugin_updates(
     }
     let folder =
         ic_plugin_host::loader::plugin_directory().ok_or("no plugin folder on this system")?;
+    let describing = offered.clone();
     let (fetches, names) = {
         let folder = folder.clone();
         tokio::task::spawn_blocking(move || {
@@ -400,7 +408,10 @@ async fn stage_plugin_updates(
     let mut failed = Vec::new();
     for (plugin, fetches) in by_plugin {
         let files = fetches.into_iter().map(|fetch| fetch.file).collect();
-        match download_and_stage(folder.clone(), files).await {
+        let Some(offer) = describing.get(&plugin) else {
+            continue;
+        };
+        match download_and_stage(folder.clone(), files, offer).await {
             Ok(()) => staged.push(names.get(&plugin).cloned().unwrap_or(plugin)),
             Err(e) => failed.push(format!("{plugin}: {e}")),
         }
@@ -486,16 +497,16 @@ mod tests {
     use super::{is_newer_version, verify_checksum, Checked};
 
     /// What the site answered for 0.8.130 on macOS, from the registry of the real builds, two plugins kept.
-    const ANSWERED: &str = r#"{"latest_version": "0.8.130", "plugins": {"ic_video_view": {"files": [{"md5": "c97a69f257e4fe68aaf2a128ee6c43bf", "path": "libic_video_view.dylib", "size": 419200, "url": "https://github.com/ice-commander/ic-plugin-videocodecs/releases/download/v0.1.0/libic_video_view.dylib"}, {"md5": "4edba30dc8f6e4ba8297047a2eb27396", "path": "video-codecs/THIRD-PARTY-macos.txt", "size": 48798, "url": "https://github.com/ice-commander/ic-plugin-videocodecs/releases/download/v0.1.0/THIRD-PARTY-macos.txt"}, {"md5": "0a5d046cd4d7b150d4127f4ae1a22e80", "path": "video-codecs/libmpv.2.dylib", "size": 26892608, "url": "https://github.com/ice-commander/ic-plugin-videocodecs/releases/download/v0.1.0/libmpv.2.dylib"}], "version": "0.1.0"}, "ic_sftp_fs": {"files": [{"md5": "c0baa9cbd8bcf96510898a45ce930146", "path": "libic_sftp_fs.dylib", "size": 3774320, "url": "https://github.com/ice-commander/ic-plugin-sftp/releases/download/v0.1.0/libic_sftp_fs.dylib"}], "version": "0.1.0"}}, "plugins_of": "0.8.130", "update": false}"#;
+    const ANSWERED: &str = r#"{"latest_version": "0.8.130", "plugins": {"ic_codecs": {"files": [{"md5": "c97a69f257e4fe68aaf2a128ee6c43bf", "path": "libic_codecs.dylib", "size": 419200, "url": "https://github.com/ice-commander/ic-plugin-codecs/releases/download/v0.1.0/libic_codecs.dylib"}, {"md5": "4edba30dc8f6e4ba8297047a2eb27396", "path": "codecs/THIRD-PARTY-macos.txt", "size": 48798, "url": "https://github.com/ice-commander/ic-plugin-codecs/releases/download/v0.1.0/THIRD-PARTY-macos.txt"}, {"md5": "0a5d046cd4d7b150d4127f4ae1a22e80", "path": "codecs/libmpv.2.dylib", "size": 26892608, "url": "https://github.com/ice-commander/ic-plugin-codecs/releases/download/v0.1.0/libmpv.2.dylib"}], "version": "0.1.0"}, "ic_sftp_fs": {"files": [{"md5": "c0baa9cbd8bcf96510898a45ce930146", "path": "libic_sftp_fs.dylib", "size": 3774320, "url": "https://github.com/ice-commander/ic-plugin-sftp/releases/download/v0.1.0/libic_sftp_fs.dylib"}], "version": "0.1.0"}}, "plugins_of": "0.8.130", "update": false}"#;
 
     #[test]
     fn the_sites_answer_reads_and_only_an_installed_plugin_is_fetched() {
         let checked: Checked = serde_json::from_str(ANSWERED).unwrap();
         assert!(!checked.update);
-        let video = &checked.plugins["ic_video_view"];
+        let video = &checked.plugins["ic_codecs"];
         assert_eq!(video.version, "0.1.0");
         assert_eq!(video.files.len(), 3);
-        assert_eq!(video.files[2].path, "video-codecs/libmpv.2.dylib");
+        assert_eq!(video.files[2].path, "codecs/libmpv.2.dylib");
 
         let folder = std::env::temp_dir().join(format!("ic-updater-answer-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&folder);

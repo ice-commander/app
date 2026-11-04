@@ -51,6 +51,18 @@ pub struct ColumnSpec {
 }
 
 #[async_trait::async_trait(?Send)]
+pub trait ReadStream {
+    async fn fill(&mut self, into: &mut [u8]) -> Result<usize, AppError>;
+}
+
+#[async_trait::async_trait(?Send)]
+pub trait WriteStream {
+    async fn put(&mut self, bytes: &[u8]) -> Result<(), AppError>;
+
+    async fn finish(self: Box<Self>) -> Result<(), AppError>;
+}
+
+#[async_trait::async_trait(?Send)]
 pub trait FileSystemRpc {
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         None
@@ -148,6 +160,26 @@ pub trait FileSystemRpc {
         _progress_callback: Option<Box<dyn Fn(u64) + 'static>>,
     ) -> Result<(), AppError> {
         Err(AppError::Other("Not implemented".to_string()))
+    }
+
+    async fn copy_within(&self, _from: String, _to: String) -> bool {
+        false
+    }
+
+    async fn on_disk(&self, _path: String) -> Option<String> {
+        None
+    }
+
+    async fn open_read(&self, _path: String) -> Option<Box<dyn ReadStream>> {
+        None
+    }
+
+    async fn open_write(
+        &self,
+        _path: String,
+        _permissions: Option<u32>,
+    ) -> Option<Box<dyn WriteStream>> {
+        None
     }
 
     async fn read_at(&self, _path: String, _offset: u64, _len: usize) -> Result<Vec<u8>, AppError> {

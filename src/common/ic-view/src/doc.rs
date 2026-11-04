@@ -718,7 +718,10 @@ mod pictures_and_players {
         assert!(shown.takes_value(), "what is dragged is reported");
 
         let in_a_form = parsed(r#"{ "t": "slider", "id": "volume", "bind": "volume" }"#);
-        assert!(in_a_form.value_key.is_none(), "a form's slider follows state");
+        assert!(
+            in_a_form.value_key.is_none(),
+            "a form's slider follows state"
+        );
         assert!(in_a_form.takes_value());
     }
 

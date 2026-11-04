@@ -124,6 +124,30 @@ impl FileSystemRpc for RoutingProvider {
             .write_file(self.resolve(&path), content, permissions, progress_callback)
             .await
     }
+    async fn copy_within(&self, from: String, to: String) -> bool {
+        self.provider
+            .copy_within(self.resolve(&from), self.resolve(&to))
+            .await
+    }
+
+    async fn on_disk(&self, path: String) -> Option<String> {
+        self.provider.on_disk(self.resolve(&path)).await
+    }
+
+    async fn open_read(&self, path: String) -> Option<Box<dyn fm_core::rpc::ReadStream>> {
+        self.provider.open_read(self.resolve(&path)).await
+    }
+
+    async fn open_write(
+        &self,
+        path: String,
+        permissions: Option<u32>,
+    ) -> Option<Box<dyn fm_core::rpc::WriteStream>> {
+        self.provider
+            .open_write(self.resolve(&path), permissions)
+            .await
+    }
+
     async fn read_at(&self, path: String, offset: u64, len: usize) -> Result<Vec<u8>, AppError> {
         self.provider
             .read_at(self.resolve(&path), offset, len)

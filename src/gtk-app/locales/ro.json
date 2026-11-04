@@ -436,5 +436,6 @@
   "wizard.toolbar_sub": "Alegeți butoanele pentru panou. Puteți schimba mai târziu în setări.",
   "wizard.toolbar_title": "Butoanele barei",
   "wizard.welcome_sub": "Să configurăm totul. Puteți modifica oricare dintre aceste opțiuni mai târziu, în Setări.",
-  "wizard.welcome_title": "Bun venit în Ice Commander"
+  "wizard.welcome_title": "Bun venit în Ice Commander",
+  "settings.licences": "Licențe și componente"
 }

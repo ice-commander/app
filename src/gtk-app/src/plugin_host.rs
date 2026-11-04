@@ -14,10 +14,18 @@ pub fn image_from_svg_at(svg: &[u8], size: u32) -> Option<gtk::Image> {
     ic_svg_gtk::icon_image(svg, size)
 }
 
+pub fn host_kind() -> &'static str {
+    if cfg!(target_os = "android") {
+        ic_plugin_api::IC_HOST_ANDROID
+    } else {
+        ic_plugin_api::IC_HOST_GTK
+    }
+}
+
 /// Loads what is installed and switched on. A plugin the user disabled is not
 /// opened at all, so nothing it registers appears anywhere in this run.
 pub fn load_installed_plugins(config: &client_config::AppConfig) {
-    ic_plugin_host::set_host_kind(ic_plugin_api::IC_HOST_GTK);
+    ic_plugin_host::set_host_kind(host_kind());
     for attempt in ic_plugin_host::loader::load_for(config) {
         if attempt.loaded() {
             ic_logging::info!("installed plugin {} is in use", attempt.name);

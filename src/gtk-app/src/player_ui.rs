@@ -1,6 +1,5 @@
 use crate::player::AudioPlayer;
 use gtk::prelude::*;
-use panel_router::PanelRouter;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -11,13 +10,12 @@ pub struct AudioPlayerView {
     pub title_label: gtk::Label,
     pub volume_scale: gtk::Scale,
     pub player: AudioPlayer,
-    pub router: Rc<PanelRouter>,
     pub on_show: Rc<RefCell<Option<Box<dyn Fn() + 'static>>>>,
     pub on_hide: Rc<RefCell<Option<Box<dyn Fn() + 'static>>>>,
 }
 
 impl AudioPlayerView {
-    pub fn new(player: AudioPlayer, router: Rc<PanelRouter>) -> Self {
+    pub fn new(player: AudioPlayer) -> Self {
         let container = gtk::Box::builder()
             .orientation(gtk::Orientation::Horizontal)
             .spacing(12)
@@ -97,7 +95,6 @@ impl AudioPlayerView {
             title_label,
             volume_scale,
             player: player.clone(),
-            router,
             on_show: Rc::new(RefCell::new(None)),
             on_hide: Rc::new(RefCell::new(None)),
         };
@@ -157,103 +154,52 @@ impl AudioPlayerView {
             }
         });
 
-        let view_prev_clone = view.clone();
-        prev_btn.connect_clicked(move |_| {
-            if let Some(idx) = view_prev_clone.player.current_idx() {
-                if idx > 0 {
-                    view_prev_clone.play_track_at(idx - 1);
-                }
-            }
-        });
+        let player_prev = player.clone();
+        prev_btn.connect_clicked(move |_| player_prev.previous());
 
-        let view_next_clone = view.clone();
-        next_btn.connect_clicked(move |_| {
-            if let Some(idx) = view_next_clone.player.current_idx() {
-                let playlist = view_next_clone.player.playlist();
-                if idx + 1 < playlist.len() {
-                    view_next_clone.play_track_at(idx + 1);
-                }
-            }
-        });
+        let player_next = player.clone();
+        next_btn.connect_clicked(move |_| player_next.next());
 
-        let view_timer_clone = view.clone();
+        let listening = view.clone();
         let was_attached = std::cell::Cell::new(false);
-        gtk::glib::timeout_add_local(std::time::Duration::from_millis(500), move || {
-            if view_timer_clone.container.root().is_some() {
+        player.listen(move |moment| {
+            if listening.container.root().is_some() {
                 was_attached.set(true);
             } else if was_attached.get() {
-                // This bar has gone; the player is not its to stop — another tab may be listening.
-                return gtk::glib::ControlFlow::Break;
+                return false;
             }
-            let p = &view_timer_clone.player;
-            // Run out, not merely paused: pausing must not jump to the next track.
-            if let Some(idx) = p
-                .current_idx()
-                .filter(|_| p.is_finished() && !p.current_title().is_empty())
-            {
-                let playlist = p.playlist();
-                if idx + 1 < playlist.len() {
-                    view_timer_clone.play_track_at(idx + 1);
-                } else {
-                    p.stop();
-                    view_timer_clone
-                        .play_btn
-                        .set_child(Some(&gtk::Image::from_resource(
-                            "/com/icecommander/gtk/play.svg",
-                        )));
-                    view_timer_clone
+            match moment {
+                crate::player::Moment::Track => {
+                    listening.set_playing_track(&listening.player.current_title());
+                    if let Some(ref cb) = *listening.on_show.borrow() {
+                        cb();
+                    }
+                }
+                crate::player::Moment::State => listening.show_state(),
+                crate::player::Moment::Finished => {
+                    listening.show_state();
+                    listening
                         .title_label
                         .set_text(&*crate::i18n::tr("player.playback_finished"));
-                    if let Some(ref cb) = *view_timer_clone.on_hide.borrow() {
+                    if let Some(ref cb) = *listening.on_hide.borrow() {
                         cb();
                     }
                 }
             }
-            gtk::glib::ControlFlow::Continue
+            true
         });
 
         view
     }
 
-    pub fn play_track_at(&self, idx: usize) {
-        let playlist = self.player.playlist();
-        if idx >= playlist.len() {
-            return;
-        }
-        let (name, path) = &playlist[idx];
-        self.player.set_current_idx(Some(idx));
-        self.set_playing_track(name);
-
-        if let Some(ref cb) = *self.on_show.borrow() {
-            cb();
-        }
-
-        let player_clone = self.player.clone();
-        let view_clone = self.clone();
-        let name_clone = name.clone();
-        let provider = self.router.provider();
-        let path_c = path.clone();
-        let path_for_stop = path.clone();
-
-        gtk::glib::spawn_future_local(async move {
-            let blocking = crate::utils::read_blocking(&path_c);
-            match provider.read_file_opt(path_c, None, blocking).await {
-                Ok(bytes) => {
-                    if let Err(e) = player_clone.play_bytes_of(name_clone, &path_for_stop, bytes) {
-                        view_clone.title_label.set_text(&*crate::i18n::trf(
-                            "player.error",
-                            &[("error", &*(e.to_string()).to_string())],
-                        ));
-                    }
-                }
-                Err(e) => {
-                    view_clone.title_label.set_text(&*crate::i18n::trf(
-                        "player.read_error",
-                        &[("error", &*(e.to_string()).to_string())],
-                    ));
-                }
-            }
-        });
+    fn show_state(&self) {
+        self.play_btn.set_child(Some(&gtk::Image::from_resource(
+            if self.player.is_playing() {
+                "/com/icecommander/gtk/pause.svg"
+            } else {
+                "/com/icecommander/gtk/play.svg"
+            },
+        )));
     }
 
     pub fn set_playing_track(&self, title: &str) {

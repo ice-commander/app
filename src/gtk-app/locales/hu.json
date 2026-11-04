@@ -436,5 +436,6 @@
   "wizard.toolbar_sub": "Válassza ki a panel gombjait. Ezt később a beállításokban módosíthatja.",
   "wizard.toolbar_title": "Eszköztár gombjai",
   "wizard.welcome_sub": "Állítsunk be mindent. Ezeket később bármikor módosíthatja a Beállításokban.",
-  "wizard.welcome_title": "Üdvözöljük az Ice Commanderben"
+  "wizard.welcome_title": "Üdvözöljük az Ice Commanderben",
+  "settings.licences": "Licencek és összetevők"
 }

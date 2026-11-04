@@ -1,15 +1,33 @@
 package com.icecommander.gtkapp;
 
 import android.app.Activity;
+import android.os.Bundle;
 import android.os.Environment;
 import android.system.ErrnoException;
 import android.system.Os;
+import android.view.Window;
 import android.view.WindowManager;
 import java.io.File;
 import org.gtk.android.RuntimeApplication;
+import org.gtk.android.ToplevelActivity;
 
 /** GTK's runtime plus the environment it does not set up itself (as of GTK 4.24). */
 public class IceCommanderApplication extends RuntimeApplication {
+	/** The window keeps the screen on (keepScreenOn), main thread only. */
+	private boolean screenOn;
+	/** The colour of the system bars, or 0 before GTK has said; main thread only. */
+	private int barColour;
+
+	private BackgroundPlayback playback;
+
+	/** Built on first use, from whichever thread asks: the constructor only makes objects. */
+	public synchronized BackgroundPlayback playback() {
+		if (playback == null) {
+			playback = new BackgroundPlayback(this);
+		}
+		return playback;
+	}
+
 	@Override
 	public void onCreate() {
 		try {
@@ -30,11 +48,70 @@ public class IceCommanderApplication extends RuntimeApplication {
 			throw new RuntimeException(e);
 		}
 		super.onCreate();
+
+		registerActivityLifecycleCallbacks(new ActivityLifecycleCallbacks() {
+			@Override
+			public void onActivityPostCreated(Activity activity, Bundle state) {
+				// A fresh activity brings a new Android window whose flags start clear, including
+				// the one GDK hands the kept window to after the system finished the old activity.
+				if (screenOn && activity instanceof ToplevelActivity) {
+					activity.getWindow()
+							.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+				}
+				if (barColour != 0 && activity instanceof ToplevelActivity) {
+					paintBars(activity.getWindow(), barColour);
+				}
+			}
+
+			@Override
+			public void onActivityCreated(Activity activity, Bundle state) {}
+
+			@Override
+			public void onActivityStarted(Activity activity) {}
+
+			@Override
+			public void onActivityResumed(Activity activity) {}
+
+			@Override
+			public void onActivityPaused(Activity activity) {}
+
+			@Override
+			public void onActivityStopped(Activity activity) {}
+
+			@Override
+			public void onActivitySaveInstanceState(Activity activity, Bundle state) {}
+
+			@Override
+			public void onActivityDestroyed(Activity activity) {}
+		});
+	}
+
+	/**
+	 * Called over JNI from the GTK thread: the system bars take the colour of the window GTK is
+	 * drawing, so the theme the user picked inside the application reaches the frame around it.
+	 * The resources do this for the system's own light and dark; this is for the switch in the
+	 * header, which Android never hears about.
+	 */
+	public void systemBars(Activity activity, int colour) {
+		activity.runOnUiThread(() -> {
+			barColour = colour;
+			paintBars(activity.getWindow(), colour);
+		});
+	}
+
+	private static void paintBars(Window window, int colour) {
+		window.setNavigationBarColor(colour);
+		window.setStatusBarColor(colour);
+		// Or Android lays its own wash over both to keep them legible, which is the grey that
+		// shows instead of the colour asked for.
+		window.setNavigationBarContrastEnforced(false);
+		window.setStatusBarContrastEnforced(false);
 	}
 
 	/** Called over JNI from the GTK thread; a window's flags belong to the activity's UI thread. */
 	public void keepScreenOn(Activity activity, boolean on) {
 		activity.runOnUiThread(() -> {
+			screenOn = on;
 			if (on) {
 				activity.getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 			} else {

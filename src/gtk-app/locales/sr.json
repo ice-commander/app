@@ -436,5 +436,6 @@
   "wizard.toolbar_sub": "Изаберите дугмад за панел. Ово можете променити касније у подешавањима.",
   "wizard.toolbar_title": "Дугмад на траци",
   "wizard.welcome_sub": "Хајде да све подесимо. Свако од ових подешавања можете касније променити у Подешавањима.",
-  "wizard.welcome_title": "Добродошли у Ice Commander"
+  "wizard.welcome_title": "Добродошли у Ice Commander",
+  "settings.licences": "Лиценце и компоненте"
 }

@@ -32,3 +32,7 @@ default = ["gtk"]
 # on_item_bound, mount dialogs) and the gio-backed drive enumeration. Off = the
 # providers expose only the GTK-free `fm_core` data trait (headless).
 gtk = ["dep:gtk", "dep:adw", "dep:ic-svg-gtk"]
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1.36", features = ["rt", "macros"] }

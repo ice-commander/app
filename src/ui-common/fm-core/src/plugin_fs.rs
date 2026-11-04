@@ -10,20 +10,6 @@ fn cstr(ptr: *const c_char) -> String {
     unsafe { CStr::from_ptr(ptr) }.to_string_lossy().to_string()
 }
 
-fn taken(last: ic_plugin_api::IcFsErrorFn, handle: ic_plugin_api::IcFsHandle) -> Option<String> {
-    let text = cstr(last(handle));
-    (!text.is_empty()).then_some(text)
-}
-
-fn settled(done: bool, why: Option<String>) -> Result<(), common::AppError> {
-    if done {
-        return Ok(());
-    }
-    Err(common::AppError::Other(why.unwrap_or_else(|| {
-        "the plugin reported no reason".to_string()
-    })))
-}
-
 type Spawner = std::rc::Rc<dyn Fn(std::pin::Pin<Box<dyn std::future::Future<Output = ()>>>)>;
 
 fn filesystems() -> &'static std::sync::Mutex<Vec<FsPlugin>> {
@@ -152,6 +138,29 @@ impl FsPlugin {
     }
     fn set_permissions_fn(&self) -> Option<ic_plugin_api::IcFsPermissionsFn> {
         fs_call!(self, set_permissions, ic_plugin_api::IcFsPermissionsFn)
+    }
+    fn stream_open_fn(&self) -> Option<ic_plugin_api::IcFsStreamOpenFn> {
+        fs_call!(self, stream_open, ic_plugin_api::IcFsStreamOpenFn)
+    }
+    fn stream_read_fn(&self) -> Option<ic_plugin_api::IcFsStreamReadFn> {
+        fs_call!(self, stream_read, ic_plugin_api::IcFsStreamReadFn)
+    }
+    fn stream_write_fn(&self) -> Option<ic_plugin_api::IcFsStreamWriteFn> {
+        fs_call!(self, stream_write, ic_plugin_api::IcFsStreamWriteFn)
+    }
+    fn stream_close_fn(&self) -> Option<ic_plugin_api::IcFsStreamCloseFn> {
+        fs_call!(self, stream_close, ic_plugin_api::IcFsStreamCloseFn)
+    }
+    fn copy_within_fn(&self) -> Option<ic_plugin_api::IcFsCopyWithinFn> {
+        fs_call!(self, copy_within, ic_plugin_api::IcFsCopyWithinFn)
+    }
+    fn on_disk_fn(&self) -> Option<ic_plugin_api::IcFsOnDiskFn> {
+        fs_call!(self, on_disk, ic_plugin_api::IcFsOnDiskFn)
+    }
+    fn can_be_watched(&self) -> bool {
+        self.stream_open_fn().is_some()
+            && self.stream_read_fn().is_some()
+            && self.stream_close_fn().is_some()
     }
     pub fn carries_a_shell(&self) -> bool {
         self.shell_open_fn().is_some()
@@ -336,6 +345,133 @@ fn open_standing(
 struct Carried(ic_plugin_api::IcFsHandle);
 unsafe impl Send for Carried {}
 
+struct CarriedStream(ic_plugin_api::IcFsStream);
+unsafe impl Send for CarriedStream {}
+
+struct StreamArm {
+    stream: ic_plugin_api::IcFsStream,
+    busy: Arc<Mutex<()>>,
+    off_thread: bool,
+}
+
+impl StreamArm {
+    async fn run<T: Send + 'static>(
+        &self,
+        work: impl FnOnce(ic_plugin_api::IcFsStream) -> T + Send + 'static,
+    ) -> Result<T, common::AppError> {
+        let carried = CarriedStream(self.stream);
+        let runtime = match (self.off_thread, tokio::runtime::Handle::try_current()) {
+            (true, Ok(runtime)) => runtime,
+            _ => {
+                let _inside = self.busy.lock();
+                return Ok(work(carried.0));
+            }
+        };
+        let busy = self.busy.clone();
+        runtime
+            .spawn_blocking(move || {
+                let carried = carried;
+                let _inside = busy.lock();
+                work(carried.0)
+            })
+            .await
+            .map_err(|e| common::AppError::Other(e.to_string()))
+    }
+}
+
+struct PluginRead {
+    arm: StreamArm,
+    read: ic_plugin_api::IcFsStreamReadFn,
+    close: ic_plugin_api::IcFsStreamCloseFn,
+    spent: bool,
+}
+
+impl Drop for PluginRead {
+    fn drop(&mut self) {
+        if !self.spent {
+            (self.close)(self.arm.stream);
+        }
+    }
+}
+
+#[async_trait::async_trait(?Send)]
+impl crate::rpc::ReadStream for PluginRead {
+    async fn fill(&mut self, into: &mut [u8]) -> Result<usize, common::AppError> {
+        let read = self.read;
+        let room = into.len();
+        let (n, filled) = self
+            .arm
+            .run(move |stream| {
+                let mut held = vec![0u8; room];
+                let n = read(stream, held.as_mut_ptr(), room as u64);
+                (n, held)
+            })
+            .await?;
+        if n < 0 {
+            return Err(common::AppError::Other(
+                "the filesystem stopped part way through the file".to_string(),
+            ));
+        }
+        let got = (n as usize).min(room);
+        into[..got].copy_from_slice(&filled[..got]);
+        if got == 0 && !self.spent {
+            self.spent = true;
+            let close = self.close;
+            let _ = self.arm.run(move |stream| close(stream)).await;
+        }
+        Ok(got)
+    }
+}
+
+struct PluginWrite {
+    arm: StreamArm,
+    write: ic_plugin_api::IcFsStreamWriteFn,
+    close: ic_plugin_api::IcFsStreamCloseFn,
+    spent: bool,
+}
+
+impl Drop for PluginWrite {
+    fn drop(&mut self) {
+        if !self.spent {
+            (self.close)(self.arm.stream);
+        }
+    }
+}
+
+#[async_trait::async_trait(?Send)]
+impl crate::rpc::WriteStream for PluginWrite {
+    async fn put(&mut self, bytes: &[u8]) -> Result<(), common::AppError> {
+        let write = self.write;
+        let mut sent = 0usize;
+        while sent < bytes.len() {
+            let piece = bytes[sent..].to_vec();
+            let took = self
+                .arm
+                .run(move |stream| write(stream, piece.as_ptr(), piece.len() as u64))
+                .await?;
+            if took <= 0 {
+                return Err(common::AppError::Other(
+                    "the filesystem took none of what was written".to_string(),
+                ));
+            }
+            sent += (took as usize).min(bytes.len() - sent);
+        }
+        Ok(())
+    }
+
+    async fn finish(mut self: Box<Self>) -> Result<(), common::AppError> {
+        self.spent = true;
+        let close = self.close;
+        let flushed = self.arm.run(move |stream| close(stream)).await?;
+        if flushed != ic_plugin_api::IC_OK {
+            return Err(common::AppError::Other(
+                "the filesystem would not finish the file".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// How a mount shows itself at the top of a path: the name the user gave the
 /// connection, and the picture its kind brought. Absent for a mount nobody
 /// named, which is then drawn the way any folder is.
@@ -510,6 +646,132 @@ impl PluginFsRpc {
         }
     }
 
+    async fn read_streaming(
+        &self,
+        path: String,
+        progress_callback: Option<Box<dyn Fn(u64) + 'static>>,
+    ) -> Result<Vec<u8>, common::AppError> {
+        const WINDOW: usize = 256 * 1024;
+
+        let wanted = CString::new(path).map_err(|e| common::AppError::Other(e.to_string()))?;
+        let open = self.plugin.stream_open_fn().expect("checked by the caller");
+        let read = self.plugin.stream_read_fn().expect("checked by the caller");
+        let close = self
+            .plugin
+            .stream_close_fn()
+            .expect("checked by the caller");
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Result<Vec<u8>, ()>>();
+        let reading = self.call(move |handle| {
+            let stream = open(handle, wanted.as_ptr(), ic_plugin_api::IC_OPEN_READ);
+            if stream.is_null() {
+                let _ = tx.send(Err(()));
+                return;
+            }
+            let mut arrived = vec![0u8; WINDOW];
+            loop {
+                let got = read(stream, arrived.as_mut_ptr(), WINDOW as u64);
+                if got < 0 {
+                    let _ = tx.send(Err(()));
+                    break;
+                }
+                if got == 0 {
+                    break;
+                }
+                let got = (got as usize).min(WINDOW);
+                if tx.send(Ok(arrived[..got].to_vec())).is_err() {
+                    break;
+                }
+            }
+            close(stream);
+        });
+
+        let mut whole: Vec<u8> = Vec::new();
+        let mut failed = false;
+        let collecting = async {
+            while let Some(arrived) = rx.recv().await {
+                match arrived {
+                    Ok(arrived) => {
+                        whole.extend_from_slice(&arrived);
+                        if let Some(cb) = progress_callback.as_ref() {
+                            cb(whole.len() as u64);
+                        }
+                    }
+                    Err(()) => failed = true,
+                }
+            }
+        };
+
+        let (reading, ()) = tokio::join!(reading, collecting);
+        reading?;
+        if failed {
+            return Err(self.error_of(self.handle.get()));
+        }
+        Ok(whole)
+    }
+
+    async fn write_streaming(
+        &self,
+        path: String,
+        content: Vec<u8>,
+        permissions: Option<u32>,
+        progress_callback: Option<Box<dyn Fn(u64) + 'static>>,
+    ) -> Result<(), common::AppError> {
+        const WINDOW: usize = 256 * 1024;
+
+        let wanted = CString::new(path).map_err(|e| common::AppError::Other(e.to_string()))?;
+        let open = self.plugin.stream_open_fn().expect("checked by the caller");
+        let write = self
+            .plugin
+            .stream_write_fn()
+            .expect("checked by the caller");
+        let close = self
+            .plugin
+            .stream_close_fn()
+            .expect("checked by the caller");
+        let chmod = permissions.zip(self.plugin.set_permissions_fn());
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<u64>();
+        let writing = self.call(move |handle| {
+            let stream = open(handle, wanted.as_ptr(), ic_plugin_api::IC_OPEN_WRITE);
+            if stream.is_null() {
+                return false;
+            }
+            let mut sent = 0usize;
+            let mut ok = true;
+            while sent < content.len() {
+                let end = (sent + WINDOW).min(content.len());
+                let took = write(stream, content[sent..end].as_ptr(), (end - sent) as u64);
+                if took <= 0 {
+                    ok = false;
+                    break;
+                }
+                sent += (took as usize).min(end - sent);
+                let _ = tx.send(sent as u64);
+            }
+            let flushed = close(stream) == ic_plugin_api::IC_OK;
+            let wrote = ok && flushed;
+            if let (true, Some((mode, chmod))) = (wrote, chmod) {
+                let _ = chmod(handle, wanted.as_ptr(), mode & 0o7777);
+            }
+            wrote
+        });
+
+        let reporting = async {
+            while let Some(sent) = rx.recv().await {
+                if let Some(cb) = progress_callback.as_ref() {
+                    cb(sent);
+                }
+            }
+        };
+
+        let (writing, ()) = tokio::join!(writing, reporting);
+        if !writing? {
+            return Err(self.error_of(self.handle.get()));
+        }
+        self.put_back().await
+    }
+
     async fn call<T>(
         &self,
         work: impl FnOnce(ic_plugin_api::IcFsHandle) -> T + Send + 'static,
@@ -663,10 +925,17 @@ impl PluginFsRpc {
             .await
     }
 
-    fn last_error(&self) -> ic_plugin_api::IcFsErrorFn {
-        self.plugin
+    fn error_of(&self, handle: ic_plugin_api::IcFsHandle) -> common::AppError {
+        let ptr = (self
+            .plugin
             .last_error_fn()
-            .expect("checked at registration")
+            .expect("checked at registration"))(handle);
+        let text = if ptr.is_null() {
+            "the plugin reported no reason".to_string()
+        } else {
+            cstr(ptr)
+        };
+        common::AppError::Other(text)
     }
 }
 
@@ -778,62 +1047,59 @@ impl crate::rpc::FileSystemRpc for PluginFsRpc {
         path: String,
     ) -> Result<Vec<crate::rpc::RemoteFileEntry>, common::AppError> {
         let wanted = CString::new(path).map_err(|e| common::AppError::Other(e.to_string()))?;
-        let last = self.last_error();
         if let Some(rows) = self.plugin.rows_fn() {
             let columns = self.plugin.columns_fn();
-            let (specs, entries, why) = self
+            let listed = self
                 .call(move |handle| {
                     let specs = columns.map(|ask| specs_of(ask(handle))).unwrap_or_default();
                     let declared = specs.len();
-                    let got = rows(handle, wanted.as_ptr());
-                    let empty = got.as_slice().is_empty();
-                    let entries = got
-                        .as_slice()
-                        .iter()
-                        .map(|row| crate::rpc::RemoteFileEntry {
-                            name: row.entry.name_string(),
-                            is_dir: row.entry.is_directory(),
-                            size: row.entry.size,
-                            modified: row.entry.modified,
-                            permissions: row.entry.permissions_opt(),
-                            extra: (0..declared).map(|at| row.extra_at(at)).collect(),
-                        })
-                        .filter(|e| !e.name.is_empty())
-                        .collect::<Vec<_>>();
-                    (specs, entries, taken(last, handle).filter(|_| empty))
+                    let listing = rows(handle, wanted.as_ptr());
+                    (listing.is_sound() && !listing.items.is_null()).then(|| {
+                        let entries = listing
+                            .as_slice()
+                            .iter()
+                            .map(|row| crate::rpc::RemoteFileEntry {
+                                name: row.entry.name_string(),
+                                is_dir: row.entry.is_directory(),
+                                size: row.entry.size,
+                                modified: row.entry.modified,
+                                permissions: row.entry.permissions_opt(),
+                                extra: (0..declared).map(|at| row.extra_at(at)).collect(),
+                            })
+                            .filter(|e| !e.name.is_empty())
+                            .collect::<Vec<_>>();
+                        (specs, entries)
+                    })
                 })
                 .await?;
-            if let Some(why) = why {
-                return Err(common::AppError::Other(why));
-            }
+            let Some((specs, entries)) = listed else {
+                return Err(self.error_of(self.handle.get()));
+            };
             *self.columns.borrow_mut() = specs;
             return Ok(entries);
         }
         let list = self.plugin.list_fn().expect("checked at registration");
-        let (entries, why) = self
+        let listed = self
             .call(move |handle| {
-                let got = list(handle, wanted.as_ptr());
-                let empty = got.as_slice().is_empty();
-                let entries = got
-                    .as_slice()
-                    .iter()
-                    .map(|e| crate::rpc::RemoteFileEntry {
-                        name: e.name_string(),
-                        is_dir: e.is_directory(),
-                        size: e.size,
-                        modified: e.modified,
-                        permissions: e.permissions_opt(),
-                        extra: Vec::new(),
-                    })
-                    .filter(|e| !e.name.is_empty())
-                    .collect::<Vec<_>>();
-                (entries, taken(last, handle).filter(|_| empty))
+                let listing = list(handle, wanted.as_ptr());
+                (!listing.items.is_null()).then(|| {
+                    listing
+                        .as_slice()
+                        .iter()
+                        .map(|e| crate::rpc::RemoteFileEntry {
+                            name: e.name_string(),
+                            is_dir: e.is_directory(),
+                            size: e.size,
+                            modified: e.modified,
+                            permissions: e.permissions_opt(),
+                            extra: Vec::new(),
+                        })
+                        .filter(|e| !e.name.is_empty())
+                        .collect::<Vec<_>>()
+                })
             })
             .await?;
-        match why {
-            Some(why) => Err(common::AppError::Other(why)),
-            None => Ok(entries),
-        }
+        listed.ok_or_else(|| self.error_of(self.handle.get()))
     }
 
     async fn read_file(
@@ -841,18 +1107,19 @@ impl crate::rpc::FileSystemRpc for PluginFsRpc {
         path: String,
         progress_callback: Option<Box<dyn Fn(u64) + 'static>>,
     ) -> Result<Vec<u8>, common::AppError> {
+        if self.plugin.can_be_watched() {
+            return self.read_streaming(path, progress_callback).await;
+        }
         let wanted = CString::new(path).map_err(|e| common::AppError::Other(e.to_string()))?;
         let read = self.plugin.read_fn().expect("checked at registration");
-        let last = self.last_error();
-        let (owned, why) = self
+        let owned = self
             .call(move |handle| {
                 let bytes = read(handle, wanted.as_ptr());
-                let owned = (!bytes.data.is_null()).then(|| bytes.as_slice().to_vec());
-                (owned, taken(last, handle))
+                (!bytes.data.is_null()).then(|| bytes.as_slice().to_vec())
             })
             .await?;
         let Some(owned) = owned else {
-            return Err(settled(false, why).unwrap_err());
+            return Err(self.error_of(self.handle.get()));
         };
         if let Some(cb) = progress_callback {
             cb(owned.len() as u64);
@@ -872,18 +1139,19 @@ impl crate::rpc::FileSystemRpc for PluginFsRpc {
         let wanted = CString::new(Self::joined(&parent_path, &dir_name))
             .map_err(|e| common::AppError::Other(e.to_string()))?;
         let chmod = permissions.zip(self.plugin.set_permissions_fn());
-        let last = self.last_error();
-        let (done, why) = self
+        let done = self
             .call(move |handle| {
                 let made = create(handle, wanted.as_ptr()) == ic_plugin_api::IC_OK;
                 if let (true, Some((mode, chmod))) = (made, chmod) {
                     // Best effort, as the old SFTP setstat after mkdir was.
                     let _ = chmod(handle, wanted.as_ptr(), mode & 0o7777);
                 }
-                (made, taken(last, handle))
+                made
             })
             .await?;
-        settled(done, why)?;
+        if !done {
+            return Err(self.error_of(self.handle.get()));
+        }
         self.put_back().await
     }
 
@@ -895,16 +1163,16 @@ impl crate::rpc::FileSystemRpc for PluginFsRpc {
             .into_iter()
             .map(|path| CString::new(path).map_err(|e| common::AppError::Other(e.to_string())))
             .collect::<Result<_, _>>()?;
-        let last = self.last_error();
-        let (done, why) = self
+        let done = self
             .call(move |handle| {
-                let gone = wanted
+                wanted
                     .iter()
-                    .all(|path| remove(handle, path.as_ptr()) == ic_plugin_api::IC_OK);
-                (gone, taken(last, handle))
+                    .all(|path| remove(handle, path.as_ptr()) == ic_plugin_api::IC_OK)
             })
             .await?;
-        settled(done, why)?;
+        if !done {
+            return Err(self.error_of(self.handle.get()));
+        }
         self.put_back().await
     }
 
@@ -914,14 +1182,12 @@ impl crate::rpc::FileSystemRpc for PluginFsRpc {
         };
         let from = CString::new(path).map_err(|e| common::AppError::Other(e.to_string()))?;
         let to = CString::new(new).map_err(|e| common::AppError::Other(e.to_string()))?;
-        let last = self.last_error();
-        let (done, why) = self
-            .call(move |handle| {
-                let moved = rename(handle, from.as_ptr(), to.as_ptr()) == ic_plugin_api::IC_OK;
-                (moved, taken(last, handle))
-            })
+        let done = self
+            .call(move |handle| rename(handle, from.as_ptr(), to.as_ptr()) == ic_plugin_api::IC_OK)
             .await?;
-        settled(done, why)?;
+        if !done {
+            return Err(self.error_of(self.handle.get()));
+        }
         self.put_back().await
     }
 
@@ -932,14 +1198,21 @@ impl crate::rpc::FileSystemRpc for PluginFsRpc {
         permissions: Option<u32>,
         progress_callback: Option<Box<dyn Fn(u64) + 'static>>,
     ) -> Result<(), common::AppError> {
+        if self.plugin.stream_open_fn().is_some()
+            && self.plugin.stream_write_fn().is_some()
+            && self.plugin.stream_close_fn().is_some()
+        {
+            return self
+                .write_streaming(path, content, permissions, progress_callback)
+                .await;
+        }
         let Some(write) = self.plugin.write_fn() else {
             return Err(Self::read_only_error());
         };
         let wanted = CString::new(path).map_err(|e| common::AppError::Other(e.to_string()))?;
         let written = content.len() as u64;
         let chmod = permissions.zip(self.plugin.set_permissions_fn());
-        let last = self.last_error();
-        let (done, why) = self
+        let done = self
             .call(move |handle| {
                 let wrote = write(handle, wanted.as_ptr(), content.as_ptr(), written)
                     == ic_plugin_api::IC_OK;
@@ -947,10 +1220,12 @@ impl crate::rpc::FileSystemRpc for PluginFsRpc {
                     // Best effort, as the old SFTP setstat after a write was.
                     let _ = chmod(handle, wanted.as_ptr(), mode & 0o7777);
                 }
-                (wrote, taken(last, handle))
+                wrote
             })
             .await?;
-        settled(done, why)?;
+        if !done {
+            return Err(self.error_of(self.handle.get()));
+        }
         self.put_back().await?;
         if let Some(report) = progress_callback {
             report(written);
@@ -973,15 +1248,14 @@ impl crate::rpc::FileSystemRpc for PluginFsRpc {
             ));
         };
         let wanted = CString::new(path).map_err(|e| common::AppError::Other(e.to_string()))?;
-        let last = self.last_error();
-        let (done, why) = self
+        let done = self
             .call(move |handle| {
-                let set =
-                    chmod(handle, wanted.as_ptr(), permissions & 0o7777) == ic_plugin_api::IC_OK;
-                (set, taken(last, handle))
+                chmod(handle, wanted.as_ptr(), permissions & 0o7777) == ic_plugin_api::IC_OK
             })
             .await?;
-        settled(done, why)?;
+        if !done {
+            return Err(self.error_of(self.handle.get()));
+        }
         self.put_back().await
     }
 
@@ -1038,6 +1312,96 @@ impl crate::rpc::FileSystemRpc for PluginFsRpc {
                 Some(limit) => crate::rpc::ContentWait::Bounded(limit),
             },
         }
+    }
+
+    async fn copy_within(&self, from: String, to: String) -> bool {
+        let Some(copy) = self.plugin.copy_within_fn() else {
+            return false;
+        };
+        let (Ok(from), Ok(to)) = (CString::new(from), CString::new(to)) else {
+            return false;
+        };
+        self.call(move |handle| copy(handle, from.as_ptr(), to.as_ptr()) == ic_plugin_api::IC_OK)
+            .await
+            .unwrap_or(false)
+    }
+
+    async fn on_disk(&self, path: String) -> Option<String> {
+        let where_is = self.plugin.on_disk_fn()?;
+        let wanted = CString::new(path).ok()?;
+        self.call(move |handle| {
+            let found = where_is(handle, wanted.as_ptr());
+            (!found.is_null()).then(|| cstr(found))
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+
+    async fn open_read(&self, path: String) -> Option<Box<dyn crate::rpc::ReadStream>> {
+        let open = self.plugin.stream_open_fn()?;
+        let read = self.plugin.stream_read_fn()?;
+        let close = self.plugin.stream_close_fn()?;
+        let wanted = CString::new(path).ok()?;
+        let stream = self
+            .call(move |handle| {
+                CarriedStream(open(handle, wanted.as_ptr(), ic_plugin_api::IC_OPEN_READ))
+            })
+            .await
+            .ok()?
+            .0;
+        if stream.is_null() {
+            return None;
+        }
+        Some(Box::new(PluginRead {
+            arm: StreamArm {
+                stream,
+                busy: self.busy.clone(),
+                off_thread: self.reaches_outside(),
+            },
+            read,
+            close,
+            spent: false,
+        }))
+    }
+
+    async fn open_write(
+        &self,
+        path: String,
+        permissions: Option<u32>,
+    ) -> Option<Box<dyn crate::rpc::WriteStream>> {
+        let open = self.plugin.stream_open_fn()?;
+        let write = self.plugin.stream_write_fn()?;
+        let close = self.plugin.stream_close_fn()?;
+        let wanted = CString::new(path).ok()?;
+        let chmod = permissions.zip(self.plugin.set_permissions_fn());
+        let opening = wanted.clone();
+        let stream = self
+            .call(move |handle| {
+                let stream = open(handle, opening.as_ptr(), ic_plugin_api::IC_OPEN_WRITE);
+                if !stream.is_null() {
+                    if let Some((mode, chmod)) = chmod {
+                        let _ = chmod(handle, opening.as_ptr(), mode & 0o7777);
+                    }
+                }
+                CarriedStream(stream)
+            })
+            .await
+            .ok()?
+            .0;
+        if stream.is_null() {
+            return None;
+        }
+        Some(Box::new(PluginWrite {
+            arm: StreamArm {
+                stream,
+                busy: self.busy.clone(),
+                off_thread: self.reaches_outside(),
+            },
+            write,
+            close,
+            spent: false,
+        }))
     }
 
     fn is_local(&self) -> bool {
@@ -1364,7 +1728,7 @@ mod tests {
     ) -> ic_plugin_api::IcListing {
         *where_list_ran().lock().unwrap() = Some(std::thread::current().id());
         ic_plugin_api::IcListing {
-            items: std::ptr::null(),
+            items: std::ptr::NonNull::<ic_plugin_api::IcDirEntry>::dangling().as_ptr(),
             count: 0,
         }
     }
@@ -1533,7 +1897,10 @@ mod tests {
     }
     extern "C" fn close(_: ic_plugin_api::IcFsHandle) {}
     extern "C" fn list(_: ic_plugin_api::IcFsHandle, _: *const c_char) -> ic_plugin_api::IcListing {
-        ic_plugin_api::IcListing::EMPTY
+        ic_plugin_api::IcListing {
+            items: std::ptr::NonNull::<ic_plugin_api::IcDirEntry>::dangling().as_ptr(),
+            count: 0,
+        }
     }
     extern "C" fn read(_: ic_plugin_api::IcFsHandle, _: *const c_char) -> ic_plugin_api::IcBytes {
         ic_plugin_api::IcBytes::EMPTY
@@ -1543,6 +1910,17 @@ mod tests {
     }
     extern "C" fn last_error(_: ic_plugin_api::IcFsHandle) -> *const c_char {
         std::ptr::null()
+    }
+
+    extern "C" fn list_refusing(
+        _: ic_plugin_api::IcFsHandle,
+        _: *const c_char,
+    ) -> ic_plugin_api::IcListing {
+        ic_plugin_api::IcListing::EMPTY
+    }
+
+    extern "C" fn blames_the_server(_: ic_plugin_api::IcFsHandle) -> *const c_char {
+        c"the server hung up".as_ptr()
     }
 
     fn table() -> ic_plugin_api::IcFsVTable {
@@ -1569,8 +1947,278 @@ mod tests {
             action_state: None,
             cell_clicked: None,
             set_permissions: None,
+            stream_open: None,
+            stream_read: None,
+            stream_write: None,
+            stream_close: None,
+            copy_within: None,
+            on_disk: None,
         }
     }
+
+    mod streaming {
+        use super::*;
+
+        pub const WHOLE: usize = 300 * 1024;
+
+        pub struct Open {
+            pub read: usize,
+            pub written: Vec<u8>,
+        }
+
+        pub extern "C" fn open(
+            _handle: ic_plugin_api::IcFsHandle,
+            _path: *const c_char,
+            _mode: u32,
+        ) -> ic_plugin_api::IcFsStream {
+            Box::into_raw(Box::new(Open {
+                read: 0,
+                written: Vec::new(),
+            })) as ic_plugin_api::IcFsStream
+        }
+
+        pub extern "C" fn read(stream: ic_plugin_api::IcFsStream, into: *mut u8, len: u64) -> i64 {
+            let open = unsafe { &mut *(stream as *mut Open) };
+            let left = WHOLE - open.read;
+            if left == 0 {
+                return 0;
+            }
+            let giving = left.min(len as usize).min(64 * 1024);
+            unsafe { std::ptr::write_bytes(into, b'x', giving) };
+            open.read += giving;
+            giving as i64
+        }
+
+        pub extern "C" fn write(
+            stream: ic_plugin_api::IcFsStream,
+            from: *const u8,
+            len: u64,
+        ) -> i64 {
+            let open = unsafe { &mut *(stream as *mut Open) };
+            let taking = (len as usize).min(64 * 1024);
+            open.written
+                .extend_from_slice(unsafe { std::slice::from_raw_parts(from, taking) });
+            taking as i64
+        }
+
+        pub extern "C" fn close(stream: ic_plugin_api::IcFsStream) -> c_int {
+            let open = unsafe { Box::from_raw(stream as *mut Open) };
+            WROTE.with(|wrote| wrote.set(open.written.len()));
+            ic_plugin_api::IC_OK
+        }
+
+        thread_local! {
+            pub static WROTE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+        }
+
+        pub fn table() -> ic_plugin_api::IcFsVTable {
+            let mut table = super::table();
+            table.write = Some(super::write_whole);
+            table.stream_open = Some(open);
+            table.stream_read = Some(read);
+            table.stream_write = Some(write);
+            table.stream_close = Some(close);
+            table
+        }
+    }
+
+    extern "C" fn write_whole(
+        _handle: ic_plugin_api::IcFsHandle,
+        _path: *const c_char,
+        _bytes: *const u8,
+        _len: u64,
+    ) -> c_int {
+        ic_plugin_api::IC_OK
+    }
+
+    fn mount_that_streams(ext: &str) -> (PluginFsRpc, RegistryLease) {
+        let lease = lease_registry_for_test();
+        let table = streaming::table();
+        let exts = CString::new(format!(".{ext}")).unwrap();
+        assert_eq!(
+            register(exts.as_ptr(), &table, std::ptr::null_mut()),
+            ic_plugin_api::IC_OK
+        );
+        let plugin = filesystem_for(&format!("x.{ext}")).expect("registered");
+        (
+            PluginFsRpc::for_connection(plugin, open_connection, ext.to_string(), "{}".to_string()),
+            lease,
+        )
+    }
+
+    #[tokio::test]
+    async fn a_mount_that_streams_reports_its_progress_as_the_bytes_arrive() {
+        let (fs, _lease) = mount_that_streams("blocks");
+        let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::<u64>::new()));
+        let seen_c = seen.clone();
+
+        let body = crate::rpc::FileSystemRpc::read_file(
+            &fs,
+            "big.bin".to_string(),
+            Some(Box::new(move |bytes| seen_c.borrow_mut().push(bytes))),
+        )
+        .await
+        .expect("the stub reads");
+
+        assert_eq!(body.len(), streaming::WHOLE, "all of it arrives");
+        let seen = seen.borrow();
+        assert!(
+            seen.len() > 2,
+            "a file of several blocks is reported several times, got {seen:?}"
+        );
+        for pair in seen.windows(2) {
+            assert!(pair[1] > pair[0], "the count only grows: {seen:?}");
+        }
+        assert_eq!(
+            seen.last().copied(),
+            Some(streaming::WHOLE as u64),
+            "and it ends at the whole file"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_mount_that_streams_reports_its_progress_as_it_writes() {
+        let (fs, _lease) = mount_that_streams("blockw");
+        streaming::WROTE.with(|wrote| wrote.set(0));
+        let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::<u64>::new()));
+        let seen_c = seen.clone();
+
+        crate::rpc::FileSystemRpc::write_file(
+            &fs,
+            "big.bin".to_string(),
+            vec![b'x'; streaming::WHOLE],
+            None,
+            Some(Box::new(move |bytes| seen_c.borrow_mut().push(bytes))),
+        )
+        .await
+        .expect("the stub writes");
+
+        let seen = seen.borrow();
+        assert!(seen.len() > 2, "reported as it goes, got {seen:?}");
+        for pair in seen.windows(2) {
+            assert!(pair[1] > pair[0], "the count only grows: {seen:?}");
+        }
+        assert_eq!(seen.last().copied(), Some(streaming::WHOLE as u64));
+    }
+
+    #[tokio::test]
+    async fn a_mount_can_say_where_its_file_really_is() {
+        static mut WHERE: Option<CString> = None;
+
+        extern "C" fn where_is(
+            _handle: ic_plugin_api::IcFsHandle,
+            _path: *const c_char,
+        ) -> *const c_char {
+            unsafe {
+                let held = &*std::ptr::addr_of!(WHERE);
+                held.as_ref()
+                    .map(|t| t.as_ptr())
+                    .unwrap_or(std::ptr::null())
+            }
+        }
+
+        let real = std::env::temp_dir().join("ic-on-disk-probe.bin");
+        std::fs::write(&real, b"already here").unwrap();
+        unsafe {
+            WHERE = Some(CString::new(real.to_string_lossy().to_string()).unwrap());
+        }
+
+        let lease = lease_registry_for_test();
+        let mut table = table();
+        table.on_disk = Some(where_is);
+        let exts = CString::new(".ondisk").unwrap();
+        assert_eq!(
+            register(exts.as_ptr(), &table, std::ptr::null_mut()),
+            ic_plugin_api::IC_OK
+        );
+        let plugin = filesystem_for("x.ondisk").expect("registered");
+        let fs = PluginFsRpc::for_connection(
+            plugin,
+            open_connection,
+            "ondisk".to_string(),
+            "{}".to_string(),
+        );
+        let _lease = lease;
+
+        assert_eq!(
+            crate::rpc::FileSystemRpc::on_disk(&fs, "downloaded.bin".to_string()).await,
+            Some(real.to_string_lossy().to_string()),
+            "the mount names the file's real place"
+        );
+        let _ = std::fs::remove_file(&real);
+    }
+
+    #[tokio::test]
+    async fn a_mount_without_a_real_place_says_so() {
+        let lease = lease_registry_for_test();
+        let table = table();
+        let exts = CString::new(".nodisk").unwrap();
+        assert_eq!(
+            register(exts.as_ptr(), &table, std::ptr::null_mut()),
+            ic_plugin_api::IC_OK
+        );
+        let plugin = filesystem_for("x.nodisk").expect("registered");
+        let fs = PluginFsRpc::for_connection(
+            plugin,
+            open_connection,
+            "nodisk".to_string(),
+            "{}".to_string(),
+        );
+        let _lease = lease;
+
+        assert_eq!(
+            crate::rpc::FileSystemRpc::on_disk(&fs, "anything".to_string()).await,
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn a_mount_that_cannot_be_watched_is_still_read_whole() {
+        static BODY: &[u8] = b"all of it at once";
+        extern "C" fn read_whole(
+            _: ic_plugin_api::IcFsHandle,
+            _: *const c_char,
+        ) -> ic_plugin_api::IcBytes {
+            ic_plugin_api::IcBytes {
+                data: BODY.as_ptr(),
+                len: BODY.len() as u64,
+            }
+        }
+
+        let lease = lease_registry_for_test();
+        let mut table = table();
+        table.read = read_whole;
+        let exts = CString::new(".whole").unwrap();
+        assert_eq!(
+            register(exts.as_ptr(), &table, std::ptr::null_mut()),
+            ic_plugin_api::IC_OK
+        );
+        let plugin = filesystem_for("x.whole").expect("registered");
+        let fs = PluginFsRpc::for_connection(
+            plugin,
+            open_connection,
+            "whole".to_string(),
+            "{}".to_string(),
+        );
+        let _lease = lease;
+
+        let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::<u64>::new()));
+        let seen_c = seen.clone();
+        let body = crate::rpc::FileSystemRpc::read_file(
+            &fs,
+            "small.txt".to_string(),
+            Some(Box::new(move |bytes| seen_c.borrow_mut().push(bytes))),
+        )
+        .await
+        .expect("the stub reads");
+
+        assert_eq!(
+            *seen.borrow(),
+            vec![body.len() as u64],
+            "one report, at the end, as before"
+        );
+    }
+
     struct SlowParent {
         opened: std::rc::Rc<std::cell::Cell<usize>>,
     }
@@ -2432,6 +3080,53 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn a_listing_the_plugin_refused_carries_its_reason() {
+        let _lease = lease_registry_for_test();
+        let mut vtable = table();
+        vtable.list = list_refusing;
+        vtable.last_error = blames_the_server;
+        let exts = CString::new(".sulky").unwrap();
+        assert_eq!(
+            register(exts.as_ptr(), &vtable, std::ptr::null_mut()),
+            ic_plugin_api::IC_OK
+        );
+        let (parent, _) = holding(&["x.sulky"]);
+        let fs = PluginFsRpc::new(
+            filesystem_for("x.sulky").expect("registered"),
+            "x.sulky".to_string(),
+            parent,
+        );
+        let refused = crate::rpc::FileSystemRpc::list_dir(&fs, String::new()).await;
+        assert_eq!(
+            refused.unwrap_err().to_string(),
+            "the server hung up",
+            "the reason must reach the panel instead of an empty folder"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_empty_folder_is_not_a_refusal() {
+        let _lease = lease_registry_for_test();
+        let mut vtable = table();
+        vtable.last_error = blames_the_server;
+        let exts = CString::new(".airy").unwrap();
+        assert_eq!(
+            register(exts.as_ptr(), &vtable, std::ptr::null_mut()),
+            ic_plugin_api::IC_OK
+        );
+        let (parent, _) = holding(&["x.airy"]);
+        let fs = PluginFsRpc::new(
+            filesystem_for("x.airy").expect("registered"),
+            "x.airy".to_string(),
+            parent,
+        );
+        assert!(crate::rpc::FileSystemRpc::list_dir(&fs, String::new())
+            .await
+            .expect("an empty folder reads without failing")
+            .is_empty());
+    }
+
     #[test]
     fn a_folder_named_like_an_archive_is_still_a_folder() {
         let _lease = lease_registry_for_test();
@@ -2933,181 +3628,5 @@ mod tests {
             crate::rpc::ContentWait::Bounded(std::time::Duration::from_secs(7)),
             "a remote parent's timeout must reach the nested level"
         );
-    }
-
-    thread_local! {
-        static TAKE_ROWS: RefCell<Vec<&'static str>> = const { RefCell::new(Vec::new()) };
-        static TAKE_FAILS: RefCell<Option<&'static str>> = const { RefCell::new(None) };
-        static TAKE_PENDING: RefCell<Option<String>> = const { RefCell::new(None) };
-        static TAKE_SAID: RefCell<Option<CString>> = const { RefCell::new(None) };
-        static TAKE_ASKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-        static TAKE_BLANK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-        static TAKE_NAMES: RefCell<Vec<CString>> = const { RefCell::new(Vec::new()) };
-        static TAKE_ENTRIES: RefCell<Vec<ic_plugin_api::IcDirEntry>> = const { RefCell::new(Vec::new()) };
-    }
-
-    fn take_fails_with(why: &'static str) {
-        TAKE_PENDING.with(|p| *p.borrow_mut() = Some(why.to_string()));
-    }
-
-    extern "C" fn take_list(_: ic_plugin_api::IcFsHandle, _: *const c_char) -> ic_plugin_api::IcListing {
-        if let Some(why) = TAKE_FAILS.with(|f| *f.borrow()) {
-            take_fails_with(why);
-            return ic_plugin_api::IcListing::EMPTY;
-        }
-        let rows = TAKE_ROWS.with(|r| r.borrow().clone());
-        TAKE_NAMES.with(|names| {
-            *names.borrow_mut() = rows.iter().map(|n| CString::new(*n).unwrap()).collect();
-        });
-        TAKE_ENTRIES.with(|entries| {
-            *entries.borrow_mut() = TAKE_NAMES.with(|names| {
-                names
-                    .borrow()
-                    .iter()
-                    .map(|n| ic_plugin_api::IcDirEntry {
-                        name: n.as_ptr(),
-                        is_dir: 0,
-                        size: 1,
-                        modified: 0,
-                        permissions: 0,
-                        has_permissions: 0,
-                    })
-                    .collect()
-            });
-            let held = entries.borrow();
-            ic_plugin_api::IcListing {
-                items: if held.is_empty() { std::ptr::null() } else { held.as_ptr() },
-                count: held.len() as u32,
-            }
-        })
-    }
-
-    extern "C" fn take_last_error(_: ic_plugin_api::IcFsHandle) -> *const c_char {
-        TAKE_ASKED.with(|a| a.set(a.get() + 1));
-        let handed = TAKE_PENDING.with(|p| p.borrow_mut().take());
-        TAKE_SAID.with(|said| {
-            *said.borrow_mut() = match handed {
-                Some(text) => Some(CString::new(text).unwrap()),
-                None if TAKE_BLANK.with(|b| b.get()) => Some(CString::default()),
-                None => None,
-            };
-            said.borrow().as_ref().map(|t| t.as_ptr()).unwrap_or(std::ptr::null())
-        })
-    }
-
-    extern "C" fn take_create_dir(_: ic_plugin_api::IcFsHandle, _: *const c_char) -> c_int {
-        ic_plugin_api::IC_OK
-    }
-
-    extern "C" fn take_chmod_refuses(
-        _: ic_plugin_api::IcFsHandle,
-        _: *const c_char,
-        _: u32,
-    ) -> c_int {
-        take_fails_with("chmod is not allowed here");
-        -1
-    }
-
-    fn take_filesystem(extension: &str) -> PluginFsRpc {
-        TAKE_ROWS.with(|r| r.borrow_mut().clear());
-        TAKE_FAILS.with(|f| *f.borrow_mut() = None);
-        TAKE_PENDING.with(|p| *p.borrow_mut() = None);
-        TAKE_ASKED.with(|a| a.set(0));
-        TAKE_BLANK.with(|b| b.set(false));
-        let vtable = ic_plugin_api::IcFsVTable {
-            open_in: stub_open_in,
-            is_read_only: writable,
-            list: take_list,
-            last_error: take_last_error,
-            create_dir: Some(take_create_dir),
-            set_permissions: Some(take_chmod_refuses),
-            ..table()
-        };
-        let exts = CString::new(extension).unwrap();
-        assert_eq!(
-            register(exts.as_ptr(), &vtable, std::ptr::null_mut()),
-            ic_plugin_api::IC_OK
-        );
-        let plugin = filesystem_for(&format!("x{extension}")).expect("registered");
-        let parent: std::rc::Rc<dyn crate::rpc::FileSystemRpc> = std::rc::Rc::new(SlowParent {
-            opened: std::rc::Rc::new(std::cell::Cell::new(0)),
-        });
-        PluginFsRpc::new(plugin, format!("x{extension}"), parent)
-    }
-
-    fn listed(fs: &PluginFsRpc) -> Result<Vec<String>, String> {
-        use crate::rpc::FileSystemRpc;
-        futures::executor::block_on(fs.list_dir("/".to_string()))
-            .map(|rows| rows.into_iter().map(|r| r.name).collect())
-            .map_err(|e| e.to_string())
-    }
-
-    #[test]
-    fn a_folder_that_could_not_be_listed_is_an_error_and_not_an_empty_folder() {
-        let _lease = lease_registry_for_test();
-        let fs = take_filesystem(".take1");
-        TAKE_FAILS.with(|f| *f.borrow_mut() = Some("SFTP ReadDir: permission denied"));
-        let got = listed(&fs).unwrap_err();
-        assert!(got.contains("SFTP ReadDir: permission denied"), "got {got}");
-    }
-
-    #[test]
-    fn an_empty_folder_with_no_reason_is_simply_empty() {
-        let _lease = lease_registry_for_test();
-        let fs = take_filesystem(".take2");
-        assert_eq!(listed(&fs), Ok(Vec::new()));
-    }
-
-    #[test]
-    fn a_failure_is_reported_once_and_the_empty_folder_after_it_is_clean() {
-        let _lease = lease_registry_for_test();
-        let fs = take_filesystem(".take3");
-        TAKE_FAILS.with(|f| *f.borrow_mut() = Some("TCP Connect: Connection refused"));
-        assert!(listed(&fs).is_err());
-        TAKE_FAILS.with(|f| *f.borrow_mut() = None);
-        assert_eq!(listed(&fs), Ok(Vec::new()), "the old failure came back on an empty folder");
-    }
-
-    #[test]
-    fn an_empty_string_from_last_error_means_there_is_no_error() {
-        let _lease = lease_registry_for_test();
-        let fs = take_filesystem(".take4");
-        TAKE_BLANK.with(|b| b.set(true));
-        assert_eq!(listed(&fs), Ok(Vec::new()));
-    }
-
-    #[test]
-    fn a_listing_with_entries_is_never_an_error_and_its_stray_reason_is_drained() {
-        let _lease = lease_registry_for_test();
-        let fs = take_filesystem(".take5");
-        TAKE_ROWS.with(|r| *r.borrow_mut() = vec!["a.txt", "b.txt"]);
-        take_fails_with("a warning nobody asked for");
-        assert_eq!(listed(&fs), Ok(vec!["a.txt".to_string(), "b.txt".to_string()]));
-        TAKE_ROWS.with(|r| r.borrow_mut().clear());
-        assert_eq!(listed(&fs), Ok(Vec::new()), "the stray reason surfaced on the next folder");
-    }
-
-    #[test]
-    fn a_best_effort_chmod_that_fails_does_not_surface_on_the_next_listing() {
-        use crate::rpc::FileSystemRpc;
-        let _lease = lease_registry_for_test();
-        let fs = take_filesystem(".take6");
-        futures::executor::block_on(fs.create_directory(
-            "/".to_string(),
-            "made".to_string(),
-            Some(0o600),
-        ))
-        .expect("the folder was made even though chmod after it failed");
-        assert_eq!(listed(&fs), Ok(Vec::new()), "the ignored chmod failure leaked into a listing");
-    }
-
-    #[test]
-    fn the_host_asks_for_the_reason_once_per_call() {
-        let _lease = lease_registry_for_test();
-        let fs = take_filesystem(".take7");
-        let before = TAKE_ASKED.with(|a| a.get());
-        let _ = listed(&fs);
-        let _ = listed(&fs);
-        assert_eq!(TAKE_ASKED.with(|a| a.get()) - before, 2);
     }
 }
