@@ -19,6 +19,7 @@ mod drivestoolbar;
 mod editor;
 mod external;
 mod favorites;
+mod feedback;
 mod file_operations;
 mod help;
 mod hotkey;
