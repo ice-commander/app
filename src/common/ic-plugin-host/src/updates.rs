@@ -57,17 +57,20 @@ pub struct Fetch {
     pub file: Offered,
 }
 
-/// The system as the releases name it, after `uname -m`: `macos-arm64`, `linux-x86_64`, `windows-x86_64`.
+/// The system as the releases name it, after `uname -m`: `macos-arm64`, `linux-x86_64`, `windows-x86_64`,
+/// `android-arm64` (the ABI arm64-v8a).
 pub fn platform() -> String {
     let os = if cfg!(target_os = "macos") {
         "macos"
     } else if cfg!(target_os = "windows") {
         "windows"
+    } else if cfg!(target_os = "android") {
+        "android"
     } else {
         "linux"
     };
     let arch = match std::env::consts::ARCH {
-        "aarch64" if cfg!(target_os = "macos") => "arm64",
+        "aarch64" if cfg!(any(target_os = "macos", target_os = "android")) => "arm64",
         other => other,
     };
     format!("{os}-{arch}")
@@ -535,7 +538,8 @@ mod tests {
                 "macos-x86_64",
                 "linux-x86_64",
                 "linux-aarch64",
-                "windows-x86_64"
+                "windows-x86_64",
+                "android-arm64"
             ]
             .contains(&named.as_str()),
             "{named}"
