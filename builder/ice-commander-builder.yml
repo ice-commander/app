@@ -30,11 +30,11 @@ services:
     volumes:
       - ../:/home/builder/workdir
       - ../../plugin-api:/home/builder/plugin-api:ro
-  apt:
+  apk:
     image: debian13-builder
     working_dir: /home/builder
     user: builder
-    entrypoint: ["/home/builder/workdir/builder/android.sh"]
+    entrypoint: ["bash", "/home/builder/workdir/builder/android.sh"]
     stdin_open: true
     tty: true
     volumes:

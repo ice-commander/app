@@ -24,25 +24,13 @@ echo "=== Building web UI (web-app) ==="
 find src/web-app/node_modules -path '*/.bin/*' -type l -exec chmod +x {} +
 npm run build-web-app
 
+# Only the GTK application: the console and the webserver builds are not part of a release.
 ./builder/osx.sh
 docker compose -f ./builder/ice-commander-builder.yml run --rm exe
-docker compose -f ./builder/ice-commander-builder.yml run --rm exe-webserver
-docker compose -f ./builder/ice-commander-builder.yml run --rm exe-console
-# Each distro builds the GTK app first, then the webserver and the console — both reuse the
-# shared CARGO_TARGET_DIR, so only the GTK-free crates relink.
 docker compose -f ./builder/ice-commander-builder.yml run --rm zst
-docker compose -f ./builder/ice-commander-builder.yml run --rm zst-webserver
-docker compose -f ./builder/ice-commander-builder.yml run --rm zst-console
 docker compose -f ./builder/ice-commander-builder.yml run --rm deb
-docker compose -f ./builder/ice-commander-builder.yml run --rm deb-webserver
-docker compose -f ./builder/ice-commander-builder.yml run --rm deb-console
 docker compose -f ./builder/ice-commander-builder.yml run --rm rpm
-docker compose -f ./builder/ice-commander-builder.yml run --rm rpm-webserver
-docker compose -f ./builder/ice-commander-builder.yml run --rm rpm-console
-
-# On the host, not in a builder image: the NDK and the Android GTK stack live outside them.
-# A machine without either says so and the rest of the build still finishes.
-./builder/android.sh
+docker compose -f ./builder/ice-commander-builder.yml run --rm apk
 
 echo ""
 echo "=== BUILD COMPLETED ==="

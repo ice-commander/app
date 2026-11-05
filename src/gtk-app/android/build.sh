@@ -34,7 +34,7 @@ case "$CMD" in
 		cargo ndk --platform 31 -t "$ABI" --link-libcxx-shared rustc -p ice-commander-gtk --lib --crate-type cdylib --profile "$PROFILE"
 		OUT="$APP/bin/android-gtk-jniLibs/$ABI"
 		mkdir -p "$OUT"
-		cp "$APP/bin/target/$TRIPLE/$PROFILE/libice_commander_gtk.so" "$OUT/"
+		cp "${CARGO_TARGET_DIR:-$APP/bin/target}/$TRIPLE/$PROFILE/libice_commander_gtk.so" "$OUT/"
 		cp "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/$TRIPLE/libc++_shared.so" "$OUT/"
 		check_build_paths "$OUT/libice_commander_gtk.so"
 		;;
