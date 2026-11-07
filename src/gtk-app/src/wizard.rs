@@ -256,8 +256,10 @@ pub fn show_setup_wizard(
                 downloads.after(move || {
                     config.set("ui.setup_wizard_done", true);
                     config.save();
-                    let lang_changed =
-                        config.get::<String>("ui.language").unwrap_or_default() != original_lang;
+                    let lang_changed = config
+                        .get::<String>("ui.language")
+                        .unwrap_or_else(|| "en".to_string())
+                        != original_lang;
                     wizard.close();
                     // Plugins are read once at start-up, so a choice made here only
                     // takes effect on the next one.
@@ -734,9 +736,7 @@ fn build_page_panels(
         &*crate::i18n::tr("settings.open_target_left"),
         &*crate::i18n::tr("settings.open_target_right"),
     ]);
-    let current_target = config
-        .get::<String>("ui.open_connection_target")
-        .unwrap_or_else(|| "active".to_string());
+    let current_target = crate::settings::page_interface::open_connection_target(config);
     target_dd.set_selected(match current_target.as_str() {
         "opposite" => 1,
         "left" => 2,
@@ -776,13 +776,15 @@ fn build_page_panels(
             }),
         );
     }
-    setting_row(
-        &list,
-        retrans,
-        || crate::i18n::tr("settings.open_target_title").to_string(),
-        || crate::i18n::tr("settings.open_target_desc").to_string(),
-        &target_dd,
-    );
+    if !crate::mobile() {
+        setting_row(
+            &list,
+            retrans,
+            || crate::i18n::tr("settings.open_target_title").to_string(),
+            || crate::i18n::tr("settings.open_target_desc").to_string(),
+            &target_dd,
+        );
+    }
 
     let fav_dd = DropDown::from_strings(&[
         &*crate::i18n::tr("settings.drives_option_all"),

@@ -1,11 +1,11 @@
 # fakejbig
 
-A ten-function stand-in for **libjbig**, so the Windows bundle carries no GPL code.
+A ten-function stand-in for **libjbig**, so the Windows bundle carries no GPL code from it.
 
 ## Why
 
-Ice Commander is MIT OR Apache-2.0, but the Windows installer would otherwise be distributed
-under GPL-2.0-or-later because of a library nobody asked for. The DLL identifies itself:
+Ice Commander is MIT OR Apache-2.0, but the Windows installer would otherwise carry
+GPL-2.0-or-later code from a library nobody asked for. The DLL identifies itself:
 
 ```
 JBIG-KIT 2.1 -- (c) 1995-2014 Markus Kuhn -- Licence: GPL
@@ -17,15 +17,14 @@ It arrives at the end of a chain of **hard, load-time imports**:
 libgtk-4-1 / libgdk_pixbuf-2.0-0  ->  libtiff-6  ->  libjbig-0
 ```
 
-The MSYS2 build of gdk-pixbuf compiles TIFF support in rather than shipping it as a loadable
-module, so `libtiff-6.dll` is a load-time dependency, and libtiff imports ten symbols from
+The MSYS2 build of gdk-pixbuf compiles TIFF support in (and ships the TIFF loader module as
+well), so `libtiff-6.dll` is a load-time dependency, and libtiff imports ten symbols from
 `libjbig-0.dll`. Neither can be dropped from the bundle — the application would not start.
 
-**We do not use TIFF.** There is no mention of it anywhere in this codebase. The viewer
-([`src/viewer-ui/src/content.rs`](../viewer-ui/src/content.rs)) and the file manager
-([`src/fm-ui/src/view_factories.rs`](../fm-ui/src/view_factories.rs)) hand bytes to
-gdk-pixbuf and let it sniff the format; the ability to display TIFF is a side effect of
-using GTK.
+**TIFF opens; JBIG inside it is what nothing uses.** The viewer
+([`src/ui-common/viewer-ui/src/content.rs`](../../ui-common/viewer-ui/src/content.rs))
+recognises a TIFF by its signature and hands it to gdk-pixbuf like any other image, so a TIFF
+reaches libtiff, and libtiff reaches this library for one compression only.
 
 JBIG is a compression scheme for bi-level (1-bit) images, meant for faxes and scanned
 documents. libtiff calls into it only when a TIFF's Compression tag is JBIG (34661) — one of
@@ -56,8 +55,8 @@ decoder entry points report `JBG_EINVAL`, the encoder emits nothing, and `jbg_st
 returns a static explanatory string. libtiff owns the state structs by value and this code
 never writes to them.
 
-It contains no JBIG-KIT code. The algorithm was not reimplemented and no JBIG-KIT source was
-consulted; only the function signatures are shared, and signatures are not copyrightable.
+It contains no JBIG-KIT code: the algorithm was not reimplemented. Only the function
+signatures and one error code are shared, taken from the public `jbig.h` interface.
 
 ## Trade-off
 
@@ -72,26 +71,25 @@ Both are MSYS2 package rebuilds of `artifacts/gtk4-win32-x64/`.
 
 ## Building
 
-**Windows** — called by `builder/build.sh exe` before NSIS runs:
+**Windows** — `builder/wine-msys-gtk.sh` builds it with the other stand-ins, before NSIS runs:
 
 ```sh
-./src/fakejbig/build-windows.sh          # writes bin/distr/fakejbig/libjbig-0.dll
+./src/gplstubs/build-windows.sh          # writes bin/distr/gplstubs/libjbig-0.dll and the rest
 ```
 
 Nothing is overwritten in place. `src/gtk-app/setup.nsi` excludes `libjbig-0.dll` from the
 recursive `File /r` over `artifacts/gtk4-win32-x64` and packs ours instead, so the GPL
-library never enters the installer archive. The real DLL is also absent from `artifacts/` in
-this repository; the exclusion stays as a guard for anyone who repopulates that directory
-from MSYS2.
+library never enters the installer archive. `artifacts/` is not in the repository, and the
+MSYS2 tree it holds does contain the real DLL: the exclusion is what keeps it out.
 
 **macOS** — nothing here, and deliberately so. Homebrew's libtiff is not built against
-jbigkit, so `dylibbundler` has nothing to collect. That has not been verified on a Mac, so
-`builder/build.sh dmg` **fails the build** if a libjbig ever turns up in the bundle rather
-than signing it quietly.
+jbigkit, so `dylibbundler` has nothing to collect; the 0.8.144 DMG has no libjbig. If one ever
+turns up, `builder/osx.sh` replaces it with `build-macos.sh` and refuses to sign if the real
+library survives.
 
 **Linux** — nothing to do. The `deb`, `rpm` and `zst` packages take the imaging stack from
 the distribution and bundle no libraries at all.
 
 ## License
 
-MIT, like the rest of the project.
+MIT.

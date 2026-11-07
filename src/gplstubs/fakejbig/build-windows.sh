@@ -3,24 +3,24 @@ set -e
 
 # Builds fakejbig as libjbig-0.dll for the Windows bundle.
 #
-# Usage: ./src/fakejbig/build-windows.sh [output-dir]      (default: bin/distr/fakejbig)
+# Usage: ./src/gplstubs/fakejbig/build-windows.sh [output-dir]      (default: bin/distr/gplstubs)
 #
 # Nothing is overwritten in place: src/gtk-app/setup.nsi excludes libjbig-0.dll from the
 # recursive File directive over artifacts/gtk4-win32-x64 and picks ours up instead. That way
 # the GPL library is never packed into the installer at all — excluding it matters, because
 # shipping it inside the archive would be distribution regardless of which copy wins on disk.
 #
-# Run anywhere a mingw-w64 cross compiler is available; builder/build.sh exe calls it.
+# Run anywhere a mingw-w64 cross compiler is available; src/gplstubs/build-windows.sh calls it.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-OUT_DIR="${1:-$(cd "$SCRIPT_DIR/../.." && pwd)/bin/distr/fakejbig}"
+OUT_DIR="${1:-$(cd "$SCRIPT_DIR/../../.." && pwd)/bin/distr/gplstubs}"
 OUT="$OUT_DIR/libjbig-0.dll"
 
 CC=""
 for candidate in x86_64-w64-mingw32-gcc x86_64-w64-mingw32-gcc-posix gcc; do
     if command -v "$candidate" >/dev/null 2>&1; then
         # Plain `gcc` only qualifies if it actually targets mingw (i.e. inside MSYS2).
-        if [ "$candidate" = "gcc" ] && ! gcc -dumpmachine 2>/dev/null | grep -q mingw; then
+        if [ "$candidate" = "gcc" ] && ! gcc -dumpmachine 2>/dev/null | grep -q "^x86_64-.*mingw"; then
             continue
         fi
         CC="$candidate"
@@ -35,7 +35,10 @@ fi
 
 mkdir -p "$OUT_DIR"
 
-"$CC" -shared -O2 -o "$OUT" "$SCRIPT_DIR/fakejbig.c" -Wl,--out-implib,"$OUT_DIR/libjbig.dll.a"
+# -nostdlib leaves out the C runtime and GCC's start-up code, so the DLL holds this file and
+# ../dllmain.c alone and imports nothing; -s drops the symbol table.
+"$CC" -shared -O2 -s -nostdlib -Wl,--entry,DllMain -o "$OUT" "$SCRIPT_DIR/fakejbig.c" \
+    "$SCRIPT_DIR/../dllmain.c" -Wl,--out-implib,"$OUT_DIR/libjbig.dll.a"
 
 # Verify the exports rather than trusting the compiler. libtiff imports all ten by name, and
 # a DLL missing any of them would make the installed application fail to start — a failure

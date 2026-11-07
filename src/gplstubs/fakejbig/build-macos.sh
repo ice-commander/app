@@ -3,7 +3,7 @@ set -e
 
 # Builds fakejbig and installs it OVER the libjbig that dylibbundler copied into the .app.
 #
-# Usage: ./src/fakejbig/build-macos.sh <path-to-bundled-libjbig.2.1.dylib>
+# Usage: ./src/gplstubs/fakejbig/build-macos.sh <path-to-bundled-libjbig.2.1.dylib>
 #
 # Keeps the original's install_name and version fields: libtiff records both in its load
 # commands, and dyld refuses a library whose compatibility version is lower than what the

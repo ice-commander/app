@@ -36,10 +36,13 @@ Unless you state otherwise, any contribution you submit is licensed under the
 same terms as the project — **MIT OR Apache-2.0**, at the user's option. See
 [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE).
 
-Note on binaries: the release bundles carry no GPL code. `liblzo2`
-(GPL-2.0-or-later), which GTK drags in through the cairo script interpreter, is
-replaced in both desktop bundles by our own MIT stub (`src/fakelzo/`); the Linux
-build uses neither. See [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md).
+Note on binaries: no GPL-only code ships in the release bundles. Three libraries
+GTK drags in would bring it — `liblzo2`, `libjbig` and `libidn2`, whose build links
+GPL code into the library — and our own MIT stand-ins in `src/gplstubs/` replace
+them; the Linux packages bundle none of them. The GPL code that remains carries an
+exception that lets it ship on other terms: the GCC runtime in the Windows installer
+(GCC Runtime Library Exception) and Bison-generated parsers in GStreamer and
+gettext's libintl (Bison exception). See [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md).
 
 The name "Ice Commander" and the project logo are not covered by the code
 license.

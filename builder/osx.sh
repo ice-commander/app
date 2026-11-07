@@ -48,25 +48,35 @@ dylibbundler -s /Library/Developer/CommandLineTools/usr/lib/swift-5.0/macosx \
              -p @executable_path/../Libs/
 
 # Replace liblzo2 (GPL-2.0-or-later) with fakelzo, our own two-symbol stand-in — see
-# src/fakelzo/README.md for the reasoning and the measurement behind it. dylibbundler has just
-# copied the real one in, because libcairo-script-interpreter links it; this overwrites it
-# before signing, so the shipped bundle carries no GPL code.
+# src/gplstubs/fakelzo/README.md for the reasoning and the measurement behind it. dylibbundler
+# has just copied the real one in, because libcairo-script-interpreter links it; this overwrites
+# it before signing, so the shipped bundle carries no GPL code from it.
 echo "=== Replacing liblzo2 with fakelzo ==="
 replaced=0
 for lzo in "$APP_BUNDLE/Contents/Libs/"liblzo2*.dylib; do
     [ -e "$lzo" ] || continue
-    ./src/fakelzo/build-macos.sh "$lzo"
+    # Through bash: a script committed from a checkout with core.fileMode off has no exec bit.
+    bash ./src/gplstubs/fakelzo/build-macos.sh "$lzo"
     replaced=$((replaced + 1))
 done
 # cairo-script-interpreter always links it, so finding none means the dependency changed.
 [ "$replaced" -gt 0 ] || { echo "no liblzo2 in the bundle — check what changed before shipping" >&2; exit 1; }
 
-# libjbig (GPL-2.0-or-later) arrives the same way, through libtiff — see src/fakejbig/README.md.
+# libjbig (GPL-2.0-or-later) arrives the same way, through libtiff — see
+# src/gplstubs/fakejbig/README.md.
 echo "=== Replacing libjbig with fakejbig ==="
 # Homebrew's libtiff is not built against jbigkit, so finding none here is expected.
 for jbig in "$APP_BUNDLE/Contents/Libs/"libjbig*.dylib; do
     [ -e "$jbig" ] || continue
-    ./src/fakejbig/build-macos.sh "$jbig"
+    bash ./src/gplstubs/fakejbig/build-macos.sh "$jbig"
+done
+
+# libidn2 would bring gnulib's GPL progname through curl — see src/gplstubs/fakeidn2/README.md.
+echo "=== Replacing libidn2 with fakeidn2 ==="
+# AppStream links macOS's own curl, so finding none here is expected.
+for idn2 in "$APP_BUNDLE/Contents/Libs/"libidn2*.dylib; do
+    [ -e "$idn2" ] || continue
+    bash ./src/gplstubs/fakeidn2/build-macos.sh "$idn2"
 done
 
 # The stand-ins are verified rather than assumed: the lookups above match by name, and a
@@ -79,6 +89,8 @@ while IFS= read -r lib; do
                   ours="_lzo2a_decompress _lzo2a_999_compress" ;;
         libjbig*) real="_jbg_dec_getwidth _jbg_split_planes _jbg85_dec_init"
                   ours="_jbg_dec_init _jbg_newlen" ;;
+        libidn2*) real="_idn2_register_u8 _idn2_strerror _idn2_to_ascii_8z"
+                  ours="_idn2_lookup_ul _idn2_check_version" ;;
         *)        continue ;;
     esac
     syms=$(nm -gU "$lib") || { echo "cannot read symbols from $lib" >&2; exit 1; }

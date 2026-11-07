@@ -74,6 +74,7 @@ export const sendViewerEvent = (
 ): Promise<ViewerAnswer> => backend.sendViewerEvent(instance, event)
 export const viewerPartUrl = (instance: number, name: string, drawn?: number): string =>
   backend.viewerPartUrl(instance, name, drawn)
+export const assetUrl = (name: string): string => backend.assetUrl(name)
 export const closeViewer = (instance: number, force?: boolean): Promise<ViewerClosed> =>
   backend.closeViewer(instance, force)
 export const fetchTranslations = (): Promise<{ lang: string; keys: Record<string, string> }> =>
@@ -83,6 +84,9 @@ export const fetchTranslations = (): Promise<{ lang: string; keys: Record<string
 export const toggleFavorite = (key: string): Promise<void> => backend.toggleFavorite(key)
 export const getFavoritesOnly = (): Promise<boolean> => backend.getFavoritesOnly()
 export const setFavoritesOnly = (value: boolean): Promise<void> => backend.setFavoritesOnly(value)
+
+// ── settings ──────────────────────────────────────────────────────────────────
+export const fetchSettings = (): Promise<Record<string, unknown>> => backend.fetchSettings()
 
 // ── files ─────────────────────────────────────────────────────────────────────
 export const readFile = (side: Side, path: string): Promise<FileContent> => backend.readFile(side, path)

@@ -3,9 +3,9 @@
  *
  * WHY THIS EXISTS
  * ---------------
- * The bundle's only GPL component was libjbig (JBIG-KIT 2.1, by Markus Kuhn; the DLL says
- * "Licence: GPL" in its own strings). Nothing in Ice Commander asks for it. It arrives at the
- * end of a chain of hard, load-time imports:
+ * libjbig is JBIG-KIT 2.1, by Markus Kuhn, under the GPL; the DLL says "Licence: GPL" in its
+ * own strings. Nothing in Ice Commander asks for it. It arrives at the end of a chain of hard,
+ * load-time imports:
  *
  *     libgtk-4 / libgdk_pixbuf -> libtiff -> libjbig
  *
@@ -15,9 +15,9 @@
  *
  * libtiff calls these ten only for TIFF files whose Compression tag is JBIG (34661). That is
  * one of its fifteen codecs, and effectively nothing produces it: bi-level scans and faxes
- * use CCITT G3/G4, everything else uses LZW, Deflate, PackBits or JPEG. Our own code never
- * asks for TIFF at all — the viewer and the file manager hand bytes to gdk-pixbuf and let it
- * sniff the format.
+ * use CCITT G3/G4, everything else uses LZW, Deflate, PackBits or JPEG. Our own code asks for
+ * no codec: the viewer recognises a TIFF by its signature and hands it to gdk-pixbuf like any
+ * other image.
  *
  * MEASURED, NOT ASSUMED
  * ---------------------
@@ -38,8 +38,8 @@
  * The built file keeps the name libjbig-0.dll because libtiff records that name in its import
  * table; assets/licenses/BUNDLED-COMPONENTS.txt says what it actually is.
  *
- * No JBIG-KIT code was used or consulted. Only the function signatures are shared, taken from
- * the public jbig.h interface; signatures are not copyrightable.
+ * No JBIG-KIT code is used. Only the function signatures and one error code are shared, taken
+ * from the public jbig.h interface.
  */
 #include <stddef.h>
 

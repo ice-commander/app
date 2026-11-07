@@ -22,6 +22,8 @@ export function Terminal({ side, expanded, onToggleExpand, onClose }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
   const refitRef = useRef<(() => void) | null>(null)
+  const closeRef = useRef(onClose)
+  useEffect(() => { closeRef.current = onClose }, [onClose])
 
   useEffect(() => {
     const host = hostRef.current
@@ -36,10 +38,10 @@ export function Terminal({ side, expanded, onToggleExpand, onClose }: Props) {
       if (disposed || !host) return
 
       const t = new XTerm({
-        fontFamily: 'var(--font-mono, monospace)',
+        // xterm measures the cell on a canvas, and a canvas font cannot be a CSS variable.
+        fontFamily: getComputedStyle(host).getPropertyValue('--font-mono').trim() || 'monospace',
         fontSize: 15,
         fontWeight: 500,
-        lineHeight: 1.2,
         cursorBlink: true,
         theme: { background: '#0e0f11', foreground: '#e6e6e6', cursor: '#e6e6e6' },
       })
@@ -64,6 +66,15 @@ export function Terminal({ side, expanded, onToggleExpand, onClose }: Props) {
       // is built into xterm; these add the keyboard shortcuts. Clipboard access needs
       // a secure context (localhost counts; plain-http LAN does not — then it no-ops).
       t.attachCustomKeyEventHandler((e) => {
+        // F9 never reaches the shell, as in GTK: it is the only key that leaves the terminal.
+        if (e.key === 'F9') {
+          if (e.type === 'keydown') {
+            e.preventDefault()
+            e.stopPropagation()
+            if (!e.repeat) closeRef.current()
+          }
+          return false
+        }
         if (e.type !== 'keydown' || !e.ctrlKey || !e.shiftKey) return true
         if (e.code === 'KeyC') {
           const sel = t.getSelection()

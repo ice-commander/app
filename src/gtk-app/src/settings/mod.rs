@@ -12,7 +12,7 @@ mod page_applications;
 mod page_connections;
 mod page_editors;
 mod page_hotkeys;
-mod page_interface;
+pub mod page_interface;
 mod page_logging;
 mod page_plugins;
 mod page_security;

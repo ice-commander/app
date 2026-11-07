@@ -17,10 +17,14 @@ they are not covered by the generated section — this list is maintained by han
 
 | Library | License | Where | Linking |
 | --- | --- | --- | --- |
-| GTK 4, libadwaita, GLib, Pango, Cairo, gdk-pixbuf, librsvg | LGPL-2.1-or-later | all platforms | dynamic |
+| GTK 4, libadwaita, GLib, Pango, Cairo, gdk-pixbuf | LGPL-2.1-or-later | all platforms | dynamic |
+| librsvg | LGPL-2.1-or-later | Windows | dynamic |
 | fakelzo (our stand-in for lzo2) | MIT | Windows, macOS | dynamic |
-| fakejbig (our stand-in for libjbig) | MIT | Windows, macOS | dynamic |
-| FreeType | FTL (used under FTL, not the GPL-2.0 alternative) | Windows, macOS | dynamic |
+| fakejbig (our stand-in for libjbig) | MIT | Windows | dynamic |
+| fakeidn2 (our stand-in for libidn2) | MIT | Windows | dynamic |
+| libunistring | LGPL-3.0-or-later | Windows | dynamic |
+| GCC runtime (libgcc_s, libstdc++) | GPL-3.0-or-later WITH GCC-exception-3.1 | Windows | dynamic; parts static in the exe |
+| FreeType | FTL (used under FTL, not the GPL-2.0 alternative) | Windows, macOS, Android | dynamic |
 | libssh2 | BSD-3-Clause | Windows bundle, arriving with curl in the MSYS2 GTK tree | dynamic |
 | OpenSSL 3.x | Apache-2.0 | Windows bundle, same tree | dynamic |
 
@@ -42,37 +46,55 @@ library from a separate repository — what it links is listed there, not here.
 
 **LGPL components** are linked dynamically and shipped as separate shared
 libraries, so they may be replaced by the user. Their license texts are
-included in the release packages.
+included in the release packages. The exception is GTK's Java glue on Android, which is
+compiled into the APK; the application's source is open, see `BUNDLED-COMPONENTS.txt`.
 
 **Sound is the application's own.** Audio plays through the `rodio` crate, listed with the
 rest of the Rust dependencies below. Nothing here uses the toolkit's media stack.
 
-**No GPL code ships in any bundle.** Two GPL libraries used to arrive, neither of them asked
-for. The first is `liblzo2` (GPL-2.0-or-later): GTK links it through the cairo script
-interpreter (`libgtk-4 → libcairo-script-interpreter → liblzo2`), a debugging facility
-nothing here drives.
+**No GPL-only code ships.** Three libraries GTK drags in would bring it, none of them asked
+for, and each is replaced by a stand-in from [`src/gplstubs/`](src/gplstubs/). The first is
+`liblzo2` (GPL-2.0-or-later): GTK links it through the cairo script interpreter
+(`libgtk-4 → libcairo-script-interpreter → liblzo2`), a debugging facility nothing here drives.
 
-It is replaced on both desktop platforms by [`src/fakelzo/`](src/fakelzo/), our own
-MIT-licensed stand-in exporting the only two symbols the interpreter imports
+It is replaced on both desktop platforms by [`src/gplstubs/fakelzo/`](src/gplstubs/fakelzo/),
+our own MIT-licensed stand-in exporting the only two symbols the interpreter imports
 (`lzo2a_decompress`, `lzo2a_999_compress`), which report failure instead of compressing.
-No LZO code was used or consulted; only the two function signatures are shared.
+No LZO code is used; only the two function signatures and one error code are shared.
 
 `libjbig` (GPL-2.0-or-later) arrives the same way, at the end of
-`libgtk-4 / libgdk_pixbuf → libtiff → libjbig`: the MSYS2 and Homebrew builds of gdk-pixbuf
-compile TIFF support in, and libtiff imports JBIG unconditionally, for a fax encoding no
-image in this application uses. It is replaced by [`src/fakejbig/`](src/fakejbig/), which
-exports exactly the ten `jbg_*` symbols libtiff asks for and reports failure instead of
-decoding. The count is not a guess: `nm -D --undefined-only libtiff.so` lists those ten and
-nothing else.
+`libgtk-4 / libgdk_pixbuf → libtiff → libjbig` in the Windows bundle: MSYS2's gdk-pixbuf
+compiles TIFF support in, and MSYS2's libtiff imports JBIG unconditionally, for a fax
+compression that almost nothing produces. It is replaced by
+[`src/gplstubs/fakejbig/`](src/gplstubs/fakejbig/), which exports exactly the ten `jbg_*`
+symbols libtiff asks for and reports failure instead of decoding. The count is not a guess:
+`objdump -p libtiff-6.dll` lists exactly these ten imports from `libjbig-0.dll`.
 
-That the code path is unreachable was **measured, not assumed**: a build with an
-instrumented stand-in logged zero calls across a full session — both panels, image and PDF
-preview, video playback, the editor, settings and the terminal. On macOS the replacement
-happens in `builder/osx.sh` before signing; on Windows `src/gtk-app/setup.nsi` excludes the
-real DLLs from the installer archive entirely rather than overwriting them after install.
+`libidn2` is LGPL-3.0-or-later OR GPL-2.0-or-later, but its build links the gnulib it makes
+for its command-line program into the library too, and with it gnulib's progname module,
+GPL-3.0-or-later. It arrives at the end of `libadwaita → libappstream → libcurl → libidn2`
+(and `libcurl → libpsl → libidn2`) in the Windows bundle, and is replaced there by
+[`src/gplstubs/fakeidn2/`](src/gplstubs/fakeidn2/), which exports the five `idn2_*` symbols
+curl and libpsl import, accepts no version and converts nothing.
 
-The cost is that cairo-script serialisation does not work in these builds. Nothing the
-application offers uses it.
+That ordinary use does not reach these code paths was **measured, not assumed**, and each
+stand-in's README says how. For liblzo2, a build with an instrumented stand-in logged zero
+calls across a full session — both panels, image and PDF preview, video playback, the editor,
+settings and the terminal. On macOS the replacement happens in `builder/osx.sh` before
+signing; on Windows `src/gtk-app/setup.nsi` excludes the real DLLs from the installer archive
+entirely rather than overwriting them after install.
+
+The cost: cairo-script serialisation and curl's internationalised domain names, which nothing
+here uses, do not work in these builds, and a JBIG-compressed TIFF does not open.
+
+**The GPL code that does ship carries an exception that lets it ship on other terms.** The
+Windows bundle carries the GCC runtime — `libgcc_s_seh-1.dll` and `libstdc++-6.dll`, with
+parts linked into `ice-commander.exe` as in any program GCC links — under the GCC Runtime
+Library Exception, which lets programs compiled with GCC be distributed on their own terms.
+It cannot be swapped out: GTK, cairo, HarfBuzz and others call into it. GStreamer's pipeline
+parser and gettext's plural-form parser in libintl are Bison output, under the Bison
+exception, which lets each library carry them under its own licence; libintl brings one to
+macOS as well. The GPL and GCC exception texts are in [`assets/licenses/`](assets/licenses/).
 
 Per-component versions and the location of the corresponding source
 for everything shipped in a bundle are listed in

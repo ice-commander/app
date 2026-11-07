@@ -1,7 +1,7 @@
 {
 	"name": "ice-commander",
 	"description": "Ice Commander - Dual-Pane File Manager",
-	"version": "0.8.144",
+	"version": "0.8.145",
 	"private": true,
 	"license": "MIT",
 	"author": "Igor Savchenko",
@@ -13,6 +13,7 @@
 		"run-webui": "cargo run -p ice-commander-gtk --release -- --headless --webui --port 7878 | cat",
 		"run-webui-lan": "cargo run -p ice-commander-gtk --release -- --headless --webui --port 7878 --host 0.0.0.0 | cat",
 		"build-web-app": "cd src/web-app && npm run build",
+		"build-widget": "cd src/web-app && npm run build-widget",
 		"fetch-gtk-stack": "./src/gtk-app/android/fetch-gtk-stack.sh gtk-stack.lock",
 		"build-android": "./src/gtk-app/android/build.sh release && cd ./src/gtk-app/android && ANDROID_HOME=\"${ANDROID_HOME:-/opt/android-sdk}\" JAVA_HOME=\"${JAVA_HOME:-/opt/android-studio/jbr}\" ./gradlew :app:assembleRelease",
 		"run-android": "./src/gtk-app/android/build.sh release && cd ./src/gtk-app/android && ANDROID_HOME=\"${ANDROID_HOME:-/opt/android-sdk}\" JAVA_HOME=\"${JAVA_HOME:-/opt/android-studio/jbr}\" ./gradlew :app:installRelease && \"${ANDROID_HOME:-/opt/android-sdk}/platform-tools/adb\" shell am start -n com.icecommander.gtkapp/org.gtk.android.ToplevelActivity",

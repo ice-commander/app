@@ -160,6 +160,9 @@ export class HttpBackend implements Backend {
   viewerPartUrl(instance: number, name: string, drawn = 0): string {
     return `/api/viewer/${instance}/part/${encodeURIComponent(name)}?drawn=${drawn}`
   }
+  assetUrl(name: string): string {
+    return `/api/plugin-assets/${name.split('/').map(encodeURIComponent).join('/')}`
+  }
   closeViewer(instance: number, force = false): Promise<ViewerClosed> {
     return this.post(`/api/viewer/${instance}/close`, { force }) as Promise<ViewerClosed>
   }
@@ -177,6 +180,11 @@ export class HttpBackend implements Backend {
   }
   async setFavoritesOnly(value: boolean): Promise<void> {
     await this.post('/api/favorites/only', { value })
+  }
+
+  // ── settings ────────────────────────────────────────────────────────────────
+  fetchSettings(): Promise<Record<string, unknown>> {
+    return this.json('/api/settings')
   }
 
   // ── files ───────────────────────────────────────────────────────────────────

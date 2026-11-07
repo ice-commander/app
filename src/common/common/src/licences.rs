@@ -42,6 +42,18 @@ pub const OTHERS: &[Document] = &[
         text: include_str!("../../../../assets/licenses/LGPL-2.1.txt"),
     },
     Document {
+        title: "LGPL 3.0",
+        text: include_str!("../../../../assets/licenses/LGPL-3.0.txt"),
+    },
+    Document {
+        title: "GPL 3.0",
+        text: include_str!("../../../../assets/licenses/GPL-3.0.txt"),
+    },
+    Document {
+        title: "GCC Runtime Library Exception",
+        text: include_str!("../../../../assets/licenses/GCC-exception-3.1.txt"),
+    },
+    Document {
         title: "FreeType (FTL)",
         text: include_str!("../../../../assets/licenses/FreeType-FTL.txt"),
     },

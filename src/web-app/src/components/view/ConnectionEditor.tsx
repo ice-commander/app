@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { tr, trOptional } from '../../lib/i18n'
+import { useEscape } from '../../lib/keyScope'
 import * as api from '../../api/client'
 import type { Connection, Side } from '../../api/types'
 import type {
   Action,
   ConnectionKinds,
   Document,
+  Field,
   Intent,
   Json,
   Node,
@@ -36,10 +38,11 @@ interface Props {
   inline?: boolean
 }
 
-/** The one bind a record keeps under another name, as the host reads it natively. */
-function fromRecord(record: Record<string, Json> | undefined, bind: string): Json | undefined {
+/** A record-scope bind (the name, the folder) sits on the record itself, every other one in its settings. */
+function fromRecord(record: Record<string, Json> | undefined, field: Field): Json | undefined {
+  if (field.scope === 'record') return record?.[field.bind]
   const settings = record?.settings as Record<string, Json> | undefined
-  return settings?.[bind]
+  return settings?.[field.bind]
 }
 
 /** Every bind arrives as text, the way the host seeds a form from a record. */
@@ -48,7 +51,7 @@ function seeded(document: Document, from?: SavedConnection) {
   const record = from as unknown as Record<string, Json> | undefined
   for (const field of document.fields ?? []) {
     if (field.secret === true) continue
-    const text = asText(fromRecord(record, field.bind))
+    const text = asText(fromRecord(record, field))
     if (text !== '') values[field.bind] = text
   }
   return values
@@ -65,7 +68,7 @@ function storedSecrets(document: Document, from?: SavedConnection) {
   const binds: string[] = []
   for (const field of document.fields ?? []) {
     if (field.secret !== true) continue
-    if (named.has(field.bind) || asText(fromRecord(record, field.bind)) !== '') binds.push(field.bind)
+    if (named.has(field.bind) || asText(fromRecord(record, field)) !== '') binds.push(field.bind)
   }
   return binds
 }
@@ -192,6 +195,8 @@ export function ConnectionEditor({ initial, side, onCancel, onSaved, inline }: P
     },
     [],
   )
+
+  useEscape(onCancel, { open: inline !== true, inPanel: true })
 
   // A fresh kind starts from the record being edited plus the declared defaults.
   useEffect(() => {
@@ -360,7 +365,7 @@ export function ConnectionEditor({ initial, side, onCancel, onSaved, inline }: P
       <div className="modal-overlay" onClick={onCancel}>
         <div
           className="modal-card"
-          style={{ width: 'min(620px, 94vw)' }}
+          style={{ width: 'min(620px, 94%)', maxHeight: '92%', overflowY: 'auto' }}
           onClick={(e) => e.stopPropagation()}
         >
           <h3 style={{ marginTop: 0 }}>
@@ -368,7 +373,7 @@ export function ConnectionEditor({ initial, side, onCancel, onSaved, inline }: P
               ? tr('conn_manager.add_new_connection')
               : tr('conn_manager.edit_title')}
           </h3>
-          {body}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>{body}</div>
         </div>
       </div>
     )
@@ -418,7 +423,7 @@ export function ConnectionEditor({ initial, side, onCancel, onSaved, inline }: P
             onChange={change}
             onIntent={act}
             translate={trOptional}
-            assetUrl={(name) => `/api/plugin-assets/${encodeURIComponent(name)}`}
+            assetUrl={api.assetUrl}
             disabled={saving}
           />
         )}

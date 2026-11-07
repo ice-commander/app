@@ -111,6 +111,7 @@ export interface Backend {
   openViewer(side: Side, path: string): Promise<ViewerOpened | null>
   sendViewerEvent(instance: number, event: Record<string, unknown>): Promise<ViewerAnswer>
   viewerPartUrl(instance: number, name: string, drawn?: number): string
+  assetUrl(name: string): string
   closeViewer(instance: number, force?: boolean): Promise<ViewerClosed>
   /** The merged dictionary for the host's language, plugin keys included. */
   fetchTranslations(): Promise<{ lang: string; keys: Record<string, string> }>
@@ -120,6 +121,10 @@ export interface Backend {
   toggleFavorite(key: string): Promise<void>
   getFavoritesOnly(): Promise<boolean>
   setFavoritesOnly(value: boolean): Promise<void>
+
+  // ── settings ────────────────────────────────────────────────────────────────
+  /** The host's stored settings that the browser may read; a key never set is absent. */
+  fetchSettings(): Promise<Record<string, unknown>>
 
   // ── files ───────────────────────────────────────────────────────────────────
   readFile(side: Side, path: string): Promise<FileContent>
