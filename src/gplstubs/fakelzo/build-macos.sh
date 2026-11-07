@@ -3,7 +3,7 @@ set -e
 
 # Builds fakelzo and installs it OVER the liblzo2 that dylibbundler copied into the .app.
 #
-# Usage: ./fakelzo/build-macos.sh <path-to-bundled-liblzo2.2.dylib>
+# Usage: ./src/gplstubs/fakelzo/build-macos.sh <path-to-bundled-liblzo2.2.dylib>
 #
 # The replacement has to keep the original's install_name and version fields: the cairo script
 # interpreter records both in its load commands, and dyld refuses a library whose compatibility

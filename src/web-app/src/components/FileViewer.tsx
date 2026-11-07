@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useContext, useEffect, useState } from 'react'
 import { tr } from "../lib/i18n";
+import { DialogScope } from '../lib/dialogs'
+import { useEscape } from '../lib/keyScope'
 import * as api from '../api/client'
 import type { Side } from '../api/types'
 
@@ -38,6 +40,7 @@ export function FileViewer({ side, path, mode, onClose, onSaved }: Props) {
   const [editing, setEditing] = useState(mode === 'edit')
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
+  const dialogs = useContext(DialogScope)
   const name = path.split('/').pop() || path
 
   useEffect(() => {
@@ -45,7 +48,7 @@ export function FileViewer({ side, path, mode, onClose, onSaved }: Props) {
     setState({ kind: 'loading' })
 
     // Media opens via the backend's streamed URL (REST stream endpoint on a real
-    // app, data URI in the sandbox); everything else goes to the text viewer.
+    // app, a file next to the widget in the sandbox); everything else goes to the text viewer.
     const kind = mode === 'view' ? mediaKind(name) : null
     if (kind) {
       api.getFileUrl(side, path)
@@ -63,17 +66,10 @@ export function FileViewer({ side, path, mode, onClose, onSaved }: Props) {
   }, [side, path, mode, name])
 
   // Escape closes the viewer (unless there are unsaved edits)
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        e.stopPropagation()
-        if (!dirty || confirm('Discard unsaved changes?')) onClose()
-      }
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [dirty, onClose])
+  useEscape(() => {
+    if (!dirty) onClose()
+    else void dialogs.confirm('Discard unsaved changes?').then((discard) => { if (discard) onClose() })
+  })
 
   const save = async () => {
     if (state.kind !== 'text') return

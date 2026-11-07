@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useReducer, useState } from 'react'
+import { useCallback, useContext, useEffect, useReducer, useState } from 'react'
 import { tr } from "../lib/i18n";
+import { DialogScope } from '../lib/dialogs'
 import * as api from '../api/client'
 import type { Connection, Drive, FileEntry, Level, Operation, PanelState, Side, Tab } from '../api/types'
 import { atRoot, formatSize } from '../lib/format'
@@ -125,11 +126,19 @@ export function Panel({ side, active, drives, connections, onActivate, onNewFold
   // keep working on "the" selected item). Plain click = single, Ctrl toggles,
   // Shift extends a range over the visible entry order.
   const [selected, setSelected] = useState<string[]>([])
+  // Only another folder clears the selection; a save or a copy re-lists the same one, which keeps what is still there.
+  const place = JSON.stringify([data.active_tab, data.levels, data.path])
+  const [selectedIn, setSelectedIn] = useState(place)
+  if (selectedIn !== place) {
+    setSelectedIn(place)
+    setSelected([])
+  }
   const cursorName = selected.length > 0 ? selected[selected.length - 1] : null
   const [viewMode, setViewMode] = useState<ViewMode>('list')
   const [dropdownOpen, setDropdownOpen] = useState(false)
   // OS → panel drag-and-drop: dropping files uploads them into the current dir.
   const [dropActive, setDropActive] = useState(false)
+  const dialogs = useContext(DialogScope)
   const [procOpen, setProcOpen] = useState(false)
 
   // Processes popup: poll the running-operations snapshot while it is open.
@@ -157,25 +166,22 @@ export function Panel({ side, active, drives, connections, onActivate, onNewFold
     if (state.view_mode) setViewMode(GTK_TO_WEB[state.view_mode] ?? 'list')
   }, [])
 
-  const reload = useCallback(async () => {
-    dispatch({ type: 'loading' })
-    try {
-      const state = await api.fetchState(side)
-      dispatch({ type: 'loaded', state })
-      syncViewMode(state)
-      setSelected([])
-    } catch (e) {
-      dispatch({ type: 'error', message: String(e) })
-    }
-  }, [side, syncViewMode])
-
-  useEffect(() => { reload() }, [reload])
-
   const applyState = useCallback((state: PanelState) => {
     dispatch({ type: 'loaded', state })
     syncViewMode(state)
-    setSelected([])
+    setSelected((names) => names.filter((n) => state.entries.some((e) => e.name === n)))
   }, [syncViewMode])
+
+  const reload = useCallback(async () => {
+    dispatch({ type: 'loading' })
+    try {
+      applyState(await api.fetchState(side))
+    } catch (e) {
+      dispatch({ type: 'error', message: String(e) })
+    }
+  }, [side, applyState])
+
+  useEffect(() => { reload() }, [reload])
 
   // View switch from the toolbar: apply locally, then drive the GTK app over REST.
   // A GTK-mirrored change comes back via applyViewMode instead (no REST echo).
@@ -476,7 +482,7 @@ export function Panel({ side, active, drives, connections, onActivate, onNewFold
             try {
               await api.uploadFile(side, target, f)
             } catch (err) {
-              alert(`Upload of ${f.name} failed: ${err}`)
+              void dialogs.notice(`Upload of ${f.name} failed: ${err}`)
               break
             }
           }

@@ -14,12 +14,12 @@ cargo build --release \
     --manifest-path /home/builder/workdir/src/gtk-app/Cargo.toml \
     --target x86_64-pc-windows-gnu
 
-# fakelzo replaces the GPL liblzo2-2.dll that the GTK stack drags in; setup.nsi excludes the
-# real one from the artifacts tree and packs this instead. See src/fakelzo/README.md.
-echo "--- Building fakelzo (LGPL-clean liblzo2 replacement) ---"
-./src/fakelzo/build-windows.sh
-echo "--- Building fakejbig (GPL-free libjbig replacement) ---"
-./src/fakejbig/build-windows.sh
+# The GTK stack drags in liblzo2, libjbig and libidn2, whose builds carry GPL code; setup.nsi
+# excludes the real ones from the artifacts tree and packs our stand-ins.
+# See src/gplstubs/README.md.
+echo "--- Building the GPL stand-ins (src/gplstubs) ---"
+# Through bash: a script committed from a checkout with core.fileMode off has no exec bit.
+bash ./src/gplstubs/build-windows.sh
 
 echo "--- Checking the bundle for GPL code ---"
 ./builder/check-bundle-licenses.sh --strict

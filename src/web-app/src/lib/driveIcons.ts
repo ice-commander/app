@@ -3,6 +3,7 @@ import homeIcon from '../assets/home.svg'
 import atHomeIcon from '../assets/at-home.svg'
 import connectIcon from '../assets/connect.svg'
 import folderIcon from '../assets/folder.svg'
+import { assetUrl } from '../api/client'
 
 // Map the backend icon basename (from the unified get_all_app_drives list) to a bundled asset.
 const ICONS: Record<string, string> = {
@@ -19,7 +20,7 @@ const PLUGIN_ASSET = 'asset:'
 
 export function driveIcon(icon: string): string {
   if (icon.startsWith(PLUGIN_ASSET)) {
-    return `/api/plugin-assets/${icon.slice(PLUGIN_ASSET.length)}`
+    return assetUrl(icon.slice(PLUGIN_ASSET.length))
   }
   return ICONS[icon] ?? folderIcon
 }

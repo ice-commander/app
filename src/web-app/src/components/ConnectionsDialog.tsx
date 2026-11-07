@@ -1,5 +1,7 @@
-import { useState } from 'react'
+import { useContext, useState } from 'react'
+import { DialogScope } from '../lib/dialogs'
 import { tr } from '../lib/i18n'
+import { useEscape } from '../lib/keyScope'
 import type { Connection, Side } from '../api/types'
 import { ConnectionEditor } from './view/ConnectionEditor'
 
@@ -38,6 +40,8 @@ export function ConnectionsDialog({
 }: Props) {
   const [selected, setSelected] = useState<string | null>(connections[0]?.name ?? null)
   const [mode, setMode] = useState<Mode>('view')
+  const dialogs = useContext(DialogScope)
+  useEscape(onClose)
 
   const record = connections.find((c) => c.name === selected)
 
@@ -47,18 +51,18 @@ export function ConnectionsDialog({
         className="modal-card"
         // `.modal-card` caps every dialog at 400px; this one is a two-column layout and
         // needs the room, so the cap is lifted here rather than for all modals.
-        style={{ width: 'min(1120px, 94vw)', maxWidth: 'min(1120px, 94vw)' }}
+        style={{ width: '94%', maxWidth: '1120px', maxHeight: '92%' }}
         onClick={(e) => e.stopPropagation()}
       >
         <h3 className="modal-title">{tr('conn_manager.title')}</h3>
 
-        <div style={{ display: 'flex', gap: '16px', alignItems: 'stretch' }}>
+        <div style={{ display: 'flex', gap: '16px', alignItems: 'stretch', flex: '1 1 auto', minHeight: 0 }}>
           {/* ── saved list ────────────────────────────────────────────────── */}
-          <div style={{ width: '260px', flexShrink: 0 }}>
+          <div style={{ width: '260px', flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
             <div style={{ color: 'var(--text-dim)', fontSize: '12px', marginBottom: '6px' }}>
               {tr('conn_manager.saved_connections')}
             </div>
-            <div style={{ maxHeight: '48vh', overflowY: 'auto' }}>
+            <div style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto' }}>
               {connections.length === 0 && (
                 <span
                   className="select-source-hint"
@@ -90,7 +94,7 @@ export function ConnectionsDialog({
             </div>
             <button
               className="modal-btn confirm"
-              style={{ width: '100%', marginTop: '8px' }}
+              style={{ width: '100%', marginTop: '8px', flexShrink: 0 }}
               onClick={() => setMode('new')}
             >
               + {tr('conn_manager.new_connection')}
@@ -98,7 +102,7 @@ export function ConnectionsDialog({
           </div>
 
           {/* ── the one connection ────────────────────────────────────────── */}
-          <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ flex: 1, minWidth: 0, overflowY: 'auto' }}>
             <div style={{ color: 'var(--text-dim)', fontSize: '12px', marginBottom: '6px' }}>
               {mode === 'new'
                 ? tr('conn_manager.new_connection')
@@ -137,8 +141,12 @@ export function ConnectionsDialog({
               className="modal-btn cancel"
               disabled={connections.length === 0}
               title={tr('conn_manager.export_password_body')}
-              onClick={() => {
-                const pw = prompt(tr('conn_manager.export_password_title')) ?? ''
+              onClick={async () => {
+                const pw = await dialogs.password(
+                  tr('conn_manager.export_password_title'),
+                  tr('conn_manager.export_password_body'),
+                )
+                if (pw === null) return
                 onExport(pw === '' ? undefined : pw)
               }}
             >
@@ -171,8 +179,8 @@ export function ConnectionsDialog({
                 <>
                   <button
                     className="modal-btn cancel"
-                    onClick={() => {
-                      if (confirm(tr('conn_manager.delete_confirm'))) onDelete(record.name)
+                    onClick={async () => {
+                      if (await dialogs.confirm(tr('conn_manager.delete_confirm'))) onDelete(record.name)
                     }}
                   >
                     {tr('conn_manager.delete')}

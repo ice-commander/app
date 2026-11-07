@@ -1,12 +1,13 @@
 Ice Commander — bundled third-party components
 ==============================================
 
-Ice Commander itself is licensed under MIT OR Apache-2.0; see LICENSE-MIT and
-LICENSE-APACHE-2.0 in this directory.
+Ice Commander itself is licensed under MIT OR Apache-2.0; see LICENSE-MIT.txt and
+LICENSE-APACHE-2.0.txt in this directory.
 
 This file lists the third-party libraries shipped alongside the application, the exact
 version of each, and where its corresponding source can be obtained. It exists so that the
-LGPL and GPL requirements on source availability are met.
+LGPL and GPL requirements on source availability are met. A dash in place of a version
+means the library does not state one.
 
 Linux packages (.deb / .rpm / Arch) bundle none of the libraries below; GTK and everything
 else comes from the distribution.
@@ -15,19 +16,56 @@ else comes from the distribution.
 GTK stack — LGPL-2.1-or-later                                       Windows, macOS
     Shipped as separate shared libraries, so they can be replaced by the user, which is
     what LGPL section 6 requires. Versions below are the ones in the Windows bundle; the
-    macOS bundle uses the Homebrew formulae current at build time.
+    macOS bundle uses the Homebrew formulae current at build time. For 0.8.144 those were
+    GTK 4.22.4, GLib 2.88.1, libadwaita 1.8.3, Pango 1.57.1, gdk-pixbuf 2.44.6, cairo
+    1.18.4, FriBidi 1.0.16, libthai 0.1.30, gettext 1.0, AppStream 1.1.1 and libxmlb
+    0.3.24; the macOS bundle has no librsvg and takes libiconv from the system.
 
     GTK              4.20.3    https://gitlab.gnome.org/GNOME/gtk
     GLib / GIO       2.86.3    https://gitlab.gnome.org/GNOME/glib
-    libadwaita       1.8       https://gitlab.gnome.org/GNOME/libadwaita
+    libadwaita       1.8.2     https://gitlab.gnome.org/GNOME/libadwaita
     Pango            1.56.4    https://gitlab.gnome.org/GNOME/pango
+                               (LGPL-2.0-or-later)
     gdk-pixbuf       2.44.4    https://gitlab.gnome.org/GNOME/gdk-pixbuf
+                               (on Windows with 13 of its image loaders)
     librsvg          2.61.3    https://gitlab.gnome.org/GNOME/librsvg
+                               (Windows only, with its gdk-pixbuf loader)
     cairo            1.18.4    https://gitlab.freedesktop.org/cairo/cairo
                                (LGPL-2.1 or MPL-1.1, at your option)
+    FriBidi          1.0.16    https://github.com/fribidi/fribidi
+    libthai          -         https://github.com/tlwg/libthai
+    libdatrie        -         https://github.com/tlwg/libdatrie
+    gettext/libintl  0.26      https://www.gnu.org/software/gettext/
+    libiconv         1.18      https://www.gnu.org/software/libiconv/
+                               (Windows only)
+    AppStream        1.0.6     https://github.com/ximion/appstream
+                               (libadwaita links it)
+    libxmlb          0.3.24    https://github.com/hughsie/libxmlb
+    Graphite2        -         https://github.com/silnrsi/graphite
+                               (LGPL-2.1-or-later, MPL or GPL-2.0-or-later, at your
+                               option; used under the LGPL)
+
+    Only the libraries ship: the command-line tools of AppStream, gettext and libiconv,
+    GPL in gettext's and libiconv's case, are in neither bundle.
 
     On Windows these are the MSYS2 mingw-w64 builds:
     https://packages.msys2.org/         — search for mingw-w64-x86_64-<name>
+
+    License:  LGPL-2.1.txt
+
+
+GStreamer libraries — LGPL-2.1-or-later                             Windows
+    MSYS2 builds GTK with its GStreamer media backend, so libgtk-4-1.dll imports six
+    GStreamer libraries, and the bundle carries them and what they import: eleven DLLs.
+    No GStreamer plugin is shipped, so they cannot decode anything, and the application
+    does not use GTK's media API. The macOS bundle has no GStreamer.
+
+    GStreamer        1.26.9    https://gitlab.freedesktop.org/gstreamer/gstreamer
+                               libgstreamer and libgstbase; from gst-plugins-base the
+                               allocators, audio, gl, pbutils, tag and video libraries;
+                               from gst-plugins-bad the play, d3d12 and d3dshader ones
+    Orc              0.4.41    https://gitlab.freedesktop.org/gstreamer/orc
+                               (BSD-2-Clause; libgstaudio and libgstvideo import it)
 
     License:  LGPL-2.1.txt
 
@@ -40,20 +78,32 @@ GTK stack for Android — android-rust-gtk4-adwaita 0.1.0             Android
     src/gtk-stack/subprojects/packagefiles/. The release's THIRD-PARTY.md lists every
     library in the stack with its exact version and license.
 
+    GTK's Java glue (org.gtk.android) is compiled into the APK's classes.dex rather than
+    shipped as a library of its own, so for it LGPL section 6 applies to the application
+    as a whole. The application's source is open: https://github.com/ice-commander/app
+
     Source:   https://github.com/savchenko-igor/android-rust-gtk4-adwaita, tag v0.1.0 —
               the build configuration and the patches; the upstream sources are the ones
               its meson wraps pin.
     License:  LGPL-2.1.txt (the patches); the build scripts' MIT and Apache-2.0 texts are
               LICENSE-MIT.txt and LICENSE-APACHE-2.0.txt.
 
+    Also in the APK:
+    libc++_shared.so  NDK r27   Apache-2.0 WITH LLVM-exception
+                      LLVM's C++ runtime, which Oboe needs
+                      https://github.com/llvm/llvm-project
+    Oboe              1.8.1     Apache-2.0        https://github.com/google/oboe
+                      Google's audio library, compiled into libice_commander_gtk.so by
+                      the oboe-sys crate
+
 
 fakelzo (in place of lzo2) — MIT                                    Windows, macOS
-    NO GPL CODE IS SHIPPED IN EITHER BUNDLE. The file named liblzo2.2.dylib (macOS) or
+    NO LZO CODE IS SHIPPED IN EITHER BUNDLE. The file named liblzo2.2.dylib (macOS) or
     liblzo2-2.dll (Windows) is NOT Oberhumer's LZO, which is GPL-2.0-or-later. It is
-    src/fakelzo/fakelzo.c — 40 lines of our own MIT-licensed code exporting the only two
-    symbols libcairo-script-interpreter imports (lzo2a_decompress, lzo2a_999_compress),
-    which report failure instead of compressing. No LZO code was used or consulted; only
-    the two function signatures are shared, and signatures are not copyrightable.
+    src/gplstubs/fakelzo/fakelzo.c, our own MIT-licensed code exporting the only two symbols
+    libcairo-script-interpreter imports (lzo2a_decompress, lzo2a_999_compress), which
+    report failure instead of compressing. No LZO code is used; only the two function
+    signatures and one error code are shared.
 
     Why it exists at all: the real library reaches the bundle through a chain of optional
     dependencies nobody asked for —
@@ -65,34 +115,131 @@ fakelzo (in place of lzo2) — MIT                                    Windows, m
     stand-in logged ZERO calls across a full session — both panels, image and PDF preview,
     video playback, the editor, settings and the terminal.
 
-    macOS:   builder/osx.sh overwrites the copy dylibbundler pulled in, before signing.
+    macOS:   builder/osx.sh overwrites the copy dylibbundler pulled in, before signing,
+             and refuses to sign if real LZO symbols remain.
     Windows: src/gtk-app/setup.nsi excludes liblzo2-2.dll from the artifacts tree with
              `File /r /x` and packs ours instead — so the GPL library is never placed in
              the installer archive, which is what matters for distribution.
+             builder/check-bundle-licenses.sh --strict fails the build if a real one is
+             not excluded and replaced.
 
     Consequence: cairo-script serialisation, a GTK debugging facility, does not work in
     these builds. Nothing the application offers depends on it.
 
-    Source:   src/fakelzo/ in this repository, with build scripts for both platforms
-              and a README covering the reasoning and the measurement.
+    Source:   src/gplstubs/fakelzo/ in this repository, with build scripts for both
+              platforms and a README covering the reasoning and the measurement.
 
-    The Ice Commander source tree itself remains MIT OR Apache-2.0, and the Linux build
-    contains no GPL code either.
+    The Ice Commander source tree itself remains MIT OR Apache-2.0. The Linux packages
+    need no stand-in: they bundle no libraries.
 
 
-FreeType — FTL                                                      Windows, macOS
+fakejbig (in place of libjbig) — MIT                                Windows
+    The file named libjbig-0.dll is NOT JBIG-KIT, which is GPL-2.0-or-later. It is
+    src/gplstubs/fakejbig/fakejbig.c, our own MIT-licensed code exporting the ten symbols
+    libtiff-6.dll imports (jbg_dec_init, jbg_dec_in, jbg_dec_getsize, jbg_dec_getimage,
+    jbg_dec_free, jbg_enc_init, jbg_enc_out, jbg_enc_free, jbg_newlen, jbg_strerror):
+    the decoder reports an error and the encoder emits nothing. No JBIG-KIT code is used;
+    only the function signatures and one error code are shared.
+
+    It arrives the same way as liblzo2, through load-time imports nobody asked for —
+
+        libgtk-4 / libgdk_pixbuf -> libtiff -> libjbig
+
+    src/gtk-app/setup.nsi excludes the real libjbig-0.dll with `File /r /x` and packs
+    ours instead, and builder/check-bundle-licenses.sh --strict checks that it still does.
+
+    Consequence: a TIFF compressed with JBIG, a bi-level format for faxes and scans, does
+    not open. Nothing the application offers depends on it.
+
+    macOS: Homebrew's libtiff does not link libjbig, so there is nothing to replace;
+    builder/osx.sh would replace one and refuses to sign if a real one remained. The
+    Android stack's libtiff does not link it either.
+
+    Source:   src/gplstubs/fakejbig/ in this repository, with build scripts and a README
+              covering the reasoning and the measurement.
+
+
+fakeidn2 (in place of libidn2) — MIT                                Windows
+    The file named libidn2-0.dll is NOT libidn2. libidn2 is LGPL-3.0-or-later OR
+    GPL-2.0-or-later, but its build links the gnulib made for the idn2 command-line program
+    into the library too, and with it gnulib's progname module, which is GPL-3.0-or-later;
+    MSYS2's DLL carries it. This is src/gplstubs/fakeidn2/fakeidn2.c, our own MIT-licensed
+    code exporting the five symbols libcurl-4.dll and libpsl-5.dll import
+    (idn2_check_version, idn2_free, idn2_lookup_u8, idn2_lookup_ul, idn2_to_unicode_8z8z).
+    idn2_check_version accepts no version, so curl treats internationalised domain names as
+    not supported, and the conversions report an error. No libidn2 code is used; only the
+    function signatures and one error code are shared.
+
+    It arrives through load-time imports nobody asked for —
+
+        libadwaita -> libappstream -> libcurl -> libidn2, and libcurl -> libpsl -> libidn2
+
+    libadwaita uses AppStream only for an About dialog built from appdata, which the
+    application does not build. Measured under Wine: the application, started with a
+    stand-in logging every call, made none.
+
+    src/gtk-app/setup.nsi excludes the real libidn2-0.dll with `File /r /x` and packs ours
+    instead, and builder/check-bundle-licenses.sh --strict checks that it still does and
+    that ours exports everything the bundle imports from it.
+
+    Consequence: the curl in this bundle refuses a URL whose host name is not ASCII.
+    Nothing the application offers goes through curl.
+
+    Source:   src/gplstubs/fakeidn2/ in this repository, with build scripts and a README
+              covering the reasoning and the measurement.
+
+
+FreeType — FTL                                                      Windows, macOS, Android
     Font rasteriser, pulled in by Pango and the GTK stack. FreeType is dual-licensed
     "FTL or GPL-2.0"; this project uses it under the FTL, which asks that its use be
-    credited in the documentation — this entry and FreeType-FTL.txt are that credit.
+    credited in the documentation — this entry and FreeType-FTL.txt are that credit:
 
-    Version:  2.14.3 (macOS, Homebrew) / 2.14.1 (Windows, MSYS2)
+        Portions of this software are copyright © The FreeType Project
+        (https://freetype.org). All rights reserved.
+
+    Version:  2.14.3 (macOS, Homebrew) / 2.14.1 (Windows, MSYS2; Android)
     Source:   https://gitlab.freedesktop.org/freetype/freetype
     License:  FreeType-FTL.txt
 
 
+GCC runtime — GPL-3.0-or-later WITH GCC-exception-3.1               Windows
+    libgcc_s_seh-1.dll and libstdc++-6.dll, from MSYS2's GCC 15.2.0 ("Rev8, Built by
+    MSYS2 project"), with parts of the same runtime linked into ice-commander.exe, as into
+    any program GCC links. GTK, cairo, HarfBuzz, Graphite2, Fontconfig, pixman, librsvg,
+    libjpeg-turbo, LERC and GStreamer were compiled with GCC and import them, so they
+    cannot be left out. They are GPL code, shipped under the GCC Runtime Library Exception
+    3.1, which lets programs compiled with GCC and linked against them be distributed on
+    their own terms.
+
+    libwinpthread-1.dll, mingw-w64's winpthreads, comes with them; it is MIT AND
+    BSD-3-Clause.
+
+    Source:   https://repo.msys2.org/mingw/sources/mingw-w64-gcc-15.2.0-8.src.tar.zst
+              (MSYS2's source package), https://gcc.gnu.org/ and https://www.mingw-w64.org/
+    License:  GPL-3.0.txt and GCC-exception-3.1.txt
+
+
+Bison-generated parsers — GPL-3.0-or-later WITH Bison-exception-2.2 Windows, macOS
+    GStreamer's pipeline parser (libgstreamer-1.0-0.dll) and gettext's plural-form parser
+    (libintl-8.dll on Windows, libintl.8.dylib on macOS) are generated by Bison and carry
+    its parser skeleton, which is GPL-3.0-or-later with the Bison exception. The exception
+    lets a larger work that contains the skeleton be distributed under terms of its
+    author's choice, so each library stays under its own licence.
+
+
+libunistring — LGPL-3.0-or-later OR GPL-2.0-or-later                Windows
+    Brought in by libpsl, which curl links (see below), and used under LGPL-3.0-or-later.
+    The application calls neither. libidn2 brought it as well; fakeidn2 above stands in
+    for that one.
+
+    libunistring     1.3       https://www.gnu.org/software/libunistring/
+
+    License:  LGPL-3.0.txt, which adds to GPL-3.0.txt
+
+
 gdk-pixbuf's macOS-icon loader — LGPL, despite the string saying "GPL"          Windows
-    Not a separate file: part of libgdk_pixbuf-2.0-0.dll. Noted here because every licence
-    scanner finds it.
+    Part of libgdk_pixbuf-2.0-0.dll, and of the separate loader libpixbufloader-icns.dll.
+    Noted here because every licence scanner finds it.
 
     The library reports "GPL" for that one format and "LGPL" for the other fourteen. The
     licence is LGPL, stated in the header of the source file itself, unchanged since the
@@ -113,31 +260,111 @@ gdk-pixbuf's macOS-icon loader — LGPL, despite the string saying "GPL"        
 
 
 Other libraries in the Windows bundle
+    Brought in by curl, which AppStream links; the application itself links none of them:
+    curl             8.17.0    curl              https://github.com/curl/curl
     OpenSSL          3.6.0     Apache-2.0        https://github.com/openssl/openssl
     libssh2          1.11.1    BSD-3-Clause      https://github.com/libssh2/libssh2
-                     (brought in by curl; the application itself links neither)
-    curl             8.17.0    curl license      https://github.com/curl/curl
-    libiconv         1.18      LGPL-2.1          https://www.gnu.org/software/libiconv/
-    gettext/libintl  0.26      LGPL-2.1          https://www.gnu.org/software/gettext/
-    xz / liblzma     5.8.1     0BSD              https://github.com/tukaani-project/xz
     nghttp2          1.68.0    MIT               https://github.com/nghttp2/nghttp2
-    libunistring     1.3       LGPL-3.0          https://www.gnu.org/software/libunistring/
+    nghttp3          1.13.1    MIT               https://github.com/ngtcp2/nghttp3
+    ngtcp2           1.18.0    MIT               https://github.com/ngtcp2/ngtcp2
+    libpsl           0.21.5    MIT               https://github.com/rockdaboot/libpsl
+
+    Images and compression:
+    libpng           1.6.53    libpng-2.0        https://github.com/pnggroup/libpng
+    libjpeg-turbo    3.1.3     IJG, BSD-3-Clause and Zlib
+                     https://github.com/libjpeg-turbo/libjpeg-turbo
+    libtiff          4.7.1     libtiff           https://gitlab.com/libtiff/libtiff
+    libwebp          -         BSD-3-Clause      (with libsharpyuv)
+                     https://chromium.googlesource.com/webm/libwebp
+    LERC             -         Apache-2.0        https://github.com/Esri/lerc
+    zlib             1.3.1     Zlib              https://github.com/madler/zlib
+    xz / liblzma     5.8.1     0BSD              https://github.com/tukaani-project/xz
+    Zstandard        1.5.7     BSD-3-Clause      https://github.com/facebook/zstd
+                     (BSD-3-Clause or GPL-2.0, at your option; used under BSD-3-Clause)
+    bzip2            1.0.8     bzip2-1.0.6       https://gitlab.com/bzip2/bzip2
+    Brotli           -         MIT               https://github.com/google/brotli
+    libdeflate       -         MIT               https://github.com/ebiggers/libdeflate
+
+    Text, graphics and the rest:
+    HarfBuzz         12.2.0    MIT               https://github.com/harfbuzz/harfbuzz
+    Fontconfig       2.17.1    MIT-style (HPND)
+                     https://gitlab.freedesktop.org/fontconfig/fontconfig
+    Expat            2.7.3     MIT               https://github.com/libexpat/libexpat
+    libxml2          2.15.1    MIT               https://gitlab.gnome.org/GNOME/libxml2
+    libyaml          0.2.5     MIT               https://github.com/yaml/libyaml
+    pixman           0.46.4    MIT
+                     https://gitlab.freedesktop.org/pixman/pixman
+    libepoxy         1.5.10    MIT               https://github.com/anholt/libepoxy
+    graphene         -         MIT               https://github.com/ebassi/graphene
+    libffi           3.5.2     MIT               https://github.com/libffi/libffi
+    PCRE2            10.47     BSD-3-Clause      https://github.com/PCRE2Project/pcre2
+                     (with the PCRE2 exception)
 
     All are MSYS2 mingw-w64 builds; see https://packages.msys2.org/ for the exact package
-    and its sources.
+    and its sources. With the entries above, this covers every DLL installed beside
+    ice-commander.exe.
 
-    This listing is a summary, not a per-file audit. builder/check-bundle-licenses.sh scans
-    every shipped library for GPL declarations, including ones compiled inside an otherwise
-    permissive library — which is how the gdk-pixbuf ICNS string above was found.
+    builder/check-bundle-licenses.sh scans every DLL the installer packs for a bare "GPL"
+    declaration, including one compiled inside an otherwise permissive library, which is
+    how the gdk-pixbuf ICNS string above was found, and for the message of gnulib's progname
+    module, the GPL code in libidn2's build. It finds declarations, not silence: the GCC
+    runtime above carries none it would catch.
+
+
+Other libraries in the macOS bundle
+    All are Homebrew builds; https://formulae.brew.sh/ links each formula's source.
+
+    HarfBuzz         14.2.1    MIT               https://github.com/harfbuzz/harfbuzz
+    Fontconfig       2.18.1    MIT-style (HPND)
+                     https://gitlab.freedesktop.org/fontconfig/fontconfig
+    pixman           0.46.4    MIT
+                     https://gitlab.freedesktop.org/pixman/pixman
+    libepoxy         -         MIT               https://github.com/anholt/libepoxy
+    graphene         -         MIT               https://github.com/ebassi/graphene
+    PCRE2            10.47     BSD-3-Clause      https://github.com/PCRE2Project/pcre2
+                     (with the PCRE2 exception)
+    libpng           1.6.58    libpng-2.0        https://github.com/pnggroup/libpng
+    libjpeg-turbo    3.1.4.1   IJG, BSD-3-Clause and Zlib
+                     https://github.com/libjpeg-turbo/libjpeg-turbo
+    libtiff          4.7.1     libtiff           https://gitlab.com/libtiff/libtiff
+                     (built without JBIG, so no libjbig is needed)
+    xz / liblzma     5.8.3     0BSD              https://github.com/tukaani-project/xz
+    Zstandard        1.5.7     BSD-3-Clause      https://github.com/facebook/zstd
+                     (BSD-3-Clause or GPL-2.0, at your option; used under BSD-3-Clause)
+    libfyaml         -         MIT               https://github.com/pantoniou/libfyaml
+                     (AppStream links it)
+    libX11           1.8.13    MIT               https://gitlab.freedesktop.org/xorg/lib
+                     with libXext, libXrender, libxcb, libxcb-render, libxcb-shm,
+                     libXau and libXdmcp; Homebrew's cairo links them
+
+
+Independent JPEG Group                                              Windows, macOS, Android
+    libjpeg-turbo is in all three bundles. Its IJG licence asks for this statement:
+
+        This software is based in part on the work of the Independent JPEG Group.
 
 
 Rust dependencies
-    Every Rust crate compiled into the binaries is listed with its license in
-    THIRD-PARTY-LICENSES.md in the source repository.
+    Every Rust crate compiled into the desktop binaries is listed with its license in
+    THIRD-PARTY-LICENSES.md, in the source repository and in the application under
+    Settings → About → Licences and components. The Android build adds jni 0.21.1,
+    ndk 0.8.0 and ndk-context 0.1.1 (MIT OR Apache-2.0), and oboe and oboe-sys 0.6.1
+    (Apache-2.0), which compile in the Oboe library listed above.
+
+    zstd-sys compiles Meta's Zstandard 1.5.7 C library into every binary. It is
+    BSD-3-Clause or GPL-2.0, at your option, and is used under BSD-3-Clause:
+    https://github.com/facebook/zstd
+
+
+Web interface
+    The web interface built into every binary contains React and React DOM 19
+    (https://github.com/facebook/react) and xterm.js 6 with @xterm/addon-fit
+    (https://github.com/xtermjs/xterm.js); all are MIT.
 
 
 Obtaining source
     For any component above, the linked upstream repository at the stated version is the
     corresponding source. For the MSYS2 builds, the package page on packages.msys2.org
-    links both the upstream release and the MSYS2 build recipe. If you need a copy we can
-    provide directly, write to support@icecommander.com.
+    links both the upstream release and the MSYS2 build recipe; for the Homebrew builds,
+    https://formulae.brew.sh/ does the same. If you need a copy we can provide directly,
+    write to support@icecommander.com.

@@ -1,10 +1,10 @@
 /*
- * Replacement for liblzo2 in the macOS bundle.
+ * Replacement for liblzo2 in the macOS and Windows bundles.
  *
  * WHY THIS EXISTS
  * ---------------
- * The bundle's only GPL-2.0-or-later component used to be liblzo2 (LZO, by Markus Oberhumer).
- * Nothing in Ice Commander asks for it; it arrives through a chain of optional dependencies:
+ * liblzo2 (LZO, by Markus Oberhumer) is GPL-2.0-or-later. Nothing in Ice Commander asks for
+ * it; it arrives through a chain of optional dependencies:
  *
  *     libgtk-4 -> libcairo-script-interpreter -> liblzo2
  *
@@ -14,10 +14,10 @@
  * a build with a shouting stand-in logged ZERO calls across a full session (panels, image and
  * PDF preview, video playback, editor, settings, terminal).
  *
- * Since dyld still needs the library to exist at load time (the interpreter links it), the
- * options were to rebuild GTK without the script interpreter, or to supply these two symbols
- * ourselves. This file does the latter: same names, same signatures, no LZO code, MIT-licensed
- * like the rest of the project. The GPL obligation on the bundle goes away with it.
+ * Since the loader still needs the library to exist at load time (the interpreter links it),
+ * the options were to rebuild GTK without the script interpreter, or to supply these two
+ * symbols ourselves. This file does the latter: same names, same signatures, no LZO code,
+ * MIT-licensed. The GPL obligation on the bundle goes away with it.
  *
  * TRADE-OFF, STATED PLAINLY
  * -------------------------
@@ -28,8 +28,9 @@
  * implement these two entry points over zlib, which round-trips consistently because the
  * interpreter both writes and reads the data itself.
  *
- * The bundled file keeps the name liblzo2.2.dylib because the interpreter records that name;
- * assets/licenses/BUNDLED-COMPONENTS.txt says what it actually is.
+ * The bundled file keeps the name liblzo2.2.dylib on macOS and liblzo2-2.dll on Windows because
+ * the interpreter records that name; assets/licenses/BUNDLED-COMPONENTS.txt says what it
+ * actually is.
  */
 #include <stddef.h>
 

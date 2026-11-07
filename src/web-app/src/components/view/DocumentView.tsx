@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useContext, useEffect, useState } from 'react'
+import { beingTypedInto, KeyScope } from '../../lib/keyScope'
 import type { Action, Document, Intent, Json, Node, Series, State, Text } from '../../lib/view/types'
 import {
   asText,
@@ -117,15 +118,11 @@ function pressedAsWritten(e: KeyboardEvent): string {
   return said + (NAMED_KEYS[e.key] ?? e.key.toLowerCase())
 }
 
-function beingTypedInto(): boolean {
-  const focused = document.activeElement as HTMLElement | null
-  const tag = focused?.tagName
-  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || focused?.isContentEditable === true
-}
-
 function useAccelerators(props: DocumentViewProps) {
   const { document: doc, state, onIntent, disabled } = props
+  const keys = useContext(KeyScope)
   useEffect(() => {
+    if (keys === null) return
     const bound = new Map<string, Node>()
     walk(doc.form, (node) => {
       if (node.accel === undefined || node.t !== 'button') return
@@ -146,9 +143,9 @@ function useAccelerators(props: DocumentViewProps) {
       e.stopPropagation()
       onIntent(resolve(node.intent, state), node)
     }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [doc, state, onIntent, disabled])
+    keys.addEventListener('keydown', onKey, true)
+    return () => keys.removeEventListener('keydown', onKey, true)
+  }, [doc, state, onIntent, disabled, keys])
 }
 
 function px(value: number | undefined): string | undefined {

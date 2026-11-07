@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "kind": "ftp",
+  "label": { "literal": "FTP" },
+  "icon": "asset:ic-ftp-fs/ftp.svg",
+  "identity": "name",
+  "opens_at": "remote_path",
+  "summary": { "fmt": "{user}@{host}", "fallback": { "fmt": "{host}" } },
+
+  "fields": [
+    { "bind": "name", "type": "text", "scope": "record", "required": true },
+    { "bind": "folder", "type": "text", "scope": "record", "empty_as_absent": true },
+    { "bind": "host", "type": "text", "required": true, "empty_as_absent": true },
+    { "bind": "port", "type": "integer", "min": 1, "max": 65535,
+      "default": 21, "derive": "commit_only", "on_parse_error": "default" },
+    { "bind": "user", "type": "text", "required": true, "empty_as_absent": true },
+    { "bind": "pass", "type": "text", "secret": true, "empty_as_absent": true },
+    { "bind": "remote_path", "type": "path", "empty_as_absent": true }
+  ],
+
+  "form": {
+    "t": "view",
+    "surface": "embedded",
+    "scroll": "vertical",
+    "spacing": 8,
+    "sensitive": { "ne": ["view.mode", "view"] },
+    "children": [
+      { "t": "input", "id": "name", "bind": "name", "chrome": "bare",
+        "placeholder": { "tr": "conn_manager.conn_name_placeholder", "en": "Connection Name (e.g. My FTP Server)" } },
+
+      { "t": "row", "id": "address", "spacing": 8, "children": [
+        { "t": "input", "id": "host", "bind": "host", "chrome": "bare", "weight": 1,
+          "placeholder": { "tr": "conn_manager.host_ftp_placeholder", "en": "Host (e.g. ftp.example.com)" } },
+        { "t": "input", "id": "port", "bind": "port", "chrome": "bare", "width": 100,
+          "variant": "integer",
+          "placeholder": { "tr": "conn_manager.port_placeholder", "en": "Port (default: 21)" } } ] },
+
+      { "t": "row", "id": "credentials", "spacing": 8, "children": [
+        { "t": "input", "id": "user", "bind": "user", "chrome": "bare", "weight": 1,
+          "placeholder": { "tr": "conn_manager.username_placeholder", "en": "Username" } },
+        { "t": "input", "id": "pass", "bind": "pass", "chrome": "bare", "weight": 1,
+          "variant": "masked",
+          "placeholder": { "tr": "conn_manager.password_placeholder", "en": "Password" } } ] },
+
+      { "t": "input", "id": "remote_path", "bind": "remote_path", "chrome": "bare",
+        "placeholder": { "tr": "conn_manager.remote_path_placeholder", "en": "Remote Path (e.g. /var/www or /home/user/files)" } }
+    ]
+  }
+}

@@ -291,9 +291,8 @@ impl MainWindow {
                 let left_router_conn = left_info_conn.active_router();
                 let right_router_conn = right_info_conn.active_router();
 
-                let open_target = config_conn
-                    .get::<String>("ui.open_connection_target")
-                    .unwrap_or_else(|| "active".to_string());
+                let open_target =
+                    crate::settings::page_interface::open_connection_target(&config_conn);
 
                 let target_side = match open_target.as_str() {
                     "left" => ActivePanelSide::Left,

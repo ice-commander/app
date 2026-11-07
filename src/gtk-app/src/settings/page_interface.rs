@@ -23,6 +23,15 @@ const LANGUAGES: &[(&str, &str)] = &[
 const ROW_SIZES: [&str; 3] = ["normal", "compact", "tiny"];
 const OPEN_TARGETS: [&str; 4] = ["active", "opposite", "left", "right"];
 
+pub fn open_connection_target(config: &client_config::AppConfig) -> String {
+    if crate::mobile() {
+        return "active".to_string();
+    }
+    config
+        .get::<String>("ui.open_connection_target")
+        .unwrap_or_else(|| "right".to_string())
+}
+
 pub(super) fn build(
     page_box: &Box,
     config: client_config::AppConfig,
@@ -199,9 +208,7 @@ pub(super) fn build(
             &crate::i18n::tr("settings.open_target_right"),
         ]))
         .build();
-    let current_target = config
-        .get::<String>("ui.open_connection_target")
-        .unwrap_or_else(|| "active".to_string());
+    let current_target = open_connection_target(&config);
     target_row.set_selected(
         OPEN_TARGETS
             .iter()
@@ -219,7 +226,9 @@ pub(super) fn build(
             config.save();
         });
     }
-    panels.add(&target_row);
+    if !crate::mobile() {
+        panels.add(&target_row);
+    }
 
     panels.add(&switch_row(
         "settings.shared_hidden_files",

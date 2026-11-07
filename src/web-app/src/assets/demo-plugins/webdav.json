@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "kind": "webdav",
+  "label": { "literal": "WebDAV" },
+  "icon": "asset:ic-webdav-fs/webdav.svg",
+  "identity": "name",
+  "opens_at": "remote_path",
+  "summary": { "fmt": "{url}", "fallback": { "fmt": "{host}" } },
+
+  "fields": [
+    { "bind": "name", "type": "text", "scope": "record", "required": true },
+    { "bind": "folder", "type": "text", "scope": "record", "empty_as_absent": true },
+    { "bind": "url", "type": "text", "required": true, "empty_as_absent": true },
+    { "bind": "user", "type": "text", "empty_as_absent": true },
+    { "bind": "pass", "type": "text", "secret": true, "empty_as_absent": true, "empty_keeps_stored": true },
+    { "bind": "remote_path", "type": "path", "empty_as_absent": true },
+    { "bind": "port", "type": "integer", "min": 1, "max": 65535,
+      "when": false, "keep_when_inapplicable": true,
+      "default": 443, "derive": "commit_only", "on_parse_error": "default" }
+  ],
+
+  "form": {
+    "t": "view",
+    "surface": "embedded",
+    "scroll": "vertical",
+    "spacing": 8,
+    "sensitive": { "ne": ["view.mode", "view"] },
+    "children": [
+      { "t": "input", "id": "name", "bind": "name", "chrome": "bare",
+        "placeholder": { "tr": "conn_manager.conn_name_placeholder", "en": "Connection Name (e.g. My FTP Server)" } },
+
+      { "t": "input", "id": "url", "bind": "url", "chrome": "bare",
+        "placeholder": { "tr": "conn_manager.webdav_url_placeholder", "en": "URL (e.g. http://127.0.0.1:8080/dav)" } },
+
+      { "t": "row", "id": "credentials", "spacing": 8, "children": [
+        { "t": "input", "id": "user", "bind": "user", "chrome": "bare", "weight": 1,
+          "placeholder": { "tr": "conn_manager.username_placeholder", "en": "Username" } },
+        { "t": "input", "id": "pass", "bind": "pass", "chrome": "bare", "weight": 1,
+          "variant": "masked",
+          "placeholder": { "tr": "conn_manager.password_placeholder", "en": "Password" } } ] },
+
+      { "t": "input", "id": "remote_path", "bind": "remote_path", "chrome": "bare",
+        "placeholder": { "tr": "conn_manager.remote_path_placeholder", "en": "Remote Path (e.g. /var/www or /home/user/files)" } }
+    ]
+  }
+}

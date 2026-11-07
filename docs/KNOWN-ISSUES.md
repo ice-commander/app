@@ -51,10 +51,12 @@ This section is deliberately blunt. These are current limitations, not a roadmap
 ## Platform
 
 - **The registry editor is Windows-only**; there is no entry point elsewhere.
-- **No GPL code ships on any platform.** The one GPL library GTK used to drag in,
-  `liblzo2`, is replaced by our own MIT stub ([`src/fakelzo/`](../src/fakelzo/)) in both
-  desktop bundles; Linux links nothing of the sort. This source tree stays MIT OR
-  Apache-2.0 — see [THIRD-PARTY-LICENSES.md](../THIRD-PARTY-LICENSES.md).
+- **No GPL-only code ships.** The libraries GTK drags in that would bring it — `liblzo2`,
+  `libjbig` and `libidn2` — are replaced by our own MIT stand-ins
+  ([`src/gplstubs/`](../src/gplstubs/)); Linux bundles none of them. The GPL code that remains
+  carries an exception: the GCC runtime in the Windows installer, and Bison-generated parsers
+  in GStreamer and gettext's libintl. This source tree stays MIT OR Apache-2.0 — see
+  [THIRD-PARTY-LICENSES.md](../THIRD-PARTY-LICENSES.md).
 
 ## Incomplete
 

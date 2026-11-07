@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { trOptional } from '../../lib/i18n'
+import { useEscape } from '../../lib/keyScope'
 import * as api from '../../api/client'
 import type { Side } from '../../api/types'
 import type { Action, Document, Intent, Json, Node, State } from '../../lib/view/types'
@@ -221,21 +222,10 @@ export function PluginViewer({ side, path, onClose, onUnclaimed }: Props) {
     return undefined
   }
 
-  const leaving = useRef(leave)
-  leaving.current = leave
   const sending = useRef(send)
   sending.current = send
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
-      e.preventDefault()
-      e.stopPropagation()
-      void leaving.current()
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [])
+  useEscape(() => void leave())
 
   useEffect(() => {
     if (open === null || announced.current === open.instance) return
@@ -276,7 +266,7 @@ export function PluginViewer({ side, path, onClose, onUnclaimed }: Props) {
             onChange={change}
             onIntent={act}
             translate={trOptional}
-            assetUrl={(asset) => `/api/plugin-assets/${encodeURIComponent(asset)}`}
+            assetUrl={api.assetUrl}
             pictureUrl={pictureUrl}
             onEnded={ended}
           />
