@@ -1,10 +1,12 @@
 use adw::prelude::*;
 
+use crate::transfer_plan::EndpointPlan;
 use fm_core::rpc::FileSystemRpc;
 use gtk::glib;
 use transfer_core::{
-    execute_transfer, execute_transfer_offthread, format_size, mode_of, scan_items, CopyMessage,
-    ErrorAction, ErrorRequest, TransferItem,
+    execute_transfer, execute_transfer_offthread, find_clashes, format_size, into_itself,
+    leave_out_items_onto_themselves, mode_of, move_by_rename, scan_items, skip_clashes, Clash,
+    ClashKind, CopyMessage, ErrorAction, ErrorRequest, TransferItem, Unchecked,
 };
 
 use common::AppError;
@@ -17,7 +19,7 @@ pub struct TransferSource {
     pub parent: String,
     pub provider: std::rc::Rc<dyn fm_core::rpc::FileSystemRpc>,
     pub refresh: Option<Rc<panel_router::PanelRouter>>,
-    pub on_done: Option<Rc<dyn Fn()>>,
+    pub on_done: Option<Rc<dyn Fn(&[String])>>,
     pub dest_names: std::collections::HashMap<String, String>,
 }
 
@@ -319,9 +321,7 @@ pub fn show_transfer_dialog(
                     source_c.clone(),
                     inactive_fm_c.clone(),
                     items,
-                    src_parent.clone(),
                     dest_path_str,
-                    selected_items.clone(),
                     is_move,
                 );
             }
@@ -341,88 +341,390 @@ enum OverwriteDecision {
     Cancel,
 }
 
+struct Side {
+    provider: Rc<dyn FileSystemRpc>,
+    plan: Option<EndpointPlan>,
+}
+
+enum Prepared {
+    IntoItself { folder: String, into: String },
+    Ready(Ready),
+}
+
+struct Ready {
+    items: Vec<TransferItem>,
+    clashes: Vec<Clash>,
+    unchecked: Option<String>,
+    dest: Side,
+    dest_parent: String,
+    offthread: bool,
+}
+
+async fn on_a_worker<T, F>(work: impl FnOnce() -> F + Send + 'static) -> Result<T, AppError>
+where
+    T: Send + 'static,
+    F: std::future::Future<Output = Result<T, AppError>>,
+{
+    tokio::task::spawn_blocking(move || {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| AppError::Other(format!("worker runtime: {e}")))?;
+        tokio::task::LocalSet::new().block_on(&rt, work())
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("worker task: {e}")))?
+}
+
+async fn check_into_itself(
+    src: &Side,
+    dest: &Side,
+    items: &[TransferItem],
+    dest_parent: &str,
+    offthread: &mut bool,
+) -> Option<(String, String)> {
+    if let (Some(src_plan), Some(dest_plan)) = (&src.plan, &dest.plan) {
+        let src_factory = src_plan.clone().into_factory();
+        let dest_factory = dest_plan.clone().into_factory();
+        let (sent, at) = (items.to_vec(), dest_parent.to_string());
+        let asked = on_a_worker(move || async move {
+            Ok(into_itself(&src_factory(), &dest_factory(), &sent, &at).await)
+        })
+        .await;
+        match asked {
+            Ok(refused) => return refused,
+            Err(why) => {
+                ic_logging::warn!("into-itself check off the main thread failed: {why}");
+                *offthread = false;
+            }
+        }
+    }
+    into_itself(&src.provider, &dest.provider, items, dest_parent).await
+}
+
+fn standing_in_it(dest: &Rc<dyn FileSystemRpc>, dest_parent: &str) -> bool {
+    dest.plugin_scope().is_some()
+        && dest
+            .as_any()
+            .and_then(|any| any.downcast_ref::<panel_router::RoutingProvider>())
+            .is_some_and(|routed| routed.resolve(dest_parent) == "/")
+}
+
+async fn check_destination(
+    src: &Side,
+    dest: &Side,
+    items: &mut Vec<TransferItem>,
+    dest_parent: &str,
+    cancellation_flag: &Arc<AtomicBool>,
+    offthread: &mut bool,
+) -> Result<Vec<Clash>, Unchecked> {
+    if let (Some(dest_plan), true) = (&dest.plan, *offthread) {
+        let src_factory = src.plan.clone().map(EndpointPlan::into_factory);
+        let mut sent = items.clone();
+        if src_factory.is_none() {
+            leave_out_items_onto_themselves(&src.provider, &dest.provider, dest_parent, &mut sent);
+        }
+        let dest_factory = dest_plan.clone().into_factory();
+        let (at, flag) = (dest_parent.to_string(), cancellation_flag.clone());
+        let checked = on_a_worker(move || async move {
+            let dest = dest_factory();
+            if let Some(src_factory) = src_factory {
+                leave_out_items_onto_themselves(&src_factory(), &dest, &at, &mut sent);
+            }
+            let clashes = find_clashes(dest, &sent, &at, &flag).await;
+            Ok((sent, clashes))
+        })
+        .await;
+        let why = match checked {
+            Ok((_, Err(why))) if why != Unchecked::Failed(AppError::Cancelled) => {
+                format!("{why:?}")
+            }
+            Ok((sent, clashes)) => {
+                *items = sent;
+                return clashes;
+            }
+            Err(why) => why.to_string(),
+        };
+        if cancellation_flag.load(Ordering::Relaxed) {
+            return Err(AppError::Cancelled.into());
+        }
+        ic_logging::warn!("destination check off the main thread failed: {why}");
+        *offthread = false;
+    }
+    leave_out_items_onto_themselves(&src.provider, &dest.provider, dest_parent, items);
+    find_clashes(dest.provider.clone(), items, dest_parent, cancellation_flag).await
+}
+
+async fn prepare(
+    src: &Side,
+    dest: &Side,
+    mut items: Vec<TransferItem>,
+    dest_parent: &str,
+    cancellation_flag: &Arc<AtomicBool>,
+) -> Result<Prepared, AppError> {
+    let mut offthread = true;
+    if let Some((folder, into)) =
+        check_into_itself(src, dest, &items, dest_parent, &mut offthread).await
+    {
+        return Ok(Prepared::IntoItself { folder, into });
+    }
+    if cancellation_flag.load(Ordering::Relaxed) {
+        return Err(AppError::Cancelled);
+    }
+    // A destination a plugin claims is that file's inside, made if absent: packing.
+    let packing = if standing_in_it(&dest.provider, dest_parent) {
+        None
+    } else {
+        fm_core::plugin_fs::destination_inside(&dest.provider, dest_parent).await
+    };
+    let (dest, dest_parent) = match packing {
+        Some(Ok(inside)) => (
+            Side {
+                provider: inside,
+                plan: None,
+            },
+            "/".to_string(),
+        ),
+        Some(Err(why)) => return Err(why),
+        None => (
+            Side {
+                provider: dest.provider.clone(),
+                plan: dest.plan.clone(),
+            },
+            dest_parent.to_string(),
+        ),
+    };
+    let checked = check_destination(
+        src,
+        &dest,
+        &mut items,
+        &dest_parent,
+        cancellation_flag,
+        &mut offthread,
+    )
+    .await;
+    let (clashes, unchecked) = match checked {
+        Ok(clashes) => (clashes, None),
+        Err(Unchecked::Unreadable { folder, .. }) => (Vec::new(), Some(folder)),
+        Err(Unchecked::Failed(why)) => return Err(why),
+    };
+    Ok(Prepared::Ready(Ready {
+        items,
+        clashes,
+        unchecked,
+        dest,
+        dest_parent,
+        offthread,
+    }))
+}
+
+async fn while_checking<T>(
+    window: &adw::ApplicationWindow,
+    cancellation_flag: &Arc<AtomicBool>,
+    work: impl std::future::Future<Output = Result<T, AppError>>,
+) -> Result<T, AppError> {
+    let mut work = std::pin::pin!(work);
+    tokio::select! {
+        done = &mut work => return done,
+        () = glib::timeout_future(std::time::Duration::from_millis(250)) => {}
+    }
+
+    let spinner = gtk::Spinner::builder().spinning(true).build();
+    let dialog = adw::AlertDialog::builder()
+        .heading(&*crate::i18n::tr("fm.checking_destination"))
+        .extra_child(&spinner)
+        .build();
+    dialog.add_response("cancel", &crate::i18n::tr("fm.cancel"));
+    let cancellation_flag_c = cancellation_flag.clone();
+    dialog.connect_response(None, move |_d, _response| {
+        cancellation_flag_c.store(true, Ordering::Relaxed);
+    });
+    dialog.present(Some(window));
+
+    let done = work.await;
+    if cancellation_flag.load(Ordering::Relaxed) {
+        return Err(AppError::Cancelled);
+    }
+    dialog.close();
+    done
+}
+
+async fn move_by_rename_offthread(
+    items: Vec<TransferItem>,
+    dest_parent: String,
+) -> Result<Vec<TransferItem>, AppError> {
+    tokio::task::spawn_blocking(move || {
+        let mut items = items;
+        move_by_rename(&mut items, &dest_parent);
+        items
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("rename task: {e}")))
+}
+
 async fn resolve_conflicts(
     window: &adw::ApplicationWindow,
-    dest_provider: &std::rc::Rc<dyn FileSystemRpc>,
-    dest_parent: &str,
-    items: Vec<TransferItem>,
+    mut items: Vec<TransferItem>,
+    clashes: &[Clash],
 ) -> Option<Vec<TransferItem>> {
-    let existing: std::collections::HashSet<String> =
-        match dest_provider.list_dir(dest_parent.to_string()).await {
-            Ok(entries) => entries.into_iter().map(|e| e.name).collect(),
-            Err(_) => return Some(items),
-        };
+    let mut apply_all: Option<bool> = match clashes.len() {
+        0 => return Some(items),
+        1 => None,
+        _ => ask_overwrite_all(window, clashes).await?.then_some(true),
+    };
+    let summarized = clashes.len() > 1;
+    let replaceable = |clash: &Clash| matches!(clash.kind, ClashKind::ReplacesFile { .. });
 
-    let top_level = |rel: &str| rel.split('/').next().unwrap_or(rel).to_string();
-
-    let mut conflicts: Vec<String> = Vec::new();
-    for item in &items {
-        let top = top_level(&item.relative_path);
-        if existing.contains(&top) && !conflicts.contains(&top) {
-            conflicts.push(top);
-        }
-    }
-    if conflicts.is_empty() {
-        return Some(items);
-    }
-
-    let mut skip: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut apply_all: Option<bool> = None;
-
-    for (idx, name) in conflicts.iter().enumerate() {
+    let mut skipped: Vec<Clash> = Vec::new();
+    for (idx, clash) in clashes.iter().enumerate() {
         let overwrite = match apply_all {
             Some(v) => v,
-            None => match ask_overwrite_each(window, name, conflicts.len() - idx).await {
-                OverwriteDecision::Yes => true,
-                OverwriteDecision::YesToAll => {
-                    apply_all = Some(true);
-                    true
+            None if summarized && !replaceable(clash) => false,
+            None => {
+                let remaining = clashes[idx..]
+                    .iter()
+                    .filter(|other| replaceable(other))
+                    .count();
+                match ask_overwrite_each(window, clash, remaining).await {
+                    OverwriteDecision::Yes => true,
+                    OverwriteDecision::YesToAll => {
+                        apply_all = Some(true);
+                        true
+                    }
+                    OverwriteDecision::Skip => false,
+                    OverwriteDecision::SkipAll => {
+                        apply_all = Some(false);
+                        false
+                    }
+                    OverwriteDecision::Cancel => return None,
                 }
-                OverwriteDecision::Skip => false,
-                OverwriteDecision::SkipAll => {
-                    apply_all = Some(false);
-                    false
-                }
-                OverwriteDecision::Cancel => return None,
-            },
+            }
         };
-        if !overwrite {
-            skip.insert(name.clone());
+        if !overwrite || !replaceable(clash) {
+            skipped.push(clash.clone());
         }
     }
 
-    if skip.is_empty() {
-        Some(items)
-    } else {
-        Some(
-            items
-                .into_iter()
-                .filter(|it| !skip.contains(&top_level(&it.relative_path)))
-                .collect(),
-        )
+    skip_clashes(&mut items, &skipped);
+    Some(items)
+}
+
+async fn ask_overwrite_all(window: &adw::ApplicationWindow, clashes: &[Clash]) -> Option<bool> {
+    let mut replaced = 0usize;
+    let mut replaced_bytes = 0u64;
+    let mut inside = 0usize;
+    for clash in clashes {
+        if let ClashKind::ReplacesFile { size } = clash.kind {
+            replaced += 1;
+            replaced_bytes += size;
+            if std::path::Path::new(&clash.relative_path)
+                .components()
+                .nth(1)
+                .is_some()
+            {
+                inside += 1;
+            }
+        }
     }
+    let mismatched = clashes.len() - replaced;
+
+    let mut lines = Vec::new();
+    if replaced > 0 {
+        lines.push(crate::i18n::trf(
+            "fm.clash_summary_replace",
+            &[
+                ("count", &replaced.to_string()),
+                ("size", &format_size(replaced_bytes)),
+            ],
+        ));
+    }
+    if inside > 0 {
+        lines.push(crate::i18n::trf(
+            "fm.clash_summary_inside",
+            &[("count", &inside.to_string())],
+        ));
+    }
+    if mismatched > 0 {
+        lines.push(crate::i18n::trf(
+            "fm.clash_summary_mismatch",
+            &[("count", &mismatched.to_string())],
+        ));
+    }
+    let mut body = lines.join("\n");
+    if replaced > 0 {
+        body.push_str("\n\n");
+        body.push_str(&crate::i18n::tr("fm.clash_summary_ask_each"));
+    }
+
+    let check = (replaced > 0).then(|| {
+        gtk::CheckButton::builder()
+            .label(&*crate::i18n::tr("fm.clash_overwrite_all"))
+            .halign(gtk::Align::Center)
+            .build()
+    });
+    let dialog = adw::AlertDialog::builder()
+        .heading(&*crate::i18n::tr("fm.clash_summary_title"))
+        .body(body)
+        .build();
+    dialog.set_extra_child(check.as_ref());
+    dialog.add_response("cancel", &crate::i18n::tr("fm.cancel"));
+    dialog.add_response("continue", &crate::i18n::tr("fm.clash_continue"));
+    dialog.set_default_response(Some("continue"));
+    dialog.set_response_appearance("continue", adw::ResponseAppearance::Suggested);
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let tx = Rc::new(std::cell::RefCell::new(Some(tx)));
+    dialog.connect_response(None, move |d, resp| {
+        let overwrite_all = check.as_ref().is_none_or(CheckButtonExt::is_active);
+        if let Some(tx) = tx.borrow_mut().take() {
+            let _ = tx.send((resp == "continue").then_some(overwrite_all));
+        }
+        d.close();
+    });
+    dialog.present(Some(window));
+
+    rx.await.ok().flatten()
 }
 
 async fn ask_overwrite_each(
     window: &adw::ApplicationWindow,
-    name: &str,
+    clash: &Clash,
     remaining: usize,
 ) -> OverwriteDecision {
+    let path = &clash.relative_path;
+    let (heading, body) = match clash.kind {
+        ClashKind::ReplacesFile { .. } => (
+            "fm.clash_exists_title",
+            crate::i18n::trf("fm.clash_exists_body", &[("path", path)]),
+        ),
+        ClashKind::FileOverFolder => (
+            "fm.clash_mismatch_title",
+            crate::i18n::trf("fm.clash_file_over_folder", &[("path", path)]),
+        ),
+        ClashKind::FolderOverFile => (
+            "fm.clash_mismatch_title",
+            crate::i18n::trf("fm.clash_folder_over_file", &[("path", path)]),
+        ),
+    };
     let dialog = adw::AlertDialog::builder()
-        .heading("File exists")
-        .body(&format!(
-            "\"{name}\" already exists at the destination.\nOverwrite it?"
-        ))
+        .heading(&*crate::i18n::tr(heading))
+        .body(body)
         .build();
-    dialog.add_response("cancel", "Cancel");
-    dialog.add_response("skip", "Skip");
+    dialog.add_response("cancel", &crate::i18n::tr("fm.cancel"));
+    dialog.add_response("skip", &crate::i18n::tr("fm.clash_skip"));
     if remaining > 1 {
-        dialog.add_response("skip_all", "Skip All");
-        dialog.add_response("yes_all", "Yes to All");
+        dialog.add_response("skip_all", &crate::i18n::tr("fm.clash_skip_all"));
     }
-    dialog.add_response("yes", "Yes");
-    dialog.set_default_response(Some("yes"));
-    dialog.set_response_appearance("yes", adw::ResponseAppearance::Suggested);
+    if matches!(clash.kind, ClashKind::ReplacesFile { .. }) {
+        if remaining > 1 {
+            dialog.add_response("yes_all", &crate::i18n::tr("fm.clash_yes_all"));
+        }
+        dialog.add_response("yes", &crate::i18n::tr("fm.clash_yes"));
+        dialog.set_default_response(Some("yes"));
+        dialog.set_response_appearance("yes", adw::ResponseAppearance::Suggested);
+    } else {
+        dialog.set_default_response(Some("skip"));
+    }
 
     let (tx, rx) = tokio::sync::oneshot::channel();
     let tx = Rc::new(std::cell::RefCell::new(Some(tx)));
@@ -444,43 +746,124 @@ async fn ask_overwrite_each(
     rx.await.unwrap_or(OverwriteDecision::Cancel)
 }
 
+async fn ask_copy_unchecked(window: &adw::ApplicationWindow, folder: &str) -> bool {
+    let dialog = adw::AlertDialog::builder()
+        .heading(&*crate::i18n::tr("fm.clash_unchecked_title"))
+        .body(crate::i18n::trf(
+            "fm.clash_unchecked_body",
+            &[("folder", folder)],
+        ))
+        .build();
+    dialog.add_response("cancel", &crate::i18n::tr("fm.cancel"));
+    dialog.add_response("copy", &crate::i18n::tr("fm.action_copy"));
+    dialog.set_default_response(Some("cancel"));
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let tx = Rc::new(std::cell::RefCell::new(Some(tx)));
+    dialog.connect_response(None, move |d, resp| {
+        if let Some(tx) = tx.borrow_mut().take() {
+            let _ = tx.send(resp == "copy");
+        }
+        d.close();
+    });
+    dialog.present(Some(window));
+
+    rx.await.unwrap_or(false)
+}
+
+fn top_level_names(items: &[TransferItem]) -> Vec<String> {
+    items
+        .iter()
+        .filter(|item| item.relative_path == item.name)
+        .map(|item| item.name.clone())
+        .collect()
+}
+
 fn run_transfer_with_progress(
     window: &adw::ApplicationWindow,
-    src_provider: std::rc::Rc<dyn FileSystemRpc>,
-    dest_provider: std::rc::Rc<dyn FileSystemRpc>,
-    remaining_items: Vec<TransferItem>,
+    src: Side,
+    dest: Side,
+    items: Vec<TransferItem>,
     dest_parent: String,
     is_move: bool,
-    on_finish: impl Fn() + 'static,
+    on_finish: impl Fn(&[String]) + 'static,
 ) {
     let window = window.clone();
 
     gtk::glib::spawn_future_local(async move {
-        // A destination a plugin claims is that file's inside, made if absent: packing.
-        let (dest_provider, dest_parent) =
-            match fm_core::plugin_fs::destination_inside(&dest_provider, &dest_parent).await {
-                Some(Ok(inside)) => (inside, "/".to_string()),
-                Some(Err(why)) => {
-                    show_error_dialog(
-                        &window,
-                        &crate::i18n::tr("fm.transfer_error"),
-                        &why.to_string(),
-                    );
-                    on_finish();
-                    return;
-                }
-                None => (dest_provider, dest_parent),
-            };
-        let remaining_items =
-            match resolve_conflicts(&window, &dest_provider, &dest_parent, remaining_items).await {
-                Some(items) => items,
-                None => {
-                    on_finish();
-                    return;
-                }
-            };
+        let checking_flag = Arc::new(AtomicBool::new(false));
+        let prepared = while_checking(
+            &window,
+            &checking_flag,
+            prepare(&src, &dest, items, &dest_parent, &checking_flag),
+        )
+        .await;
+        let Ready {
+            items,
+            clashes,
+            unchecked,
+            dest,
+            dest_parent,
+            offthread,
+        } = match prepared {
+            Ok(Prepared::Ready(ready)) => ready,
+            Ok(Prepared::IntoItself { folder, into }) => {
+                show_error_dialog(
+                    &window,
+                    &crate::i18n::tr("fm.transfer_error"),
+                    &crate::i18n::trf("fm.into_itself", &[("folder", &folder), ("dest", &into)]),
+                );
+                on_finish(&[]);
+                return;
+            }
+            Err(AppError::Cancelled) => {
+                on_finish(&[]);
+                return;
+            }
+            Err(why) => {
+                show_error_dialog(
+                    &window,
+                    &crate::i18n::tr("fm.transfer_error"),
+                    &why.to_string(),
+                );
+                on_finish(&[]);
+                return;
+            }
+        };
+        if let Some(folder) = unchecked {
+            if !ask_copy_unchecked(&window, &folder).await {
+                on_finish(&[]);
+                return;
+            }
+        }
+        let Some(mut remaining_items) = resolve_conflicts(&window, items, &clashes).await else {
+            on_finish(&[]);
+            return;
+        };
+        let mut moved = Vec::new();
+        if is_move && src.provider.is_local() && dest.provider.is_local() {
+            let before = top_level_names(&remaining_items);
+            remaining_items =
+                match move_by_rename_offthread(remaining_items, dest_parent.clone()).await {
+                    Ok(left) => left,
+                    Err(why) => {
+                        show_error_dialog(
+                            &window,
+                            &crate::i18n::tr("fm.transfer_error"),
+                            &why.to_string(),
+                        );
+                        on_finish(&[]);
+                        return;
+                    }
+                };
+            let left = top_level_names(&remaining_items);
+            moved = before
+                .into_iter()
+                .filter(|name| !left.contains(name))
+                .collect();
+        }
         if remaining_items.is_empty() {
-            on_finish();
+            on_finish(&moved);
             return;
         }
 
@@ -699,8 +1082,12 @@ fn run_transfer_with_progress(
             }
         });
 
-        let plans = crate::transfer_plan::EndpointPlan::of(&src_provider)
-            .zip(crate::transfer_plan::EndpointPlan::of(&dest_provider));
+        let plans = if offthread {
+            src.plan.zip(dest.plan)
+        } else {
+            None
+        };
+        let sent = top_level_names(&remaining_items);
         let res = match plans {
             Some((src_plan, dest_plan)) => {
                 execute_transfer_offthread(
@@ -717,8 +1104,8 @@ fn run_transfer_with_progress(
             }
             None => {
                 execute_transfer(
-                    src_provider,
-                    dest_provider,
+                    src.provider,
+                    dest.provider,
                     remaining_items,
                     dest_parent,
                     is_move,
@@ -741,7 +1128,10 @@ fn run_transfer_with_progress(
                 );
             }
         }
-        on_finish();
+        if is_move && res.is_ok() {
+            moved.extend(sent);
+        }
+        on_finish(&moved);
     });
 }
 
@@ -750,87 +1140,38 @@ fn show_progress_dialog(
     source: Rc<TransferSource>,
     inactive_fm: Rc<panel_router::PanelRouter>,
     items: Vec<TransferItem>,
-    src_parent: String,
     dest_parent: String,
-    selected_items_info: Vec<(String, bool, u64, Option<u32>)>,
     is_move: bool,
 ) {
     let src_provider = source.provider.clone();
     let dest_provider = inactive_fm.provider();
+    let src_plan = EndpointPlan::of(&src_provider);
+    let dest_plan = EndpointPlan::of(&dest_provider);
 
     let mut items = items;
     transfer_core::retarget_top_level(&mut items, &source.dest_names);
-
-    let src_is_local = src_provider.is_local() && !items.is_empty();
-    let dest_is_local = dest_provider.is_local();
-
-    let mut remaining_items = items;
-
-    if is_move && src_is_local && dest_is_local {
-        let top_levels: Vec<String> = selected_items_info
-            .iter()
-            .map(|(name, _, _, _)| name.clone())
-            .collect();
-
-        let mut failed_top_levels = Vec::new();
-        for tl_name in top_levels {
-            let src_path = std::path::Path::new(&src_parent).join(&tl_name);
-            let dest_path = std::path::Path::new(&dest_parent).join(&tl_name);
-
-            if let Some(parent) = dest_path.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-
-            if std::fs::rename(&src_path, &dest_path).is_err() {
-                failed_top_levels.push(tl_name);
-            }
-        }
-
-        if failed_top_levels.is_empty() {
-            if let Some(r) = &source.refresh {
-                r.refresh_spawned();
-            }
-            if let Some(f) = &source.on_done {
-                f();
-            }
-            inactive_fm.refresh_spawned();
-            return;
-        } else {
-            remaining_items.retain(|item| {
-                failed_top_levels.iter().any(|ftl| {
-                    item.relative_path == *ftl
-                        || item.relative_path.starts_with(&format!("{}/", ftl))
-                })
-            });
-        }
-    }
-
-    if remaining_items.is_empty() {
-        if let Some(r) = &source.refresh {
-            r.refresh_spawned();
-        }
-        if let Some(f) = &source.on_done {
-            f();
-        }
-        inactive_fm.refresh_spawned();
-        return;
-    }
 
     let source_r = source.clone();
     let inactive_fm_c = inactive_fm.clone();
     run_transfer_with_progress(
         window,
-        src_provider,
-        dest_provider,
-        remaining_items,
+        Side {
+            provider: src_provider,
+            plan: src_plan,
+        },
+        Side {
+            provider: dest_provider,
+            plan: dest_plan,
+        },
+        items,
         dest_parent,
         is_move,
-        move || {
+        move |moved| {
             if let Some(r) = &source_r.refresh {
                 r.refresh_spawned();
             }
             if let Some(f) = &source_r.on_done {
-                f();
+                f(moved);
             }
             inactive_fm_c.refresh_spawned();
         },
@@ -1094,10 +1435,12 @@ fn show_external_drop_progress_dialog(
     dest_parent: String,
     _selected_items_info: Vec<(String, bool, u64, Option<u32>)>,
 ) {
-    let src_provider = std::rc::Rc::new(localfs::local_rpc::LocalFileSystemRpc::new(
-        dest_fm.config(),
-    ));
+    let src_provider: Rc<dyn FileSystemRpc> = std::rc::Rc::new(
+        localfs::local_rpc::LocalFileSystemRpc::new(dest_fm.config()),
+    );
     let dest_provider = dest_fm.provider();
+    let src_plan = EndpointPlan::of(&src_provider);
+    let dest_plan = EndpointPlan::of(&dest_provider);
 
     let remaining_items = items;
 
@@ -1111,12 +1454,18 @@ fn show_external_drop_progress_dialog(
 
     run_transfer_with_progress(
         window,
-        src_provider,
-        dest_provider,
+        Side {
+            provider: src_provider,
+            plan: src_plan,
+        },
+        Side {
+            provider: dest_provider,
+            plan: dest_plan,
+        },
         remaining_items,
         dest_parent,
         false,
-        move || {
+        move |_| {
             dest_fm.refresh_spawned();
             if let Some(ref sfm) = source_fm {
                 sfm.refresh_spawned();

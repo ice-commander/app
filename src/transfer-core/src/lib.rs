@@ -67,20 +67,15 @@ pub fn retarget_top_level(
     renames: &std::collections::HashMap<String, String>,
 ) {
     for item in items.iter_mut() {
-        let (top, rest) = match item.relative_path.split_once('/') {
-            Some((t, r)) => (t.to_string(), Some(r.to_string())),
-            None => (item.relative_path.clone(), None),
-        };
-        let Some(new_top) = renames.get(&top) else {
+        let top = top_level_of(&item.relative_path);
+        let Some(new_top) = renames.get(top) else {
             continue;
         };
-        item.relative_path = match &rest {
-            Some(r) => format!("{new_top}/{r}"),
-            None => new_top.clone(),
-        };
-        if rest.is_none() {
+        let rest = item.relative_path[top.len()..].to_string();
+        if rest.is_empty() {
             item.name = new_top.clone();
         }
+        item.relative_path = format!("{new_top}{rest}");
     }
 }
 
@@ -203,6 +198,27 @@ pub fn buffer_for(size: u64) -> usize {
     (size as usize).min(COPY_BUFFER_MAX).max(1)
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Poured {
+    NoStreams,
+    Cancelled { opened: bool },
+    Done(u64),
+    Failed(AppError),
+}
+
+impl Poured {
+    fn after_opening(why: AppError) -> Self {
+        match why {
+            AppError::Cancelled => Self::Cancelled { opened: true },
+            why => Self::Failed(why),
+        }
+    }
+}
+
+fn cut_short(arrived: u64, size: u64) -> AppError {
+    AppError::Other(format!("the source ended after {arrived} of {size} bytes"))
+}
+
 pub async fn pour(
     from: &Rc<dyn FileSystemRpc>,
     src_path: &str,
@@ -212,13 +228,22 @@ pub async fn pour(
     permissions: Option<u32>,
     report: Option<&dyn Fn(u64)>,
     cancellation_flag: &Arc<AtomicBool>,
-) -> Option<Result<u64, AppError>> {
-    let mut source = match from.on_disk(src_path.to_string()).await {
-        Some(real) => on_this_disk(&real).await?,
-        None => from.open_read(src_path.to_string()).await?,
+) -> Poured {
+    let source = match from.on_disk(src_path.to_string()).await {
+        Some(real) => on_this_disk(&real).await,
+        None => from.open_read(src_path.to_string(), Some(size)).await,
     };
-    let Some(mut sink) = into.open_write(dest_path.to_string(), permissions).await else {
-        return None;
+    let Some(mut source) = source else {
+        return Poured::NoStreams;
+    };
+    if cancellation_flag.load(Ordering::Relaxed) {
+        return Poured::Cancelled { opened: false };
+    }
+    let Some(mut sink) = into
+        .open_write(dest_path.to_string(), permissions, Some(size))
+        .await
+    else {
+        return Poured::NoStreams;
     };
 
     let mut carrying = vec![0u8; buffer_for(size)];
@@ -226,17 +251,17 @@ pub async fn pour(
     let mut throttle = ThrottleTimer::new();
     loop {
         if cancellation_flag.load(Ordering::Relaxed) {
-            return Some(Err(AppError::Cancelled));
+            return Poured::Cancelled { opened: true };
         }
         let got = match source.fill(&mut carrying).await {
             Ok(got) => got,
-            Err(e) => return Some(Err(e)),
+            Err(e) => return Poured::after_opening(e),
         };
         if got == 0 {
             break;
         }
         if let Err(e) = sink.put(&carrying[..got]).await {
-            return Some(Err(e));
+            return Poured::after_opening(e);
         }
         moved += got as u64;
         if let (Some(report), true) = (report, throttle.ready()) {
@@ -244,12 +269,12 @@ pub async fn pour(
         }
     }
     if let Err(e) = sink.finish().await {
-        return Some(Err(e));
+        return Poured::after_opening(e);
     }
     if let Some(report) = report {
         report(moved);
     }
-    Some(Ok(moved))
+    Poured::Done(moved)
 }
 
 pub async fn write_file_async(
@@ -551,6 +576,580 @@ pub async fn scan_items(
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ClashKind {
+    ReplacesFile { size: u64 },
+    FileOverFolder,
+    FolderOverFile,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Clash {
+    pub relative_path: String,
+    pub kind: ClashKind,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Unchecked {
+    Failed(AppError),
+    Unreadable { folder: String, why: AppError },
+}
+
+impl From<AppError> for Unchecked {
+    fn from(why: AppError) -> Self {
+        Self::Failed(why)
+    }
+}
+
+#[cfg(windows)]
+const SEPARATORS: &[char] = &['/', '\\'];
+#[cfg(not(windows))]
+const SEPARATORS: &[char] = &['/'];
+
+fn parent_and_name(relative_path: &str) -> (&str, &str) {
+    relative_path
+        .rsplit_once(SEPARATORS)
+        .unwrap_or(("", relative_path))
+}
+
+fn and_above(relative_path: &str) -> impl Iterator<Item = &str> {
+    std::iter::successors(Some(relative_path), |at| {
+        (!at.is_empty()).then(|| parent_and_name(at).0)
+    })
+}
+
+fn top_level_of(relative_path: &str) -> &str {
+    relative_path
+        .split(SEPARATORS)
+        .next()
+        .unwrap_or(relative_path)
+}
+
+fn folder_above(path: &str) -> Option<(&str, &str)> {
+    let trimmed = path.trim_end_matches(SEPARATORS);
+    let (above, own) = trimmed.rsplit_once(SEPARATORS)?;
+    if own == "." || own == ".." {
+        return None;
+    }
+    if above.is_empty() || above.ends_with(':') {
+        return Some((&trimmed[..=above.len()], own));
+    }
+    Some((above, own))
+}
+
+fn matching<'a>(
+    entries: &'a [fm_core::rpc::RemoteFileEntry],
+    name: &str,
+) -> Option<&'a fm_core::rpc::RemoteFileEntry> {
+    entries.iter().find(|entry| entry.name == name)
+}
+
+struct Listing {
+    path: String,
+    entries: std::collections::HashMap<String, fm_core::rpc::RemoteFileEntry>,
+}
+
+impl Listing {
+    fn of(path: String, entries: Vec<fm_core::rpc::RemoteFileEntry>) -> Self {
+        let entries = entries
+            .into_iter()
+            .map(|entry| (entry.name.clone(), entry))
+            .collect();
+        Self { path, entries }
+    }
+
+    fn find(&self, name: &str) -> Option<&fm_core::rpc::RemoteFileEntry> {
+        self.entries.get(name)
+    }
+}
+
+async fn listing_of(
+    dest: &Rc<dyn FileSystemRpc>,
+    path: String,
+    shown_as_folder: bool,
+    cancellation_flag: &Arc<AtomicBool>,
+) -> Result<Option<Listing>, AppError> {
+    if cancellation_flag.load(Ordering::Relaxed) {
+        return Err(AppError::Cancelled);
+    }
+    match dest.list_dir(path.clone()).await {
+        Ok(entries) => Ok(Some(Listing::of(path, entries))),
+        Err(AppError::Cancelled) => Err(AppError::Cancelled),
+        Err(why) if shown_as_folder => Err(AppError::Other(format!("{path}: {why}"))),
+        Err(_) => Ok(None),
+    }
+}
+
+async fn listed_or_why(
+    dest: &Rc<dyn FileSystemRpc>,
+    path: &str,
+    cancellation_flag: &Arc<AtomicBool>,
+) -> Result<Result<Vec<fm_core::rpc::RemoteFileEntry>, AppError>, AppError> {
+    if cancellation_flag.load(Ordering::Relaxed) {
+        return Err(AppError::Cancelled);
+    }
+    match dest.list_dir(path.to_string()).await {
+        Err(AppError::Cancelled) => Err(AppError::Cancelled),
+        listed => Ok(listed),
+    }
+}
+
+async fn root_listing(
+    dest: &Rc<dyn FileSystemRpc>,
+    dest_parent: &str,
+    cancellation_flag: &Arc<AtomicBool>,
+) -> Result<Option<Listing>, Unchecked> {
+    let first = match listed_or_why(dest, dest_parent, cancellation_flag).await? {
+        Ok(entries) => return Ok(Some(Listing::of(dest_parent.to_string(), entries))),
+        Err(why) => why,
+    };
+    let (mut unread, mut why) = (dest_parent, first.clone());
+    while let Some((above, own)) = folder_above(unread) {
+        match listed_or_why(dest, above, cancellation_flag).await? {
+            Ok(entries) if matching(&entries, own).is_none() => return Ok(None),
+            Ok(_) => {
+                return Err(Unchecked::Unreadable {
+                    folder: unread.to_string(),
+                    why,
+                })
+            }
+            Err(next) => (unread, why) = (above, next),
+        }
+    }
+    Err(Unchecked::Unreadable {
+        folder: dest_parent.to_string(),
+        why: first,
+    })
+}
+
+pub async fn find_clashes(
+    dest: Rc<dyn FileSystemRpc>,
+    items: &[TransferItem],
+    dest_parent: &str,
+    cancellation_flag: &Arc<AtomicBool>,
+) -> Result<Vec<Clash>, Unchecked> {
+    let mut listed: std::collections::HashMap<&str, Option<Listing>> =
+        std::collections::HashMap::new();
+    let mut clashes = Vec::new();
+    for item in items {
+        let (folder, name) = parent_and_name(&item.relative_path);
+        let unlisted: Vec<&str> = and_above(folder)
+            .take_while(|dir| !listed.contains_key(dir))
+            .collect();
+        for dir in unlisted.into_iter().rev() {
+            let listing = if dir.is_empty() {
+                root_listing(&dest, dest_parent, cancellation_flag).await?
+            } else {
+                let (above, own) = parent_and_name(dir);
+                let found = listed
+                    .get(above)
+                    .and_then(Option::as_ref)
+                    .and_then(|there| {
+                        there
+                            .find(own)
+                            .map(|entry| (join_path(&there.path, own), entry.is_dir))
+                    });
+                match found {
+                    Some((path, is_dir)) => {
+                        listing_of(&dest, path, is_dir, cancellation_flag).await?
+                    }
+                    None => None,
+                }
+            };
+            listed.insert(dir, listing);
+        }
+        let Some(Some(there)) = listed.get(folder) else {
+            continue;
+        };
+        let Some((is_dir, size, path)) = there
+            .find(name)
+            .map(|entry| (entry.is_dir, entry.size, join_path(&there.path, name)))
+        else {
+            continue;
+        };
+        let kind = match (item.is_dir, is_dir) {
+            (true, true) => continue,
+            (true, false) => {
+                if !listed.contains_key(item.relative_path.as_str()) {
+                    let inside = listing_of(&dest, path, false, cancellation_flag).await?;
+                    listed.insert(item.relative_path.as_str(), inside);
+                }
+                if matches!(listed.get(item.relative_path.as_str()), Some(Some(_))) {
+                    continue;
+                }
+                ClashKind::FolderOverFile
+            }
+            (false, true) => ClashKind::FileOverFolder,
+            (false, false) => ClashKind::ReplacesFile { size },
+        };
+        clashes.push(Clash {
+            relative_path: item.relative_path.clone(),
+            kind,
+        });
+    }
+    Ok(clashes)
+}
+
+pub fn skip_clashes(items: &mut Vec<TransferItem>, skipped: &[Clash]) {
+    let left_out: std::collections::HashSet<&str> = skipped
+        .iter()
+        .map(|clash| clash.relative_path.as_str())
+        .collect();
+    let holding: std::collections::HashSet<&str> = left_out
+        .iter()
+        .flat_map(|path| and_above(path).skip(1))
+        .collect();
+    items.retain(|item| {
+        !holding.contains(item.relative_path.as_str())
+            && !and_above(&item.relative_path).any(|at| left_out.contains(at))
+    });
+}
+
+#[cfg(unix)]
+fn identity(path: &std::path::Path) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(path)
+        .ok()
+        .map(|meta| (meta.dev(), meta.ino()))
+}
+
+#[cfg(windows)]
+fn identity(path: &std::path::Path) -> Option<same_file::Handle> {
+    same_file::Handle::from_path(path).ok()
+}
+
+#[cfg(not(any(unix, windows)))]
+fn identity(_path: &std::path::Path) -> Option<()> {
+    None
+}
+
+fn same_file_on_disk(src_path: &str, dest_path: &str) -> bool {
+    let (src, dest) = (
+        std::path::Path::new(src_path),
+        std::path::Path::new(dest_path),
+    );
+    if src == dest {
+        return true;
+    }
+    match (identity(src), identity(dest)) {
+        (Some(src), Some(dest)) => src == dest,
+        _ => std::fs::canonicalize(dest)
+            .is_ok_and(|dest| std::fs::canonicalize(src).is_ok_and(|src| src == dest)),
+    }
+}
+
+fn steps(path: &str) -> Vec<&str> {
+    let mut kept = Vec::new();
+    for step in path.split(SEPARATORS) {
+        match step {
+            "" | "." => {}
+            ".." => {
+                kept.pop();
+            }
+            step => kept.push(step),
+        }
+    }
+    kept
+}
+
+fn within(folder: &str, path: &str) -> bool {
+    steps(path).starts_with(&steps(folder))
+}
+
+fn real_path(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    use std::path::Component;
+    let parts: Vec<Component> = path.components().collect();
+    (0..=parts.len()).rev().find_map(|kept| {
+        let real =
+            std::fs::canonicalize(parts[..kept].iter().collect::<std::path::PathBuf>()).ok()?;
+        Some(parts[kept..].iter().fold(real, |mut real, part| {
+            match part {
+                Component::ParentDir => {
+                    real.pop();
+                }
+                Component::Normal(name) => real.push(name),
+                _ => {}
+            }
+            real
+        }))
+    })
+}
+
+fn inside_on_disk(folder: &str, dest: &str) -> bool {
+    let Some(dest) = real_path(std::path::Path::new(dest)) else {
+        return false;
+    };
+    if std::fs::canonicalize(folder).is_ok_and(|folder| dest.starts_with(folder)) {
+        return true;
+    }
+    identity(std::path::Path::new(folder)).is_some_and(|folder| {
+        dest.ancestors()
+            .any(|up| identity(up).is_some_and(|up| up == folder))
+    })
+}
+
+fn one_filesystem(src: &Rc<dyn FileSystemRpc>, dest: &Rc<dyn FileSystemRpc>) -> bool {
+    if Rc::ptr_eq(src, dest) {
+        return true;
+    }
+    let fs_id = src.fs_id();
+    (!fs_id.is_empty() && fs_id == dest.fs_id())
+        || (src.connection_id().is_some() && src.connection_id() == dest.connection_id())
+}
+
+fn mount_point_in(src: &Rc<dyn FileSystemRpc>, dest: &Rc<dyn FileSystemRpc>) -> Option<String> {
+    let holding = src.fs_id();
+    if holding.is_empty() {
+        return None;
+    }
+    dest.fs_id()
+        .strip_prefix(&holding)?
+        .strip_prefix('/')
+        .map(str::to_string)
+}
+
+pub fn mounted_twice(src: &Rc<dyn FileSystemRpc>, dest: &Rc<dyn FileSystemRpc>) -> bool {
+    if Rc::ptr_eq(src, dest) || src.plugin_scope().is_none() || dest.plugin_scope().is_none() {
+        return false;
+    }
+    let fs_id = src.fs_id();
+    if fs_id.is_empty() || fs_id != dest.fs_id() {
+        return false;
+    }
+    !matches!(
+        (src.plugin_mount(), dest.plugin_mount()),
+        (Some(one), Some(other)) if one == other
+    )
+}
+
+fn tops(items: &[TransferItem]) -> impl Iterator<Item = &TransferItem> {
+    let folders: std::collections::HashSet<&str> = items
+        .iter()
+        .filter(|item| item.is_dir)
+        .map(|item| item.relative_path.as_str())
+        .collect();
+    items
+        .iter()
+        .filter(move |item| !folders.contains(parent_and_name(&item.relative_path).0))
+}
+
+fn roots(items: &[TransferItem]) -> impl Iterator<Item = &TransferItem> {
+    tops(items).filter(|item| item.is_dir)
+}
+
+async fn on_disk_path(provider: &Rc<dyn FileSystemRpc>, path: &str) -> Option<String> {
+    if provider.is_local() {
+        return Some(path.to_string());
+    }
+    provider.on_disk(path.to_string()).await
+}
+
+pub async fn into_itself(
+    src_provider: &Rc<dyn FileSystemRpc>,
+    dest_provider: &Rc<dyn FileSystemRpc>,
+    items: &[TransferItem],
+    dest_parent: &str,
+) -> Option<(String, String)> {
+    let one_filesystem = one_filesystem(src_provider, dest_provider);
+    let mount_point = mount_point_in(src_provider, dest_provider);
+    let dest_on_disk = on_disk_path(dest_provider, dest_parent).await;
+    for item in tops(items) {
+        let on_one_filesystem = match (
+            on_disk_path(src_provider, &item.src_path).await,
+            &dest_on_disk,
+        ) {
+            (Some(held), Some(dest)) => inside_on_disk(&held, dest),
+            _ => one_filesystem && within(&item.src_path, dest_parent),
+        };
+        let in_a_mount_of_it = mount_point
+            .as_deref()
+            .is_some_and(|at| within(&item.src_path, dest_parent) || within(&item.src_path, at));
+        if on_one_filesystem || in_a_mount_of_it {
+            return Some((item.src_path.clone(), dest_parent.to_string()));
+        }
+    }
+    None
+}
+
+pub fn is_the_same_entry(
+    src_provider: &Rc<dyn FileSystemRpc>,
+    src_path: &str,
+    dest_provider: &Rc<dyn FileSystemRpc>,
+    dest_path: &str,
+) -> bool {
+    if src_provider.is_local() && dest_provider.is_local() {
+        return same_file_on_disk(src_path, dest_path);
+    }
+    one_filesystem(src_provider, dest_provider) && steps(src_path) == steps(dest_path)
+}
+
+pub fn leave_out_items_onto_themselves(
+    src_provider: &Rc<dyn FileSystemRpc>,
+    dest_provider: &Rc<dyn FileSystemRpc>,
+    dest_parent: &str,
+    items: &mut Vec<TransferItem>,
+) {
+    let themselves: std::collections::HashSet<String> = items
+        .iter()
+        .filter(|item| top_level_of(&item.relative_path) == item.relative_path)
+        .filter(|item| {
+            is_the_same_entry(
+                src_provider,
+                &item.src_path,
+                dest_provider,
+                &join_path(dest_parent, &item.relative_path),
+            )
+        })
+        .map(|item| item.relative_path.clone())
+        .collect();
+    items.retain(|item| !themselves.contains(top_level_of(&item.relative_path)));
+}
+
+pub fn move_by_rename(items: &mut Vec<TransferItem>, dest_parent: &str) {
+    if roots(items).any(|item| inside_on_disk(&item.src_path, dest_parent)) {
+        return;
+    }
+    let _ = std::fs::create_dir_all(dest_parent);
+    let mut moved = std::collections::HashSet::new();
+    for item in items.iter() {
+        if top_level_of(&item.relative_path) == item.relative_path
+            && std::fs::rename(
+                &item.src_path,
+                std::path::Path::new(dest_parent).join(&item.relative_path),
+            )
+            .is_ok()
+        {
+            moved.insert(item.relative_path.clone());
+        }
+    }
+    items.retain(|item| !moved.contains(top_level_of(&item.relative_path)));
+}
+
+async fn same_entry(
+    one_filesystem: bool,
+    src: &Rc<dyn FileSystemRpc>,
+    src_path: &str,
+    dest: &Rc<dyn FileSystemRpc>,
+    dest_path: &str,
+) -> bool {
+    if one_filesystem && steps(src_path) == steps(dest_path) {
+        return true;
+    }
+    let Some(into) = on_disk_path(dest, dest_path).await else {
+        return false;
+    };
+    on_disk_path(src, src_path)
+        .await
+        .is_some_and(|from| same_file_on_disk(&from, &into))
+}
+
+enum Before {
+    Unknown,
+    Absent,
+    Was(fm_core::rpc::RemoteFileEntry),
+}
+
+async fn remove_if_changed(
+    dest: &Rc<dyn FileSystemRpc>,
+    folder: &str,
+    name: &str,
+    path: &str,
+    before: &Before,
+) {
+    if matches!(before, Before::Unknown) {
+        return;
+    }
+    let Ok(entries) = dest.list_dir(folder.to_string()).await else {
+        return;
+    };
+    let Some(now) = matching(&entries, name).filter(|entry| !entry.is_dir) else {
+        return;
+    };
+    let changed = match before {
+        Before::Was(was) => was.is_dir || was.size != now.size || was.modified != now.modified,
+        _ => true,
+    };
+    if changed {
+        dest.delete_entries(vec![path.to_string()]).await.ok();
+    }
+}
+
+#[derive(Default)]
+struct DestFolders {
+    made: std::collections::HashSet<String>,
+    listed: std::collections::HashMap<String, Option<Vec<fm_core::rpc::RemoteFileEntry>>>,
+}
+
+impl DestFolders {
+    async fn listing(
+        &mut self,
+        dest: &Rc<dyn FileSystemRpc>,
+        folder: &str,
+    ) -> Option<&[fm_core::rpc::RemoteFileEntry]> {
+        if !self.listed.contains_key(folder) {
+            let entries = dest.list_dir(folder.to_string()).await.ok();
+            self.listed.insert(folder.to_string(), entries);
+        }
+        self.listed.get(folder).and_then(Option::as_deref)
+    }
+
+    async fn before(&mut self, dest: &Rc<dyn FileSystemRpc>, folder: &str, name: &str) -> Before {
+        if self.made.contains(folder) {
+            return Before::Absent;
+        }
+        if let Some(entries) = self.listing(dest, folder).await {
+            return matching(entries, name)
+                .cloned()
+                .map_or(Before::Absent, Before::Was);
+        }
+        let Some((above, own)) = folder_above(folder) else {
+            return Before::Unknown;
+        };
+        match self.listing(dest, above).await {
+            Some(entries) if matching(entries, own).is_none() => Before::Absent,
+            _ => Before::Unknown,
+        }
+    }
+
+    async fn make(
+        &mut self,
+        dest: &Rc<dyn FileSystemRpc>,
+        parent: &str,
+        name: &str,
+        permissions: Option<u32>,
+    ) -> Result<(), AppError> {
+        let path = join_path(parent, name);
+        let seen = if self.made.contains(parent) {
+            None
+        } else {
+            self.listing(dest, parent)
+                .await
+                .and_then(|entries| entries.iter().find(|entry| entry.name == name))
+                .map(|entry| entry.is_dir)
+        };
+        if let Some(is_dir) = seen {
+            if is_dir || dest.list_dir(path.clone()).await.is_ok() {
+                return Ok(());
+            }
+        }
+        let created = dest
+            .create_directory(parent.to_string(), name.to_string(), permissions)
+            .await;
+        if created.is_ok() {
+            self.made.insert(path);
+            return created;
+        }
+        let entries = dest.list_dir(parent.to_string()).await.unwrap_or_default();
+        let Some(entry) = matching(&entries, name) else {
+            return created;
+        };
+        if entry.is_dir || dest.list_dir(join_path(parent, &entry.name)).await.is_ok() {
+            return Ok(());
+        }
+        created
+    }
+}
+
 pub async fn execute_transfer(
     src_provider: std::rc::Rc<dyn FileSystemRpc>,
     dest_provider: std::rc::Rc<dyn FileSystemRpc>,
@@ -561,6 +1160,19 @@ pub async fn execute_transfer(
     error_tx: tokio::sync::mpsc::UnboundedSender<ErrorRequest>,
     cancellation_flag: Arc<AtomicBool>,
 ) -> Result<(), AppError> {
+    if let Some((folder, dest)) =
+        into_itself(&src_provider, &dest_provider, &items, &dest_parent).await
+    {
+        return Err(AppError::Other(format!(
+            "{dest} is inside {folder}: nothing can go into itself"
+        )));
+    }
+    if mounted_twice(&src_provider, &dest_provider) {
+        return Err(AppError::Other(format!(
+            "{dest_parent} is in a file the other side has open separately: \
+             moving or copying between two openings of one file would lose files"
+        )));
+    }
     let src_is_local = src_provider.is_local() && !items.is_empty();
     let dest_is_local = dest_provider.is_local();
     let same_filesystem = !src_is_local
@@ -589,6 +1201,12 @@ pub async fn execute_transfer(
                                      buffer: &mut [u8]|
              -> std::io::Result<u64> {
                 let mut src_file = std::fs::File::open(&item.src_path)?;
+                if cancellation_flag_c.load(Ordering::Relaxed) {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Interrupted,
+                        "Cancelled",
+                    ));
+                }
                 if let Some(parent) = std::path::Path::new(dest_path).parent() {
                     let _ = std::fs::create_dir_all(parent);
                 }
@@ -629,6 +1247,13 @@ pub async fn execute_transfer(
                             "Cancelled",
                         ));
                     }
+                    if same_file_on_disk(&item.src_path, &dest_path) {
+                        skipped_local.push(item.relative_path.clone());
+                        if !item.is_dir {
+                            let _ = progress_tx_c.send(CopyMessage::FileSkipped);
+                        }
+                        break;
+                    }
 
                     let attempt: std::io::Result<()> = if item.is_dir {
                         let path = std::path::Path::new(&dest_path);
@@ -648,6 +1273,14 @@ pub async fn execute_transfer(
                             size: item.size,
                         });
                         copy_one_file(item, &dest_path, local_overall_copied_bytes, &mut buffer)
+                            .and_then(|copied| {
+                                if is_move && copied < item.size {
+                                    return Err(std::io::Error::other(cut_short(
+                                        copied, item.size,
+                                    )));
+                                }
+                                Ok(copied)
+                            })
                             .map(|copied| {
                                 #[cfg(unix)]
                                 if let Some(mode) = item.permissions {
@@ -701,26 +1334,47 @@ pub async fn execute_transfer(
             .map_err(AppError::from)?;
     } else {
         let mut overall_copied_bytes = 0u64;
+        let one_filesystem = one_filesystem(&src_provider, &dest_provider);
+        let mut folders = DestFolders::default();
         for item in items.iter() {
             let dest_path = join_path(&dest_parent, &item.relative_path);
+            let (folder, name) = parent_and_name(&item.relative_path);
+            let dest_folder = if folder.is_empty() {
+                dest_parent.clone()
+            } else {
+                join_path(&dest_parent, folder)
+            };
+            let mut before = Before::Unknown;
+            let mut looked = false;
             loop {
                 if cancellation_flag.load(Ordering::Relaxed) {
                     return Err(AppError::Cancelled);
                 }
+                if same_entry(
+                    one_filesystem,
+                    &src_provider,
+                    &item.src_path,
+                    &dest_provider,
+                    &dest_path,
+                )
+                .await
+                {
+                    skipped.push(item.relative_path.clone());
+                    if !item.is_dir {
+                        let _ = progress_tx.send(CopyMessage::FileSkipped);
+                    }
+                    break;
+                }
+                if !item.is_dir && !looked {
+                    before = folders.before(&dest_provider, &dest_folder, name).await;
+                    looked = true;
+                }
 
+                let mut written = false;
                 let attempt: Result<(), AppError> = if item.is_dir {
-                    let parent = if let Some(idx) = dest_path.rfind('/') {
-                        dest_path[..idx].to_string()
-                    } else {
-                        String::new()
-                    };
-                    create_dir_async(
-                        dest_provider.clone(),
-                        parent,
-                        item.name.clone(),
-                        item.permissions,
-                    )
-                    .await
+                    folders
+                        .make(&dest_provider, &dest_folder, &item.name, item.permissions)
+                        .await
                 } else {
                     let _ = progress_tx.send(CopyMessage::FileStart {
                         name: item.name.clone(),
@@ -762,39 +1416,60 @@ pub async fn execute_transfer(
                         )
                         .await
                     };
-                    if let Some(outcome) = poured {
-                        match outcome {
-                            Ok(moved) => {
-                                overall_copied_bytes += moved;
-                                let _ = progress_tx.send(CopyMessage::FileDone);
-                                break;
-                            }
-                            Err(AppError::Cancelled) => return Err(AppError::Cancelled),
-                            Err(e) => {
-                                match request_error_decision_async(
-                                    &error_tx,
-                                    &item.name,
-                                    e.to_string(),
+                    let poured = match poured {
+                        Poured::Done(moved) if is_move && moved < item.size => {
+                            Poured::Failed(cut_short(moved, item.size))
+                        }
+                        poured => poured,
+                    };
+                    match poured {
+                        Poured::NoStreams => {}
+                        Poured::Done(moved) => {
+                            overall_copied_bytes += moved;
+                            let _ = progress_tx.send(CopyMessage::FileDone);
+                            break;
+                        }
+                        Poured::Cancelled { opened } => {
+                            if opened {
+                                remove_if_changed(
+                                    &dest_provider,
+                                    &dest_folder,
+                                    name,
+                                    &dest_path,
+                                    &before,
                                 )
+                                .await;
+                            }
+                            return Err(AppError::Cancelled);
+                        }
+                        Poured::Failed(e) => {
+                            match request_error_decision_async(&error_tx, &item.name, e.to_string())
                                 .await
-                                {
-                                    ErrorAction::Retry => continue,
-                                    ErrorAction::Skip => {
-                                        skipped.push(item.relative_path.clone());
-                                        dest_provider
-                                            .delete_entries(vec![dest_path.clone()])
-                                            .await
-                                            .ok();
-                                        let _ = progress_tx.send(CopyMessage::FileSkipped);
-                                        break;
-                                    }
-                                    ErrorAction::Abort => {
-                                        dest_provider
-                                            .delete_entries(vec![dest_path.clone()])
-                                            .await
-                                            .ok();
-                                        return Err(AppError::Cancelled);
-                                    }
+                            {
+                                ErrorAction::Retry => continue,
+                                ErrorAction::Skip => {
+                                    skipped.push(item.relative_path.clone());
+                                    remove_if_changed(
+                                        &dest_provider,
+                                        &dest_folder,
+                                        name,
+                                        &dest_path,
+                                        &before,
+                                    )
+                                    .await;
+                                    let _ = progress_tx.send(CopyMessage::FileSkipped);
+                                    break;
+                                }
+                                ErrorAction::Abort => {
+                                    remove_if_changed(
+                                        &dest_provider,
+                                        &dest_folder,
+                                        name,
+                                        &dest_path,
+                                        &before,
+                                    )
+                                    .await;
+                                    return Err(AppError::Cancelled);
                                 }
                             }
                         }
@@ -821,10 +1496,14 @@ pub async fn execute_transfer(
 
                     match read_res {
                         Err(e) => Err(e),
+                        Ok(content) if is_move && (content.len() as u64) < item.size => {
+                            Err(cut_short(content.len() as u64, item.size))
+                        }
                         Ok(content) => {
                             if cancellation_flag.load(Ordering::Relaxed) {
                                 return Err(AppError::Cancelled);
                             }
+                            written = true;
                             let progress_tx_c2 = progress_tx.clone();
                             let overall_copied_bytes_c2 = overall_copied_bytes;
                             let half = content.len() as u64 / 2;
@@ -869,11 +1548,15 @@ pub async fn execute_transfer(
                             ErrorAction::Retry => continue,
                             ErrorAction::Skip => {
                                 skipped.push(item.relative_path.clone());
-                                if !dest_is_local && !item.is_dir {
-                                    dest_provider
-                                        .delete_entries(vec![dest_path.clone()])
-                                        .await
-                                        .ok();
+                                if written && !dest_is_local {
+                                    remove_if_changed(
+                                        &dest_provider,
+                                        &dest_folder,
+                                        name,
+                                        &dest_path,
+                                        &before,
+                                    )
+                                    .await;
                                 }
                                 if !item.is_dir {
                                     let _ = progress_tx.send(CopyMessage::FileSkipped);
@@ -881,11 +1564,15 @@ pub async fn execute_transfer(
                                 break;
                             }
                             ErrorAction::Abort => {
-                                if !dest_is_local && !item.is_dir {
-                                    dest_provider
-                                        .delete_entries(vec![dest_path.clone()])
-                                        .await
-                                        .ok();
+                                if written && !dest_is_local {
+                                    remove_if_changed(
+                                        &dest_provider,
+                                        &dest_folder,
+                                        name,
+                                        &dest_path,
+                                        &before,
+                                    )
+                                    .await;
                                 }
                                 return Err(AppError::Cancelled);
                             }
@@ -897,16 +1584,19 @@ pub async fn execute_transfer(
     }
 
     if is_move {
+        let left_out: std::collections::HashSet<&str> =
+            skipped.iter().map(String::as_str).collect();
+        let holding: std::collections::HashSet<&str> = skipped
+            .iter()
+            .flat_map(|path| and_above(path).skip(1))
+            .collect();
         let mut paths_to_delete = Vec::new();
         for item in items.iter().rev() {
             if cancellation_flag.load(Ordering::Relaxed) {
                 return Err(AppError::Cancelled);
             }
-            let rel = &item.relative_path;
-            let is_skipped = skipped.iter().any(|s| s == rel);
-            let holds_skipped =
-                item.is_dir && skipped.iter().any(|s| s.starts_with(&format!("{}/", rel)));
-            if is_skipped || holds_skipped {
+            let rel = item.relative_path.as_str();
+            if left_out.contains(rel) || (item.is_dir && holding.contains(rel)) {
                 continue;
             }
             paths_to_delete.push(item.src_path.clone());
@@ -1408,6 +2098,7 @@ mod tests {
             &self,
             path: String,
             _permissions: Option<u32>,
+            _size: Option<u64>,
         ) -> Option<Box<dyn fm_core::rpc::WriteStream>> {
             std::fs::File::create(path).ok().map(|f| {
                 let boxed: Box<dyn fm_core::rpc::WriteStream> = Box::new(LandedFile(f));
@@ -1658,7 +2349,11 @@ mod tests {
             ) -> Result<Vec<u8>, AppError> {
                 self.0.read_file(path, progress).await
             }
-            async fn open_read(&self, path: String) -> Option<Box<dyn fm_core::rpc::ReadStream>> {
+            async fn open_read(
+                &self,
+                path: String,
+                _size: Option<u64>,
+            ) -> Option<Box<dyn fm_core::rpc::ReadStream>> {
                 struct Held(Vec<u8>, usize);
                 #[async_trait::async_trait(?Send)]
                 impl fm_core::rpc::ReadStream for Held {
@@ -1701,7 +2396,11 @@ mod tests {
 
         #[async_trait::async_trait(?Send)]
         impl FileSystemRpc for Breaks {
-            async fn open_read(&self, _path: String) -> Option<Box<dyn fm_core::rpc::ReadStream>> {
+            async fn open_read(
+                &self,
+                _path: String,
+                _size: Option<u64>,
+            ) -> Option<Box<dyn fm_core::rpc::ReadStream>> {
                 struct Stopping(usize);
                 #[async_trait::async_trait(?Send)]
                 impl fm_core::rpc::ReadStream for Stopping {
@@ -1725,6 +2424,7 @@ mod tests {
                 &self,
                 _path: String,
                 _permissions: Option<u32>,
+                _size: Option<u64>,
             ) -> Option<Box<dyn fm_core::rpc::WriteStream>> {
                 struct Sink;
                 #[async_trait::async_trait(?Send)]
@@ -2227,7 +2927,11 @@ mod tests {
 
         #[async_trait::async_trait(?Send)]
         impl FileSystemRpc for Reads {
-            async fn open_read(&self, _path: String) -> Option<Box<dyn fm_core::rpc::ReadStream>> {
+            async fn open_read(
+                &self,
+                _path: String,
+                _size: Option<u64>,
+            ) -> Option<Box<dyn fm_core::rpc::ReadStream>> {
                 struct Once(bool);
                 #[async_trait::async_trait(?Send)]
                 impl fm_core::rpc::ReadStream for Once {
@@ -2246,6 +2950,7 @@ mod tests {
 
         struct FailsAtTheEnd {
             removed: Rc<RefCell<Vec<String>>>,
+            opened: Cell<bool>,
         }
 
         #[async_trait::async_trait(?Send)]
@@ -2254,7 +2959,9 @@ mod tests {
                 &self,
                 _path: String,
                 _permissions: Option<u32>,
+                _size: Option<u64>,
             ) -> Option<Box<dyn fm_core::rpc::WriteStream>> {
+                self.opened.set(true);
                 struct Sink;
                 #[async_trait::async_trait(?Send)]
                 impl fm_core::rpc::WriteStream for Sink {
@@ -2267,6 +2974,16 @@ mod tests {
                 }
                 Some(Box::new(Sink))
             }
+            async fn list_dir(
+                &self,
+                _path: String,
+            ) -> Result<Vec<fm_core::rpc::RemoteFileEntry>, AppError> {
+                let landed = self.opened.get().then(|| fm_core::rpc::RemoteFileEntry {
+                    name: "a.txt".to_string(),
+                    ..Default::default()
+                });
+                Ok(landed.into_iter().collect())
+            }
             async fn delete_entries(&self, paths: Vec<String>) -> Result<(), AppError> {
                 self.removed.borrow_mut().extend(paths);
                 Ok(())
@@ -2278,6 +2995,7 @@ mod tests {
             Rc::new(Reads),
             Rc::new(FailsAtTheEnd {
                 removed: removed.clone(),
+                opened: Cell::new(false),
             }),
             vec![file("a.txt", 5)],
             false,
@@ -2307,7 +3025,11 @@ mod tests {
 
         #[async_trait::async_trait(?Send)]
         impl FileSystemRpc for StopsHalfway {
-            async fn open_read(&self, _path: String) -> Option<Box<dyn fm_core::rpc::ReadStream>> {
+            async fn open_read(
+                &self,
+                _path: String,
+                _size: Option<u64>,
+            ) -> Option<Box<dyn fm_core::rpc::ReadStream>> {
                 struct Feeding {
                     stop: Arc<AtomicBool>,
                     given: usize,
@@ -2337,6 +3059,7 @@ mod tests {
                 &self,
                 _path: String,
                 _permissions: Option<u32>,
+                _size: Option<u64>,
             ) -> Option<Box<dyn fm_core::rpc::WriteStream>> {
                 struct Sink;
                 #[async_trait::async_trait(?Send)]

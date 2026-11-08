@@ -383,7 +383,6 @@ pub type ApiResult<T> = Result<T, String>;
 pub const PUBLIC_SETTINGS: &[&str] = &[
     "net.connect_timeout_secs",
     "net.request_timeout_secs",
-    "ui.bandwidth_limit",
     "ui.double_click_action",
     "ui.drives_toolbar_favorites_only",
     "ui.editor_type",

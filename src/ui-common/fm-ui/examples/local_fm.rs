@@ -75,6 +75,7 @@ impl LocalFm {
                 is_read_only: false,
                 wants_quick_filter: false,
                 can_change_permissions: true,
+                on_local_disk: true,
             },
             select_name: None,
         });

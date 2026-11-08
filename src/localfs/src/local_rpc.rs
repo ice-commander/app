@@ -401,7 +401,11 @@ impl fm_core::rpc::FileSystemRpc for LocalFileSystemRpc {
         res
     }
 
-    async fn open_read(&self, path: String) -> Option<Box<dyn fm_core::rpc::ReadStream>> {
+    async fn open_read(
+        &self,
+        path: String,
+        _size: Option<u64>,
+    ) -> Option<Box<dyn fm_core::rpc::ReadStream>> {
         let file = tokio::fs::File::open(PathBuf::from(path)).await.ok()?;
         Some(Box::new(LocalRead { file }))
     }
@@ -410,6 +414,7 @@ impl fm_core::rpc::FileSystemRpc for LocalFileSystemRpc {
         &self,
         path: String,
         permissions: Option<u32>,
+        _size: Option<u64>,
     ) -> Option<Box<dyn fm_core::rpc::WriteStream>> {
         let path = PathBuf::from(path);
         if let Some(parent) = path.parent() {

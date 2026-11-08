@@ -16,4 +16,7 @@ fm-core = { workspace = true }
 tokio = { workspace = true }
 async-trait = "0.1"
 
+[target.'cfg(windows)'.dependencies]
+same-file = "1"
+
 [dev-dependencies]

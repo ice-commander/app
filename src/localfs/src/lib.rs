@@ -10,13 +10,6 @@ pub fn set_request_timeout_secs(secs: u64) {
     common::set_request_timeout_secs(secs);
 }
 
-pub fn net_content_wait() -> fm_core::rpc::ContentWait {
-    match common::request_timeout() {
-        None => fm_core::rpc::ContentWait::Infinite,
-        Some(d) => fm_core::rpc::ContentWait::Bounded(d),
-    }
-}
-
 pub fn hostname() -> String {
     static HOSTNAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     HOSTNAME

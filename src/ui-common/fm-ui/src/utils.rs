@@ -479,6 +479,7 @@ mod tests {
             stream_close: None,
             copy_within: None,
             on_disk: None,
+            stream_abort: None,
         };
         let lease = fm_core::plugin_fs::lease_registry_for_test();
         let declared = std::ffi::CString::new(extensions).unwrap();

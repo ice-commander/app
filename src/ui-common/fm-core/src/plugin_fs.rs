@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_void};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 fn cstr(ptr: *const c_char) -> String {
@@ -150,6 +151,9 @@ impl FsPlugin {
     }
     fn stream_close_fn(&self) -> Option<ic_plugin_api::IcFsStreamCloseFn> {
         fs_call!(self, stream_close, ic_plugin_api::IcFsStreamCloseFn)
+    }
+    fn stream_abort_fn(&self) -> Option<ic_plugin_api::IcFsStreamAbortFn> {
+        fs_call!(self, stream_abort, ic_plugin_api::IcFsStreamAbortFn)
     }
     fn copy_within_fn(&self) -> Option<ic_plugin_api::IcFsCopyWithinFn> {
         fs_call!(self, copy_within, ic_plugin_api::IcFsCopyWithinFn)
@@ -314,6 +318,7 @@ enum Source {
     Connection {
         kind: String,
         settings: Vec<u8>,
+        opens_with: Vec<u8>,
         open: ic_plugin_api::IcConnectionOpenFn,
     },
 }
@@ -352,6 +357,7 @@ struct StreamArm {
     stream: ic_plugin_api::IcFsStream,
     busy: Arc<Mutex<()>>,
     off_thread: bool,
+    gone: Arc<AtomicBool>,
 }
 
 impl StreamArm {
@@ -368,14 +374,16 @@ impl StreamArm {
             }
         };
         let busy = self.busy.clone();
+        let gone = self.gone.clone();
         runtime
             .spawn_blocking(move || {
                 let carried = carried;
                 let _inside = busy.lock();
-                work(carried.0)
+                (!gone.load(Ordering::Relaxed)).then(|| work(carried.0))
             })
             .await
-            .map_err(|e| common::AppError::Other(e.to_string()))
+            .map_err(|e| common::AppError::Other(e.to_string()))?
+            .ok_or_else(|| common::AppError::Other("the stream is already closed".to_string()))
     }
 }
 
@@ -388,9 +396,12 @@ struct PluginRead {
 
 impl Drop for PluginRead {
     fn drop(&mut self) {
-        if !self.spent {
-            (self.close)(self.arm.stream);
+        if self.spent {
+            return;
         }
+        let _inside = self.arm.busy.lock();
+        self.arm.gone.store(true, Ordering::Relaxed);
+        (self.close)(self.arm.stream);
     }
 }
 
@@ -417,7 +428,11 @@ impl crate::rpc::ReadStream for PluginRead {
         if got == 0 && !self.spent {
             self.spent = true;
             let close = self.close;
-            let _ = self.arm.run(move |stream| close(stream)).await;
+            if self.arm.run(move |stream| close(stream)).await? != ic_plugin_api::IC_OK {
+                return Err(common::AppError::Other(
+                    "the filesystem could not finish reading the file".to_string(),
+                ));
+            }
         }
         Ok(got)
     }
@@ -427,13 +442,22 @@ struct PluginWrite {
     arm: StreamArm,
     write: ic_plugin_api::IcFsStreamWriteFn,
     close: ic_plugin_api::IcFsStreamCloseFn,
+    abort: Option<ic_plugin_api::IcFsStreamAbortFn>,
     spent: bool,
 }
 
 impl Drop for PluginWrite {
     fn drop(&mut self) {
-        if !self.spent {
-            (self.close)(self.arm.stream);
+        if self.spent {
+            return;
+        }
+        let _inside = self.arm.busy.lock();
+        self.arm.gone.store(true, Ordering::Relaxed);
+        match self.abort {
+            Some(abort) => abort(self.arm.stream),
+            None => {
+                (self.close)(self.arm.stream);
+            }
         }
     }
 }
@@ -608,6 +632,7 @@ impl PluginFsRpc {
             plugin,
             source: Source::Connection {
                 kind,
+                opens_with: settings_json.clone().into_bytes(),
                 settings: settings_json.into_bytes(),
                 open,
             },
@@ -624,6 +649,14 @@ impl PluginFsRpc {
     /// Says how this mount is to be named and drawn where a path begins.
     pub fn shown_as(mut self, shown: Shown) -> Self {
         self.shown = Some(shown);
+        self
+    }
+
+    /// What open receives; the mount is still named and copied by the settings alone.
+    pub fn opening_with(mut self, json: String) -> Self {
+        if let Source::Connection { opens_with, .. } = &mut self.source {
+            *opens_with = json.into_bytes();
+        }
         self
     }
 
@@ -663,7 +696,12 @@ impl PluginFsRpc {
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Result<Vec<u8>, ()>>();
         let reading = self.call(move |handle| {
-            let stream = open(handle, wanted.as_ptr(), ic_plugin_api::IC_OPEN_READ);
+            let stream = open(
+                handle,
+                wanted.as_ptr(),
+                ic_plugin_api::IC_OPEN_READ,
+                ic_plugin_api::IC_SIZE_UNKNOWN,
+            );
             if stream.is_null() {
                 let _ = tx.send(Err(()));
                 return;
@@ -730,27 +768,36 @@ impl PluginFsRpc {
             .stream_close_fn()
             .expect("checked by the caller");
         let chmod = permissions.zip(self.plugin.set_permissions_fn());
+        let abort = self.plugin.stream_abort_fn();
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<u64>();
         let writing = self.call(move |handle| {
-            let stream = open(handle, wanted.as_ptr(), ic_plugin_api::IC_OPEN_WRITE);
+            let stream = open(
+                handle,
+                wanted.as_ptr(),
+                ic_plugin_api::IC_OPEN_WRITE,
+                content.len() as u64,
+            );
             if stream.is_null() {
                 return false;
             }
             let mut sent = 0usize;
-            let mut ok = true;
             while sent < content.len() {
                 let end = (sent + WINDOW).min(content.len());
                 let took = write(stream, content[sent..end].as_ptr(), (end - sent) as u64);
                 if took <= 0 {
-                    ok = false;
-                    break;
+                    match abort {
+                        Some(abort) => abort(stream),
+                        None => {
+                            close(stream);
+                        }
+                    }
+                    return false;
                 }
                 sent += (took as usize).min(end - sent);
                 let _ = tx.send(sent as u64);
             }
-            let flushed = close(stream) == ic_plugin_api::IC_OK;
-            let wrote = ok && flushed;
+            let wrote = close(stream) == ic_plugin_api::IC_OK;
             if let (true, Some((mode, chmod))) = (wrote, chmod) {
                 let _ = chmod(handle, wanted.as_ptr(), mode & 0o7777);
             }
@@ -834,7 +881,11 @@ impl PluginFsRpc {
                 stood_on = Some(standing);
                 handle
             }
-            Source::Connection { settings, open, .. } => {
+            Source::Connection {
+                opens_with: settings,
+                open,
+                ..
+            } => {
                 let carried = Carried(self.plugin.user_data as *mut c_void);
                 let settings = settings.clone();
                 let open = *open;
@@ -1307,10 +1358,15 @@ impl crate::rpc::FileSystemRpc for PluginFsRpc {
     fn content_wait(&self) -> crate::rpc::ContentWait {
         match &self.source {
             Source::Nested { parent, .. } => parent.content_wait(),
-            Source::Connection { .. } => match common::request_timeout() {
-                None => crate::rpc::ContentWait::Infinite,
-                Some(limit) => crate::rpc::ContentWait::Bounded(limit),
-            },
+            // The first listing also connects, and the plugin keeps to both limits itself.
+            Source::Connection { .. } => {
+                match (common::connect_timeout(), common::request_timeout()) {
+                    (Some(connect), Some(request)) => {
+                        crate::rpc::ContentWait::Bounded(connect + request)
+                    }
+                    _ => crate::rpc::ContentWait::Infinite,
+                }
+            }
         }
     }
 
@@ -1338,14 +1394,23 @@ impl crate::rpc::FileSystemRpc for PluginFsRpc {
         .flatten()
     }
 
-    async fn open_read(&self, path: String) -> Option<Box<dyn crate::rpc::ReadStream>> {
+    async fn open_read(
+        &self,
+        path: String,
+        size: Option<u64>,
+    ) -> Option<Box<dyn crate::rpc::ReadStream>> {
         let open = self.plugin.stream_open_fn()?;
         let read = self.plugin.stream_read_fn()?;
         let close = self.plugin.stream_close_fn()?;
         let wanted = CString::new(path).ok()?;
         let stream = self
             .call(move |handle| {
-                CarriedStream(open(handle, wanted.as_ptr(), ic_plugin_api::IC_OPEN_READ))
+                CarriedStream(open(
+                    handle,
+                    wanted.as_ptr(),
+                    ic_plugin_api::IC_OPEN_READ,
+                    size.unwrap_or(ic_plugin_api::IC_SIZE_UNKNOWN),
+                ))
             })
             .await
             .ok()?
@@ -1358,6 +1423,7 @@ impl crate::rpc::FileSystemRpc for PluginFsRpc {
                 stream,
                 busy: self.busy.clone(),
                 off_thread: self.reaches_outside(),
+                gone: Arc::default(),
             },
             read,
             close,
@@ -1369,6 +1435,7 @@ impl crate::rpc::FileSystemRpc for PluginFsRpc {
         &self,
         path: String,
         permissions: Option<u32>,
+        size: Option<u64>,
     ) -> Option<Box<dyn crate::rpc::WriteStream>> {
         let open = self.plugin.stream_open_fn()?;
         let write = self.plugin.stream_write_fn()?;
@@ -1378,7 +1445,12 @@ impl crate::rpc::FileSystemRpc for PluginFsRpc {
         let opening = wanted.clone();
         let stream = self
             .call(move |handle| {
-                let stream = open(handle, opening.as_ptr(), ic_plugin_api::IC_OPEN_WRITE);
+                let stream = open(
+                    handle,
+                    opening.as_ptr(),
+                    ic_plugin_api::IC_OPEN_WRITE,
+                    size.unwrap_or(ic_plugin_api::IC_SIZE_UNKNOWN),
+                );
                 if !stream.is_null() {
                     if let Some((mode, chmod)) = chmod {
                         let _ = chmod(handle, opening.as_ptr(), mode & 0o7777);
@@ -1397,9 +1469,11 @@ impl crate::rpc::FileSystemRpc for PluginFsRpc {
                 stream,
                 busy: self.busy.clone(),
                 off_thread: self.reaches_outside(),
+                gone: Arc::default(),
             },
             write,
             close,
+            abort: self.plugin.stream_abort_fn(),
             spent: false,
         }))
     }
@@ -1556,9 +1630,11 @@ impl crate::rpc::FileSystemRpc for PluginFsRpc {
                         stood_on = Some(standing);
                         handle
                     }
-                    Source::Connection { settings, open, .. } => open(
-                        settings.as_ptr(),
-                        settings.len() as u64,
+                    Source::Connection {
+                        opens_with, open, ..
+                    } => open(
+                        opens_with.as_ptr(),
+                        opens_with.len() as u64,
                         plugin.user_data as *mut c_void,
                     ),
                 }
@@ -1953,6 +2029,7 @@ mod tests {
             stream_close: None,
             copy_within: None,
             on_disk: None,
+            stream_abort: None,
         }
     }
 
@@ -1970,6 +2047,7 @@ mod tests {
             _handle: ic_plugin_api::IcFsHandle,
             _path: *const c_char,
             _mode: u32,
+            _size: u64,
         ) -> ic_plugin_api::IcFsStream {
             Box::into_raw(Box::new(Open {
                 read: 0,
@@ -2414,8 +2492,12 @@ mod tests {
             let Ok(named) = CString::new(name.clone()) else {
                 return;
             };
-            let stream =
-                crate::host_fs::fs_open(*source, named.as_ptr(), ic_plugin_api::IC_OPEN_WRITE);
+            let stream = crate::host_fs::fs_open(
+                *source,
+                named.as_ptr(),
+                ic_plugin_api::IC_OPEN_WRITE,
+                bytes.len() as u64,
+            );
             if stream.is_null() {
                 return;
             }

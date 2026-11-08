@@ -1,6 +1,7 @@
 use fm_core::rpc::FileSystemRpc;
 use std::rc::Rc;
 
+#[derive(Clone)]
 pub struct EndpointPlan {
     kind: Endpoint,
     display_prefix: String,
@@ -12,6 +13,7 @@ struct Gone;
 #[async_trait::async_trait(?Send)]
 impl FileSystemRpc for Gone {}
 
+#[derive(Clone)]
 enum Endpoint {
     Local { config: client_config::AppConfig },
     Mounted { kind: String, settings: String },

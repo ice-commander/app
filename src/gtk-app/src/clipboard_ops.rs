@@ -24,6 +24,34 @@ fn same_filesystem(src: Option<&Rc<dyn FileSystemRpc>>, dest: &Rc<dyn FileSystem
     }
 }
 
+fn forget_moved(clipboard: &Clipboard, source: &Rc<dyn FileSystemRpc>, moved: &[String]) {
+    let left = clipboard.with(|c| {
+        let items: Vec<_> = c
+            .items
+            .iter()
+            .filter(|item| !moved.contains(&item.name))
+            .cloned()
+            .collect();
+        (Rc::ptr_eq(&c.source, source) && items.len() < c.items.len()).then(|| {
+            fm_core::clipboard::Clip {
+                kind: c.kind,
+                side: c.side.clone(),
+                source_path: c.source_path.clone(),
+                items,
+                source: c.source.clone(),
+                anchor: c.anchor.clone(),
+                rebuildable: c.rebuildable,
+                refresh_source: c.refresh_source.clone(),
+            }
+        })
+    });
+    match left.flatten() {
+        Some(clip) if clip.is_empty() => clipboard.clear(),
+        Some(clip) => clipboard.set(clip),
+        None => {}
+    }
+}
+
 pub fn take(clipboard: &Rc<Clipboard>, fm: &Rc<panel_router::PanelRouter>, kind: ClipKind) -> bool {
     let items: Vec<_> = fm
         .selected_entries()
@@ -104,17 +132,17 @@ pub fn paste_into(
             .map(|i| (i.name.clone(), i.is_dir, i.size, i.permissions))
             .collect(),
         parent: source_path,
-        provider,
+        provider: provider.clone(),
         refresh: None,
         dest_names,
         on_done: Some({
             let clipboard = clipboard.clone();
-            Rc::new(move || {
+            Rc::new(move |moved: &[String]| {
                 if let Some(f) = &refresh_source {
                     f();
                 }
                 if kind == ClipKind::Cut {
-                    clipboard.clear();
+                    forget_moved(&clipboard, &provider, moved);
                 }
             })
         }),

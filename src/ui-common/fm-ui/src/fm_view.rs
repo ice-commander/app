@@ -25,6 +25,7 @@ pub struct SourceInfo {
     pub is_read_only: bool,
     pub wants_quick_filter: bool,
     pub can_change_permissions: bool,
+    pub on_local_disk: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

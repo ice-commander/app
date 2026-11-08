@@ -157,6 +157,7 @@ mod tests {
             stream_close: None,
             copy_within: None,
             on_disk: None,
+            stream_abort: None,
         };
         let exts = std::ffi::CString::new(".zip,.tar,.tar.gz,.tgz,.tar.bz2,.tbz2,.tbz").unwrap();
         let lease = fm_core::plugin_fs::lease_registry_for_test();

@@ -134,17 +134,22 @@ impl FileSystemRpc for RoutingProvider {
         self.provider.on_disk(self.resolve(&path)).await
     }
 
-    async fn open_read(&self, path: String) -> Option<Box<dyn fm_core::rpc::ReadStream>> {
-        self.provider.open_read(self.resolve(&path)).await
+    async fn open_read(
+        &self,
+        path: String,
+        size: Option<u64>,
+    ) -> Option<Box<dyn fm_core::rpc::ReadStream>> {
+        self.provider.open_read(self.resolve(&path), size).await
     }
 
     async fn open_write(
         &self,
         path: String,
         permissions: Option<u32>,
+        size: Option<u64>,
     ) -> Option<Box<dyn fm_core::rpc::WriteStream>> {
         self.provider
-            .open_write(self.resolve(&path), permissions)
+            .open_write(self.resolve(&path), permissions, size)
             .await
     }
 

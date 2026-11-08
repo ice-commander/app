@@ -244,7 +244,12 @@ pub extern "C" fn fs_caps(source: IcFsSource) -> u32 {
     IC_FS_SEEK | IC_FS_WRITE | IC_FS_LIST | IC_FS_LOCAL_PATH
 }
 
-pub extern "C" fn fs_open(source: IcFsSource, path: *const c_char, mode: u32) -> IcStream {
+pub extern "C" fn fs_open(
+    source: IcFsSource,
+    path: *const c_char,
+    mode: u32,
+    _size: u64,
+) -> IcStream {
     let Some(source) = source_of(source) else {
         return std::ptr::null_mut();
     };
@@ -441,7 +446,7 @@ pub fn where_it_stands(source: IcFsSource) -> Option<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ic_plugin_api::IC_OPEN_READ;
+    use ic_plugin_api::{IC_OPEN_READ, IC_SIZE_UNKNOWN};
 
     fn a_directory(named: &str) -> PathBuf {
         let at = std::env::temp_dir().join(format!("ic-host-fs-{}-{named}", std::process::id()));
@@ -466,7 +471,12 @@ mod tests {
         std::fs::write(root.join("digits.txt"), b"1234567890").expect("a file");
         let source = opened(&root);
 
-        let stream = fs_open(source, c("digits.txt").as_ptr(), IC_OPEN_READ);
+        let stream = fs_open(
+            source,
+            c("digits.txt").as_ptr(),
+            IC_OPEN_READ,
+            IC_SIZE_UNKNOWN,
+        );
         assert!(!stream.is_null());
         assert_eq!(fs_seek(stream, 4, IC_SEEK_SET), 4);
         let mut into = [0u8; 3];
@@ -485,7 +495,12 @@ mod tests {
         std::fs::write(root.join("holiday.zip"), vec![0u8; 4096]).expect("a file");
         let source = opened(&root);
 
-        let stream = fs_open(source, c("/holiday.zip").as_ptr(), IC_OPEN_READ);
+        let stream = fs_open(
+            source,
+            c("/holiday.zip").as_ptr(),
+            IC_OPEN_READ,
+            IC_SIZE_UNKNOWN,
+        );
         assert_eq!(fs_seek(stream, 0, IC_SEEK_END), 4096);
         assert_eq!(fs_seek(stream, -22, IC_SEEK_END), 4074, "a zip's tail");
         fs_close(stream);
@@ -498,7 +513,12 @@ mod tests {
         let root = a_directory("writing");
         let source = opened(&root);
 
-        let stream = fs_open(source, c("made.txt").as_ptr(), IC_OPEN_WRITE);
+        let stream = fs_open(
+            source,
+            c("made.txt").as_ptr(),
+            IC_OPEN_WRITE,
+            IC_SIZE_UNKNOWN,
+        );
         assert!(!stream.is_null());
         assert_eq!(fs_write(stream, b"hello".as_ptr(), 5), 5);
         assert_eq!(fs_truncate(stream, 4), IC_OK);
@@ -544,7 +564,13 @@ mod tests {
         std::fs::write(root.join("inside.txt"), b"..").expect("a file");
         let source = opened(&root);
 
-        assert!(fs_open(source, c("../../etc/passwd").as_ptr(), IC_OPEN_READ).is_null());
+        assert!(fs_open(
+            source,
+            c("../../etc/passwd").as_ptr(),
+            IC_OPEN_READ,
+            IC_SIZE_UNKNOWN
+        )
+        .is_null());
         assert!(fs_local_path(source, c("..").as_ptr()).is_null());
         assert_eq!(fs_list(source, c("../..").as_ptr()).count, 0);
         HostSource::close(source);
@@ -562,7 +588,13 @@ mod tests {
         HostSource::close(source);
 
         assert_eq!(fs_caps(source), 0);
-        assert!(fs_open(source, c("gone.txt").as_ptr(), IC_OPEN_READ).is_null());
+        assert!(fs_open(
+            source,
+            c("gone.txt").as_ptr(),
+            IC_OPEN_READ,
+            IC_SIZE_UNKNOWN
+        )
+        .is_null());
         assert_eq!(fs_list(source, c("/").as_ptr()).count, 0);
         assert!(fs_local_path(source, c("gone.txt").as_ptr()).is_null());
         // Closing it twice is a plugin's mistake, not a double free.

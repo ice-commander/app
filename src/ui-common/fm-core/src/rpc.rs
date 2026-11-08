@@ -170,7 +170,7 @@ pub trait FileSystemRpc {
         None
     }
 
-    async fn open_read(&self, _path: String) -> Option<Box<dyn ReadStream>> {
+    async fn open_read(&self, _path: String, _size: Option<u64>) -> Option<Box<dyn ReadStream>> {
         None
     }
 
@@ -178,6 +178,7 @@ pub trait FileSystemRpc {
         &self,
         _path: String,
         _permissions: Option<u32>,
+        _size: Option<u64>,
     ) -> Option<Box<dyn WriteStream>> {
         None
     }

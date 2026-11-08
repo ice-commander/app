@@ -17,6 +17,7 @@ mod page_logging;
 mod page_plugins;
 mod page_security;
 pub mod page_toolbar;
+mod page_transfer;
 mod reset;
 
 pub fn show_settings_dialog(
@@ -126,6 +127,7 @@ pub fn show_settings_dialog(
 
     let mut categories = vec![("About", crate::i18n::tr("settings.cat_about"))];
     categories.push(("Connections", crate::i18n::tr("settings.cat_connections")));
+    categories.push(("Data transfer", crate::i18n::tr("settings.cat_transfer")));
     categories.push(("Interface", crate::i18n::tr("settings.cat_interface")));
     categories.push(("Toolbar", crate::i18n::tr("settings.cat_toolbar")));
     categories.push(("Hot keys", crate::i18n::tr("settings.cat_hotkeys")));
@@ -178,6 +180,12 @@ pub fn show_settings_dialog(
                 let on_changed = on_connections_changed.clone();
                 Some(std::boxed::Box::new(move |page_box: &Box| {
                     page_connections::build(page_box, &dialog, config.clone(), on_changed.clone());
+                }))
+            }
+            "Data transfer" => {
+                let config = config.clone();
+                Some(std::boxed::Box::new(move |page_box: &Box| {
+                    page_transfer::build(page_box, config.clone());
                 }))
             }
             "Interface" => {

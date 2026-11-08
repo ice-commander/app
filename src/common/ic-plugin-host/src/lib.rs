@@ -1120,12 +1120,17 @@ impl ConnectionKind {
         let open = self.open_fn()?;
         let filesystem = self.filesystem.clone()?;
         let encoded = serde_json::to_string(settings).ok()?;
+        let mut given = settings.clone();
+        for (key, value) in connection_limits() {
+            given.entry(key.to_string()).or_insert(value);
+        }
         let mounted = fm_core::plugin_fs::PluginFsRpc::for_connection(
             filesystem,
             open,
             self.id.clone(),
             encoded,
-        );
+        )
+        .opening_with(serde_json::to_string(&given).ok()?);
         Some(std::rc::Rc::new(match shown {
             Some(shown) => mounted.shown_as(shown),
             None => mounted,
@@ -2032,6 +2037,23 @@ pub fn set_settings_config(config: client_config::AppConfig) {
         Ok(mut held) => *held = Some(config),
         Err(poisoned) => *poisoned.into_inner() = Some(config),
     }
+}
+
+fn connection_limits() -> [(&'static str, String); 2] {
+    let held = match settings_config().lock() {
+        Ok(held) => held.clone(),
+        Err(poisoned) => poisoned.into_inner().clone(),
+    };
+    let secs = |key: &str| {
+        held.as_ref()
+            .and_then(|config| config.get::<u64>(key))
+            .unwrap_or(20)
+            .to_string()
+    };
+    [
+        ("ic.connect_timeout_secs", secs("net.connect_timeout_secs")),
+        ("ic.request_timeout_secs", secs("net.request_timeout_secs")),
+    ]
 }
 
 fn settings_key(plugin_id: &str, key: &str) -> Option<String> {
@@ -3531,6 +3553,7 @@ mod tests {
             stream_close: None,
             copy_within: None,
             on_disk: None,
+            stream_abort: None,
         }
     }
 
@@ -3820,8 +3843,8 @@ mod tests {
         OPENED_WITH.with(|seen| {
             assert_eq!(
                 *seen.borrow(),
-                vec![r#"{"host":"example.org","user":"ivan"}"#.to_string()],
-                "the settings reach the plugin as one json object"
+                vec![r#"{"host":"example.org","ic.connect_timeout_secs":"20","ic.request_timeout_secs":"20","user":"ivan"}"#.to_string()],
+                "the settings reach the plugin as one json object, with the timeouts from Settings"
             );
         });
     }

@@ -219,7 +219,9 @@ pub fn create_context_menu(
     }
 
     {
-        let is_archive = !is_dir && fm_core::plugin_fs::handles_extension(&name_clone);
+        let is_archive = !is_dir
+            && shared.source.borrow().on_local_disk
+            && fm_core::plugin_fs::handles_extension(&name_clone);
         if is_archive {
             let btn_ext = create_btn_with_label(
                 &crate::i18n::tr("fm.context.extract"),

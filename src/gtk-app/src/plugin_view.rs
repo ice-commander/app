@@ -213,7 +213,12 @@ struct Carried(ic_plugin_api::IcFsSource);
 fn read_through_the_host(source: ic_plugin_api::IcFsSource, path: &str) -> Option<Vec<u8>> {
     let named = std::ffi::CString::new(path).ok()?;
     let host = ic_plugin_host::host_ref();
-    let stream = (host.fs_open)(source, named.as_ptr(), ic_plugin_api::IC_OPEN_READ);
+    let stream = (host.fs_open)(
+        source,
+        named.as_ptr(),
+        ic_plugin_api::IC_OPEN_READ,
+        ic_plugin_api::IC_SIZE_UNKNOWN,
+    );
     if stream.is_null() {
         return None;
     }
