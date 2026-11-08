@@ -285,8 +285,9 @@ impl Surface {
     /// Runs `f` once it has closed, however that happened.
     pub fn connect_closed(&self, f: impl Fn() + 'static) {
         match self {
+            // Not destroy: that waits for the last reference, and callers keep one until told.
             Self::Window(w) => {
-                w.connect_destroy(move |_| f());
+                w.connect_unrealize(move |_| f());
             }
             Self::Page { page, pages, .. } => on_popped(pages, page, f),
         }
