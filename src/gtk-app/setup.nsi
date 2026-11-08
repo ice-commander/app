@@ -2,7 +2,7 @@
 !include "x64.nsh"
 
 Name "Ice Commander"
-OutFile "..\\..\\distr\\ice-commander-gtk-0.8.144-1-win64.exe"
+OutFile "..\\..\\distr\\ice-commander-gtk-0.8.146-1-win64.exe"
 InstallDir "$PROGRAMFILES64\Ice Commander"
 Target amd64-unicode
 
@@ -77,7 +77,7 @@ Section "Ice Commander (Required)" SecMain
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\IceCommander" "DisplayName" "Ice Commander"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\IceCommander" "UninstallString" '"$INSTDIR\Uninstall.exe"'
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\IceCommander" "DisplayIcon" '"$INSTDIR\ice-commander.exe"'
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\IceCommander" "DisplayVersion" "0.8.144"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\IceCommander" "DisplayVersion" "0.8.146"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\IceCommander" "Publisher" "Ice Commander Project"
 SectionEnd
 
