@@ -68,6 +68,11 @@ Section "Ice Commander (Required)" SecMain
     File "..\..\THIRD-PARTY-LICENSES.md"
     SetOutPath "$INSTDIR"
     
+    nsExec::Exec 'netsh advfirewall firewall delete rule name=all program="$INSTDIR\ice-commander.exe"'
+    Pop $0
+    nsExec::Exec 'netsh advfirewall firewall add rule name="Ice Commander" dir=in action=allow program="$INSTDIR\ice-commander.exe" enable=yes profile=private'
+    Pop $0
+    
     CreateDirectory "$SMPROGRAMS\Ice Commander"
     CreateShortcut "$SMPROGRAMS\Ice Commander\Ice Commander.lnk" "$INSTDIR\ice-commander.exe" "" "$INSTDIR\ice-commander.exe" 0
     CreateShortcut "$SMPROGRAMS\Ice Commander\Uninstall Ice Commander.lnk" "$INSTDIR\Uninstall.exe"
@@ -89,6 +94,8 @@ Section "Uninstall"
 	SetRegView 64
 
     ExecWait 'taskkill /F /IM ice-commander.exe'
+    nsExec::Exec 'netsh advfirewall firewall delete rule name=all program="$INSTDIR\ice-commander.exe"'
+    Pop $0
     
     RMDir /r "$INSTDIR"
     

@@ -4,6 +4,13 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- mDNS: most Wi-Fi drivers drop multicast unless an app holds a multicast lock (LanMulticast). No
+         ACCESS_LOCAL_NETWORK at targetSdk 36: at 37 declare it and ask for it (Nearby devices). -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <!-- Else the Wi-Fi permission makes stores require Wi-Fi, which a TV box on Ethernet lacks. -->
+    <uses-feature
+        android:name="android.hardware.wifi"
+        android:required="false" />
     <!-- GTK brings a presented window's task to the front (ActivityManager.moveTaskToFront). -->
     <uses-permission android:name="android.permission.REORDER_TASKS" />
     <!-- Local panels are real paths in the native code. -->

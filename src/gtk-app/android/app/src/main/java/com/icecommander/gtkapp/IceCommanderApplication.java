@@ -19,6 +19,7 @@ public class IceCommanderApplication extends RuntimeApplication {
 	private int barColour;
 
 	private BackgroundPlayback playback;
+	private LanMulticast multicast;
 
 	/** Built on first use, from whichever thread asks: the constructor only makes objects. */
 	public synchronized BackgroundPlayback playback() {
@@ -47,6 +48,7 @@ public class IceCommanderApplication extends RuntimeApplication {
 		} catch (ErrnoException e) {
 			throw new RuntimeException(e);
 		}
+		multicast = new LanMulticast(this);
 		super.onCreate();
 
 		registerActivityLifecycleCallbacks(new ActivityLifecycleCallbacks() {
@@ -67,7 +69,9 @@ public class IceCommanderApplication extends RuntimeApplication {
 			public void onActivityCreated(Activity activity, Bundle state) {}
 
 			@Override
-			public void onActivityStarted(Activity activity) {}
+			public void onActivityStarted(Activity activity) {
+				multicast.activity(true);
+			}
 
 			@Override
 			public void onActivityResumed(Activity activity) {}
@@ -76,7 +80,9 @@ public class IceCommanderApplication extends RuntimeApplication {
 			public void onActivityPaused(Activity activity) {}
 
 			@Override
-			public void onActivityStopped(Activity activity) {}
+			public void onActivityStopped(Activity activity) {
+				multicast.activity(false);
+			}
 
 			@Override
 			public void onActivitySaveInstanceState(Activity activity, Bundle state) {}
@@ -118,5 +124,10 @@ public class IceCommanderApplication extends RuntimeApplication {
 				activity.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 			}
 		});
+	}
+
+	/** Called over JNI from the GTK thread (android.rs): any loaded plugin asks for multicast, or none does. */
+	public void lanMulticast(boolean on) {
+		getMainExecutor().execute(() -> multicast.wanted(on));
 	}
 }

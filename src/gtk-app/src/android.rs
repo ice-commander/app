@@ -23,6 +23,8 @@ struct Android;
 /// list is built while the application activates, long before the window is mapped.
 static SERVICES_ATTACHED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+static MULTICAST: ic_plugin_host::AnyAsks = ic_plugin_host::AnyAsks::new();
+
 impl Platform for Android {
     fn mobile(&self) -> bool {
         true
@@ -76,6 +78,10 @@ impl Platform for Android {
             Ok(()) => {
                 ATTACHED.with(|done| done.set(true));
                 SERVICES_ATTACHED.store(true, std::sync::atomic::Ordering::Release);
+                // Called on the asking plugin's thread, under the helper's lock.
+                MULTICAST.listen(Box::new(|on| {
+                    gtk::glib::idle_add_once(move || lan_multicast(on));
+                }));
             }
             Err(e) => gtk::glib::g_warning!("ice-commander", "cannot attach Android services: {e}"),
         }
@@ -260,7 +266,7 @@ fn ask_android_for_volumes() -> Result<Vec<(String, String)>, String> {
     asked.map_err(|e| e.to_string())
 }
 
-fn with_playback<T>(f: impl FnOnce(&mut JNIEnv, &JObject) -> JniResult<T>) -> Result<T, String> {
+fn with_application<T>(f: impl FnOnce(&mut JNIEnv, &JObject) -> JniResult<T>) -> Result<T, String> {
     if !SERVICES_ATTACHED.load(std::sync::atomic::Ordering::Acquire) {
         return Err("the Android context is not attached yet".to_string());
     }
@@ -269,22 +275,26 @@ fn with_playback<T>(f: impl FnOnce(&mut JNIEnv, &JObject) -> JniResult<T>) -> Re
     let application = unsafe { JObject::from_raw(android.context().cast()) };
     let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
 
-    let called = env.with_local_frame(8, |env| -> JniResult<T> {
+    let called = env.with_local_frame(8, |env| -> JniResult<T> { f(env, &application) });
+    if env.exception_check().unwrap_or(false) {
+        let _ = env.exception_describe();
+        let _ = env.exception_clear();
+    }
+    called.map_err(|e| e.to_string())
+}
+
+fn with_playback<T>(f: impl FnOnce(&mut JNIEnv, &JObject) -> JniResult<T>) -> Result<T, String> {
+    with_application(|env, application| {
         let playback = env
             .call_method(
-                &application,
+                application,
                 "playback",
                 "()Lcom/icecommander/gtkapp/BackgroundPlayback;",
                 &[],
             )?
             .l()?;
         f(env, &playback)
-    });
-    if env.exception_check().unwrap_or(false) {
-        let _ = env.exception_describe();
-        let _ = env.exception_clear();
-    }
-    called.map_err(|e| e.to_string())
+    })
 }
 
 fn told(what: &str, done: Result<(), String>) {
@@ -364,6 +374,21 @@ pub fn media_end() {
     );
 }
 
+fn lan_multicast(on: bool) {
+    told(
+        "whether a plugin asks for multicast",
+        with_application(|env, application| {
+            env.call_method(
+                application,
+                "lanMulticast",
+                "(Z)V",
+                &[JValue::Bool(u8::from(on))],
+            )?;
+            Ok(())
+        }),
+    );
+}
+
 #[no_mangle]
 pub extern "C" fn Java_com_icecommander_gtkapp_BackgroundPlayback_command(
     _env: JNIEnv,
@@ -408,6 +433,10 @@ pub extern "C" fn main(_argc: c_int, _argv: *mut *mut c_char, _envp: *mut *mut c
     std::panic::set_hook(Box::new(|info| {
         gtk::glib::g_critical!("ice-commander", "{info}")
     }));
+    // Before run(): plugins load at activation, long before attach_services, and may ask in init.
+    ic_plugin_host::set_platform_call_handler("multicast", |plugin, value| {
+        MULTICAST.answer(plugin, value)
+    });
     let runtime = tokio::runtime::Runtime::new().expect("a Tokio runtime");
     let code = runtime.block_on(async { crate::run(Rc::new(Android)) });
     code.value()

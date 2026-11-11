@@ -165,6 +165,7 @@ pub fn shutdown_plugins() {
         ic_logging::info!("plugin {name} is being told to stop");
         stop();
     }
+    crate::forget_plugins();
 }
 
 pub fn shutdown_count() -> usize {
@@ -318,6 +319,10 @@ pub fn load_library(path: &Path) -> Attempt {
         };
     };
     let kind = std::ffi::CString::new(crate::host_kind()).unwrap_or_default();
+    let id = about
+        .as_ref()
+        .map_or_else(|| name.clone(), |about| about.id.clone());
+    crate::remember_plugin(&id);
     let code = entry(crate::host_ref() as *const IcHost, kind.as_ptr());
     let outcome = if code == IC_OK {
         Outcome::Loaded
@@ -338,6 +343,8 @@ pub fn load_library(path: &Path) -> Attempt {
             Ok(mut held) => held.push(library),
             Err(poisoned) => poisoned.into_inner().push(library),
         }
+    } else {
+        crate::forget_plugin(&id);
     }
     Attempt {
         name,

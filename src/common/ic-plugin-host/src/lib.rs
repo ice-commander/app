@@ -140,7 +140,7 @@ extern "C" fn host_add_toolbar_button(
 pub fn host_table() -> IcHost {
     IcHost {
         magic: IC_HOST_MAGIC,
-        struct_size: std::mem::size_of::<IcHost>() as u32,
+        struct_size: IcHost::offset_of_end(),
         abi_version: IC_ABI_VERSION,
         host_version,
         screen: host_screen,
@@ -187,6 +187,7 @@ pub fn host_table() -> IcHost {
         register_pinned_connections: host_register_pinned_connections,
         pinned_connections_changed: host_pinned_connections_changed,
         set_header_icon: host_set_header_icon,
+        platform_call: host_platform_call,
     }
 }
 
@@ -841,10 +842,151 @@ pub fn load_plugins(plugins: &[(&str, IcPluginInit)]) {
     let host = host_ref();
     let kind = std::ffi::CString::new(host_kind()).unwrap_or_default();
     for (name, init) in plugins {
+        remember_plugin(name);
         let code = init(host as *const IcHost, kind.as_ptr());
         if code != IC_OK {
+            forget_plugin(name);
             ic_logging::warn!("plugin {name} refused to initialise, code {code}");
         }
+    }
+}
+
+type PlatformCall = std::sync::Arc<dyn Fn(&str, Option<&str>) -> c_int + Send + Sync>;
+
+#[derive(Default)]
+struct PlatformCalls {
+    loaded: std::collections::HashSet<String>,
+    handlers: std::collections::HashMap<String, PlatformCall>,
+}
+
+fn platform_calls() -> std::sync::MutexGuard<'static, PlatformCalls> {
+    static HELD: std::sync::OnceLock<std::sync::Mutex<PlatformCalls>> = std::sync::OnceLock::new();
+    HELD.get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Answers `platform_call` for `name` on the caller's thread; told `None` when a plugin is forgotten.
+pub fn set_platform_call_handler(
+    name: &str,
+    handler: impl Fn(&str, Option<&str>) -> c_int + Send + Sync + 'static,
+) {
+    let handler: PlatformCall = std::sync::Arc::new(handler);
+    platform_calls().handlers.insert(name.to_string(), handler);
+}
+
+pub(crate) fn remember_plugin(id: &str) {
+    if !id.trim().is_empty() {
+        platform_calls().loaded.insert(id.to_string());
+    }
+}
+
+pub(crate) fn forget_plugin(id: &str) {
+    let handlers: Vec<PlatformCall> = {
+        let mut held = platform_calls();
+        if !held.loaded.remove(id) {
+            return;
+        }
+        held.handlers.values().cloned().collect()
+    };
+    for handler in handlers {
+        handler(id, None);
+    }
+}
+
+pub(crate) fn forget_plugins() {
+    let (ids, handlers): (Vec<String>, Vec<PlatformCall>) = {
+        let mut held = platform_calls();
+        let ids = held.loaded.drain().collect();
+        (ids, held.handlers.values().cloned().collect())
+    };
+    for id in &ids {
+        for handler in &handlers {
+            handler(id, None);
+        }
+    }
+}
+
+extern "C" fn host_platform_call(
+    plugin_id: *const c_char,
+    name: *const c_char,
+    value: *const c_char,
+) -> c_int {
+    let id = cstr(plugin_id);
+    let handler = {
+        let held = platform_calls();
+        if !held.loaded.contains(&id) {
+            return ic_plugin_api::IC_ERR_INIT_FAILED;
+        }
+        held.handlers.get(&cstr(name)).cloned()
+    };
+    let Some(handler) = handler else {
+        return ic_plugin_api::IC_ERR_NOT_THIS_HOST;
+    };
+    let code = handler(&id, Some(&cstr(value)));
+    // Forgotten while the handler ran: its notice may have come first, so repeat it.
+    if !platform_calls().loaded.contains(&id) {
+        handler(&id, None);
+    }
+    code
+}
+
+/// Whether any loaded plugin asks for one thing: a `platform_call` handler taking "1" and "0".
+#[derive(Default)]
+pub struct AnyAsks {
+    held: std::sync::Mutex<Asking>,
+}
+
+#[derive(Default)]
+struct Asking {
+    plugins: std::collections::BTreeSet<String>,
+    listener: Option<Box<dyn Fn(bool) + Send>>,
+}
+
+impl AnyAsks {
+    pub const fn new() -> AnyAsks {
+        AnyAsks {
+            held: std::sync::Mutex::new(Asking {
+                plugins: std::collections::BTreeSet::new(),
+                listener: None,
+            }),
+        }
+    }
+
+    pub fn answer(&self, plugin_id: &str, value: Option<&str>) -> c_int {
+        let asks = match value {
+            Some("1") => true,
+            Some("0") | None => false,
+            Some(_) => return ic_plugin_api::IC_ERR_INIT_FAILED,
+        };
+        let mut held = self.lock();
+        let before = !held.plugins.is_empty();
+        if asks {
+            held.plugins.insert(plugin_id.to_string());
+        } else {
+            held.plugins.remove(plugin_id);
+        }
+        let now = !held.plugins.is_empty();
+        if now != before {
+            if let Some(listener) = &held.listener {
+                listener(now);
+            }
+        }
+        IC_OK
+    }
+
+    /// Hears the current state at once, then each change in order, under this lock on the asking
+    /// thread: post it on, never wait or call back.
+    pub fn listen(&self, listener: Box<dyn Fn(bool) + Send>) {
+        let mut held = self.lock();
+        listener(!held.plugins.is_empty());
+        held.listener = Some(listener);
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Asking> {
+        self.held
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
 

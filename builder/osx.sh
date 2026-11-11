@@ -30,6 +30,16 @@ APP_BUNDLE="./bin/distr/gtkapp-darwin/release/bundle/osx/IceCommander.app"
 BREW_PREFIX=$(brew --prefix)
 XCODE_DEV=$(xcode-select -p)
 
+# Plugins find devices over mDNS (Node In Net): macOS asks for local network access at the first
+# multicast, and never asks an app started from Terminal.
+echo "=== Declaring local network use in Info.plist ==="
+PLIST="$APP_BUNDLE/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Delete :NSLocalNetworkUsageDescription" "$PLIST" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Add :NSLocalNetworkUsageDescription string 'Ice Commander finds and connects to your devices on this network.'" "$PLIST"
+/usr/libexec/PlistBuddy -c "Delete :NSBonjourServices" "$PLIST" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Add :NSBonjourServices array" "$PLIST"
+/usr/libexec/PlistBuddy -c "Add :NSBonjourServices:0 string _nodeinnet._tcp" "$PLIST"
+
 # 3. Copy and compile GLib schemas
 echo "=== Packaging GLib settings schemas ==="
 mkdir -p "$APP_BUNDLE/Contents/Resources/share/glib-2.0/schemas"
