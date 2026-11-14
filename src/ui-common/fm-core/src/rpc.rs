@@ -258,6 +258,14 @@ pub trait FileSystemRpc {
         false
     }
 
+    fn name_comparison(&self) -> crate::names::Comparison {
+        if self.is_local() {
+            crate::names::Comparison::THIS_SYSTEM
+        } else {
+            crate::names::Comparison::Exact
+        }
+    }
+
     /// What this filesystem is, as a name that outlives the object.
     ///
     /// Two panels, two tabs and two navigations build their own provider for

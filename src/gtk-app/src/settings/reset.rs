@@ -1,3 +1,15 @@
+/// What a plugin keeps under `plugins.<id>.` of the same kind as `app.*`: its
+/// device keys, the devices it trusts, its account and its shared folders.
+const PLUGIN_RECORDS: [&str; 7] = [
+    "private_key",
+    "public_key",
+    "lan_devices",
+    "token",
+    "login",
+    "device_id",
+    "shares",
+];
+
 /// Records the application keeps but never invented: connections the user typed
 /// in, and the identity and peer table the p2p side is built on. A reset of the
 /// settings must leave every one of them alone.
@@ -10,6 +22,10 @@ fn is_a_record(key: &str) -> bool {
     ) || key == "peers"
         || key == "app-name"
         || key.starts_with("app.")
+        || key
+            .strip_prefix("plugins.")
+            .and_then(|rest| rest.split_once('.'))
+            .is_some_and(|(_, name)| PLUGIN_RECORDS.contains(&name))
 }
 
 /// Whether clearing this key returns something to its default. Defaults live at

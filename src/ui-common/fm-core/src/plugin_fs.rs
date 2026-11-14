@@ -1671,12 +1671,11 @@ impl crate::rpc::FileSystemRpc for PluginFsRpc {
             if owned.is_empty() {
                 return;
             }
-            let leaf = std::path::Path::new(&file_path)
-                .file_name()
-                .map(|n| n.to_owned())
-                .unwrap_or_default();
-            let mut target = std::env::temp_dir();
-            target.push(leaf);
+            let leaf = file_path.rsplit('/').next().unwrap_or_default();
+            if crate::names::one_component(leaf).is_err() {
+                return;
+            }
+            let target = std::env::temp_dir().join(leaf);
             if std::fs::write(&target, owned).is_ok() {
                 open_externally(&target);
             }

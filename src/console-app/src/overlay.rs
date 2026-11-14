@@ -67,7 +67,7 @@ pub(crate) enum ConfirmAction {
     },
     Transfer {
         move_it: bool,
-        items: Vec<(String, String)>,
+        items: Vec<(String, String, String)>,
     },
 }
 
@@ -233,8 +233,10 @@ pub(crate) fn draw_overlay(f: &mut Frame, overlay: &mut Overlay) {
             (title.clone(), body.clone(), "[Esc] Close", Color::Red)
         }
     };
-    let width = body.len().max(footer.len()).max(title.len()).min(60) as u16 + 4;
-    let rect = centered_rect(width.max(24), 6, area);
+    let rows = body.split('\n').count().min(usize::from(area.height)) as u16;
+    let widest = body.split('\n').map(str::len).max().unwrap_or(0);
+    let width = widest.max(footer.len()).max(title.len()).min(60) as u16 + 4;
+    let rect = centered_rect(width.max(24), rows.saturating_add(5), area);
     let block = Block::default()
         .borders(Borders::ALL)
         .title(format!(" {title} "))
@@ -242,10 +244,12 @@ pub(crate) fn draw_overlay(f: &mut Frame, overlay: &mut Overlay) {
     let inner = block.inner(rect);
     f.render_widget(Clear, rect);
     f.render_widget(block, rect);
-    let lines = vec![
-        Line::from(body),
-        Line::from(""),
-        Line::from(Span::styled(footer, Style::default().fg(Color::DarkGray))),
-    ];
+    let room = usize::from(inner.height.saturating_sub(2));
+    let mut lines: Vec<Line> = body.split('\n').take(room).map(Line::from).collect();
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        footer,
+        Style::default().fg(Color::DarkGray),
+    )));
     f.render_widget(Paragraph::new(lines), inner);
 }

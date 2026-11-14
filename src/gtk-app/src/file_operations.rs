@@ -5,8 +5,9 @@ use fm_core::rpc::FileSystemRpc;
 use gtk::glib;
 use transfer_core::{
     execute_transfer, execute_transfer_offthread, find_clashes, format_size, into_itself,
-    leave_out_items_onto_themselves, mode_of, move_by_rename, scan_items, skip_clashes, Clash,
-    ClashKind, CopyMessage, ErrorAction, ErrorRequest, TransferItem, Unchecked,
+    leave_out_items_onto_themselves, mode_of, move_by_rename, refused_names, scan_items,
+    skip_clashes, skip_refused, top_level_of, Clash, ClashKind, CopyMessage, ErrorAction,
+    ErrorRequest, TransferItem, Unchecked,
 };
 
 use common::AppError;
@@ -353,6 +354,7 @@ enum Prepared {
 
 struct Ready {
     items: Vec<TransferItem>,
+    refused: Vec<String>,
     clashes: Vec<Clash>,
     unchecked: Option<String>,
     dest: Side,
@@ -494,6 +496,8 @@ async fn prepare(
             dest_parent.to_string(),
         ),
     };
+    let refused = refused_names(&dest.provider, &items);
+    skip_refused(&mut items, &refused);
     let checked = check_destination(
         src,
         &dest,
@@ -510,6 +514,7 @@ async fn prepare(
     };
     Ok(Prepared::Ready(Ready {
         items,
+        refused,
         clashes,
         unchecked,
         dest,
@@ -552,10 +557,11 @@ async fn while_checking<T>(
 async fn move_by_rename_offthread(
     items: Vec<TransferItem>,
     dest_parent: String,
+    skipped: Vec<String>,
 ) -> Result<Vec<TransferItem>, AppError> {
     tokio::task::spawn_blocking(move || {
         let mut items = items;
-        move_by_rename(&mut items, &dest_parent);
+        move_by_rename(&mut items, &dest_parent, &skipped);
         items
     })
     .await
@@ -771,6 +777,52 @@ async fn ask_copy_unchecked(window: &adw::ApplicationWindow, folder: &str) -> bo
     rx.await.unwrap_or(false)
 }
 
+async fn ask_skip_refused(window: &adw::ApplicationWindow, refused: &[String]) -> bool {
+    let list = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(4)
+        .build();
+    for path in refused {
+        list.append(
+            &gtk::Label::builder()
+                .label(path)
+                .xalign(0.0)
+                .single_line_mode(true)
+                .ellipsize(gtk::pango::EllipsizeMode::Middle)
+                .build(),
+        );
+    }
+    let scroller = gtk::ScrolledWindow::builder()
+        .child(&list)
+        .propagate_natural_height(true)
+        .max_content_height(180)
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .build();
+    let dialog = adw::AlertDialog::builder()
+        .heading(&*crate::i18n::tr("fm.refused_title"))
+        .body(crate::i18n::trf(
+            "fm.refused_body",
+            &[("count", &refused.len().to_string())],
+        ))
+        .extra_child(&scroller)
+        .build();
+    dialog.add_response("cancel", &crate::i18n::tr("fm.cancel"));
+    dialog.add_response("skip", &crate::i18n::tr("fm.refused_skip"));
+    dialog.set_default_response(Some("cancel"));
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let tx = Rc::new(std::cell::RefCell::new(Some(tx)));
+    dialog.connect_response(None, move |d, resp| {
+        if let Some(tx) = tx.borrow_mut().take() {
+            let _ = tx.send(resp == "skip");
+        }
+        d.close();
+    });
+    dialog.present(Some(window));
+
+    rx.await.unwrap_or(false)
+}
+
 fn top_level_names(items: &[TransferItem]) -> Vec<String> {
     items
         .iter()
@@ -800,6 +852,7 @@ fn run_transfer_with_progress(
         .await;
         let Ready {
             items,
+            refused,
             clashes,
             unchecked,
             dest,
@@ -830,6 +883,10 @@ fn run_transfer_with_progress(
                 return;
             }
         };
+        if !refused.is_empty() && !ask_skip_refused(&window, &refused).await {
+            on_finish(&[]);
+            return;
+        }
         if let Some(folder) = unchecked {
             if !ask_copy_unchecked(&window, &folder).await {
                 on_finish(&[]);
@@ -843,19 +900,24 @@ fn run_transfer_with_progress(
         let mut moved = Vec::new();
         if is_move && src.provider.is_local() && dest.provider.is_local() {
             let before = top_level_names(&remaining_items);
-            remaining_items =
-                match move_by_rename_offthread(remaining_items, dest_parent.clone()).await {
-                    Ok(left) => left,
-                    Err(why) => {
-                        show_error_dialog(
-                            &window,
-                            &crate::i18n::tr("fm.transfer_error"),
-                            &why.to_string(),
-                        );
-                        on_finish(&[]);
-                        return;
-                    }
-                };
+            remaining_items = match move_by_rename_offthread(
+                remaining_items,
+                dest_parent.clone(),
+                refused.clone(),
+            )
+            .await
+            {
+                Ok(left) => left,
+                Err(why) => {
+                    show_error_dialog(
+                        &window,
+                        &crate::i18n::tr("fm.transfer_error"),
+                        &why.to_string(),
+                    );
+                    on_finish(&[]);
+                    return;
+                }
+            };
             let left = top_level_names(&remaining_items);
             moved = before
                 .into_iter()
@@ -1087,13 +1149,21 @@ fn run_transfer_with_progress(
         } else {
             None
         };
-        let sent = top_level_names(&remaining_items);
+        let sent: Vec<String> = top_level_names(&remaining_items)
+            .into_iter()
+            .filter(|name| {
+                !refused
+                    .iter()
+                    .any(|path| top_level_of(path) == name.as_str())
+            })
+            .collect();
         let res = match plans {
             Some((src_plan, dest_plan)) => {
                 execute_transfer_offthread(
                     src_plan.into_factory(),
                     dest_plan.into_factory(),
                     remaining_items,
+                    refused,
                     dest_parent,
                     is_move,
                     progress_tx,
@@ -1107,6 +1177,7 @@ fn run_transfer_with_progress(
                     src.provider,
                     dest.provider,
                     remaining_items,
+                    refused,
                     dest_parent,
                     is_move,
                     progress_tx,

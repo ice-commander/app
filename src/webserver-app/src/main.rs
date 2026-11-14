@@ -186,6 +186,17 @@ fn carry_stored(incoming: &mut ApiConnection, stored: &ApiConnection) {
     restore(incoming, &fresh);
 }
 
+fn with_refused(failed: ApiResult<()>, refused: Vec<String>) -> ApiResult<()> {
+    if refused.is_empty() {
+        return failed;
+    }
+    let refused = refused.join("\n");
+    Err(match failed {
+        Ok(()) => refused,
+        Err(why) => format!("{why}\n{refused}"),
+    })
+}
+
 impl ConsoleBackend {
     fn core(&self, side: PanelSide) -> &Rc<RouterState> {
         match side {
@@ -334,12 +345,20 @@ impl PanelBackend for ConsoleBackend {
         let dst_provider = self.provider(dst);
         let dst_path = self.display_path(dst);
         let mut failed = Ok(());
+        let mut refused = Vec::new();
         for src_path in paths {
             let file_name = src_path
                 .rsplitn(2, '/')
                 .next()
                 .unwrap_or(&src_path)
                 .to_string();
+            if let (true, Err(why)) = (
+                dst_provider.is_local(),
+                fm_core::names::one_component(&file_name),
+            ) {
+                refused.push(format!("{src_path}: {why}"));
+                continue;
+            }
             let dst_file = format!("{}/{}", dst_path.trim_end_matches('/'), file_name);
             let copied = match src_provider.read_file(src_path.clone(), None).await {
                 Ok(data) => dst_provider.write_file(dst_file, data, None, None).await,
@@ -350,7 +369,7 @@ impl PanelBackend for ConsoleBackend {
             }
         }
         let _ = self.core(dst).refresh().await;
-        failed
+        with_refused(failed, refused)
     }
     async fn move_entries(
         &self,
@@ -362,12 +381,20 @@ impl PanelBackend for ConsoleBackend {
         let dst_provider = self.provider(dst);
         let dst_path = self.display_path(dst);
         let mut failed = Ok(());
+        let mut refused = Vec::new();
         for src_path in paths {
             let file_name = src_path
                 .rsplitn(2, '/')
                 .next()
                 .unwrap_or(&src_path)
                 .to_string();
+            if let (true, Err(why)) = (
+                dst_provider.is_local(),
+                fm_core::names::one_component(&file_name),
+            ) {
+                refused.push(format!("{src_path}: {why}"));
+                continue;
+            }
             let dst_file = format!("{}/{}", dst_path.trim_end_matches('/'), file_name);
             let moved = match src_provider.read_file(src_path.clone(), None).await {
                 Ok(data) => match dst_provider.write_file(dst_file, data, None, None).await {
@@ -382,7 +409,7 @@ impl PanelBackend for ConsoleBackend {
         }
         let _ = self.core(dst).refresh().await;
         let _ = self.core(src).refresh().await;
-        failed
+        with_refused(failed, refused)
     }
     async fn read_file(&self, side: PanelSide, path: String) -> ApiResult<ApiFileContent> {
         let provider = self.provider(side);

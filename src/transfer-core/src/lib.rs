@@ -1,4 +1,5 @@
 use common::AppError;
+use fm_core::names::{folded, Comparison};
 use fm_core::rpc::FileSystemRpc;
 use std::io::{Read, Write};
 use std::rc::Rc;
@@ -6,6 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 const PROGRESS_THROTTLE_MS: u64 = 40;
+const SETID_BITS: u32 = 0o6000;
 
 pub struct ThrottleTimer {
     last: Option<std::time::Instant>,
@@ -618,7 +620,11 @@ fn and_above(relative_path: &str) -> impl Iterator<Item = &str> {
     })
 }
 
-fn top_level_of(relative_path: &str) -> &str {
+fn held_by(relative_path: &str) -> impl Iterator<Item = &str> {
+    and_above(relative_path).skip(1).filter(|at| !at.is_empty())
+}
+
+pub fn top_level_of(relative_path: &str) -> &str {
     relative_path
         .split(SEPARATORS)
         .next()
@@ -640,26 +646,29 @@ fn folder_above(path: &str) -> Option<(&str, &str)> {
 fn matching<'a>(
     entries: &'a [fm_core::rpc::RemoteFileEntry],
     name: &str,
+    by: Comparison,
 ) -> Option<&'a fm_core::rpc::RemoteFileEntry> {
-    entries.iter().find(|entry| entry.name == name)
+    let name = folded(name, by);
+    entries.iter().find(|entry| folded(&entry.name, by) == name)
 }
 
 struct Listing {
     path: String,
+    by: Comparison,
     entries: std::collections::HashMap<String, fm_core::rpc::RemoteFileEntry>,
 }
 
 impl Listing {
-    fn of(path: String, entries: Vec<fm_core::rpc::RemoteFileEntry>) -> Self {
+    fn of(path: String, entries: Vec<fm_core::rpc::RemoteFileEntry>, by: Comparison) -> Self {
         let entries = entries
             .into_iter()
-            .map(|entry| (entry.name.clone(), entry))
+            .map(|entry| (folded(&entry.name, by).into_owned(), entry))
             .collect();
-        Self { path, entries }
+        Self { path, by, entries }
     }
 
     fn find(&self, name: &str) -> Option<&fm_core::rpc::RemoteFileEntry> {
-        self.entries.get(name)
+        self.entries.get(folded(name, self.by).as_ref())
     }
 }
 
@@ -673,7 +682,7 @@ async fn listing_of(
         return Err(AppError::Cancelled);
     }
     match dest.list_dir(path.clone()).await {
-        Ok(entries) => Ok(Some(Listing::of(path, entries))),
+        Ok(entries) => Ok(Some(Listing::of(path, entries, dest.name_comparison()))),
         Err(AppError::Cancelled) => Err(AppError::Cancelled),
         Err(why) if shown_as_folder => Err(AppError::Other(format!("{path}: {why}"))),
         Err(_) => Ok(None),
@@ -699,14 +708,15 @@ async fn root_listing(
     dest_parent: &str,
     cancellation_flag: &Arc<AtomicBool>,
 ) -> Result<Option<Listing>, Unchecked> {
+    let by = dest.name_comparison();
     let first = match listed_or_why(dest, dest_parent, cancellation_flag).await? {
-        Ok(entries) => return Ok(Some(Listing::of(dest_parent.to_string(), entries))),
+        Ok(entries) => return Ok(Some(Listing::of(dest_parent.to_string(), entries, by))),
         Err(why) => why,
     };
     let (mut unread, mut why) = (dest_parent, first.clone());
     while let Some((above, own)) = folder_above(unread) {
         match listed_or_why(dest, above, cancellation_flag).await? {
-            Ok(entries) if matching(&entries, own).is_none() => return Ok(None),
+            Ok(entries) if matching(&entries, own, by).is_none() => return Ok(None),
             Ok(_) => {
                 return Err(Unchecked::Unreadable {
                     folder: unread.to_string(),
@@ -728,7 +738,10 @@ pub async fn find_clashes(
     dest_parent: &str,
     cancellation_flag: &Arc<AtomicBool>,
 ) -> Result<Vec<Clash>, Unchecked> {
+    let by = dest.name_comparison();
     let mut listed: std::collections::HashMap<&str, Option<Listing>> =
+        std::collections::HashMap::new();
+    let mut landing: std::collections::HashMap<String, &TransferItem> =
         std::collections::HashMap::new();
     let mut clashes = Vec::new();
     for item in items {
@@ -747,7 +760,7 @@ pub async fn find_clashes(
                     .and_then(|there| {
                         there
                             .find(own)
-                            .map(|entry| (join_path(&there.path, own), entry.is_dir))
+                            .map(|entry| (join_path(&there.path, &entry.name), entry.is_dir))
                     });
                 match found {
                     Some((path, is_dir)) => {
@@ -758,34 +771,57 @@ pub async fn find_clashes(
             };
             listed.insert(dir, listing);
         }
-        let Some(Some(there)) = listed.get(folder) else {
-            continue;
-        };
-        let Some((is_dir, size, path)) = there
-            .find(name)
-            .map(|entry| (entry.is_dir, entry.size, join_path(&there.path, name)))
-        else {
-            continue;
-        };
-        let kind = match (item.is_dir, is_dir) {
-            (true, true) => continue,
-            (true, false) => {
-                if !listed.contains_key(item.relative_path.as_str()) {
-                    let inside = listing_of(&dest, path, false, cancellation_flag).await?;
-                    listed.insert(item.relative_path.as_str(), inside);
+        let key = folded(&item.relative_path, by);
+        let kind = match landing.get(key.as_ref()) {
+            Some(earlier) => match (item.is_dir, earlier.is_dir) {
+                (true, true) => None,
+                (true, false) => Some(ClashKind::FolderOverFile),
+                (false, true) => Some(ClashKind::FileOverFolder),
+                (false, false) => Some(ClashKind::ReplacesFile { size: earlier.size }),
+            },
+            None => 'there: {
+                let Some(Some(there)) = listed.get(folder) else {
+                    break 'there None;
+                };
+                let Some((is_dir, size, path)) = there.find(name).map(|entry| {
+                    (
+                        entry.is_dir,
+                        entry.size,
+                        join_path(&there.path, &entry.name),
+                    )
+                }) else {
+                    break 'there None;
+                };
+                match (item.is_dir, is_dir) {
+                    (true, true) => None,
+                    (true, false) => {
+                        if !listed.contains_key(item.relative_path.as_str()) {
+                            let inside = listing_of(&dest, path, false, cancellation_flag).await?;
+                            listed.insert(item.relative_path.as_str(), inside);
+                        }
+                        match listed.get(item.relative_path.as_str()) {
+                            Some(Some(_)) => None,
+                            _ => Some(ClashKind::FolderOverFile),
+                        }
+                    }
+                    (false, true) => Some(ClashKind::FileOverFolder),
+                    (false, false) => Some(ClashKind::ReplacesFile { size }),
                 }
-                if matches!(listed.get(item.relative_path.as_str()), Some(Some(_))) {
-                    continue;
-                }
-                ClashKind::FolderOverFile
             }
-            (false, true) => ClashKind::FileOverFolder,
-            (false, false) => ClashKind::ReplacesFile { size },
         };
-        clashes.push(Clash {
-            relative_path: item.relative_path.clone(),
+        let lands = !matches!(
             kind,
-        });
+            Some(ClashKind::FileOverFolder | ClashKind::FolderOverFile)
+        );
+        if lands {
+            landing.insert(key.into_owned(), item);
+        }
+        if let Some(kind) = kind {
+            clashes.push(Clash {
+                relative_path: item.relative_path.clone(),
+                kind,
+            });
+        }
     }
     Ok(clashes)
 }
@@ -802,6 +838,37 @@ pub fn skip_clashes(items: &mut Vec<TransferItem>, skipped: &[Clash]) {
     items.retain(|item| {
         !holding.contains(item.relative_path.as_str())
             && !and_above(&item.relative_path).any(|at| left_out.contains(at))
+    });
+}
+
+fn refusal(item: &TransferItem) -> Option<AppError> {
+    std::iter::once(item.name.as_str())
+        .chain(item.relative_path.split(SEPARATORS))
+        .find_map(|part| fm_core::names::one_component(part).err())
+}
+
+pub fn refused_names(dest: &Rc<dyn FileSystemRpc>, items: &[TransferItem]) -> Vec<String> {
+    if !dest.is_local() {
+        return Vec::new();
+    }
+    let refused: std::collections::HashSet<&str> = items
+        .iter()
+        .filter(|item| refusal(item).is_some())
+        .map(|item| item.relative_path.as_str())
+        .collect();
+    items
+        .iter()
+        .map(|item| item.relative_path.as_str())
+        .filter(|path| refused.contains(path) && !held_by(path).any(|at| refused.contains(at)))
+        .map(str::to_string)
+        .collect()
+}
+
+pub fn skip_refused(items: &mut Vec<TransferItem>, refused: &[String]) {
+    let left_out: std::collections::HashSet<&str> = refused.iter().map(String::as_str).collect();
+    items.retain(|item| {
+        !left_out.contains(item.relative_path.as_str())
+            && !held_by(&item.relative_path).any(|at| left_out.contains(at))
     });
 }
 
@@ -1005,14 +1072,17 @@ pub fn leave_out_items_onto_themselves(
     items.retain(|item| !themselves.contains(top_level_of(&item.relative_path)));
 }
 
-pub fn move_by_rename(items: &mut Vec<TransferItem>, dest_parent: &str) {
+pub fn move_by_rename(items: &mut Vec<TransferItem>, dest_parent: &str, skipped: &[String]) {
     if roots(items).any(|item| inside_on_disk(&item.src_path, dest_parent)) {
         return;
     }
     let _ = std::fs::create_dir_all(dest_parent);
+    let holding: std::collections::HashSet<&str> =
+        skipped.iter().map(|path| top_level_of(path)).collect();
     let mut moved = std::collections::HashSet::new();
     for item in items.iter() {
         if top_level_of(&item.relative_path) == item.relative_path
+            && !holding.contains(item.relative_path.as_str())
             && std::fs::rename(
                 &item.src_path,
                 std::path::Path::new(dest_parent).join(&item.relative_path),
@@ -1062,7 +1132,8 @@ async fn remove_if_changed(
     let Ok(entries) = dest.list_dir(folder.to_string()).await else {
         return;
     };
-    let Some(now) = matching(&entries, name).filter(|entry| !entry.is_dir) else {
+    let Some(now) = matching(&entries, name, dest.name_comparison()).filter(|entry| !entry.is_dir)
+    else {
         return;
     };
     let changed = match before {
@@ -1077,28 +1148,28 @@ async fn remove_if_changed(
 #[derive(Default)]
 struct DestFolders {
     made: std::collections::HashSet<String>,
-    listed: std::collections::HashMap<String, Option<Vec<fm_core::rpc::RemoteFileEntry>>>,
+    listed: std::collections::HashMap<String, Option<Listing>>,
 }
 
 impl DestFolders {
-    async fn listing(
-        &mut self,
-        dest: &Rc<dyn FileSystemRpc>,
-        folder: &str,
-    ) -> Option<&[fm_core::rpc::RemoteFileEntry]> {
+    async fn listing(&mut self, dest: &Rc<dyn FileSystemRpc>, folder: &str) -> Option<&Listing> {
         if !self.listed.contains_key(folder) {
-            let entries = dest.list_dir(folder.to_string()).await.ok();
-            self.listed.insert(folder.to_string(), entries);
+            let listing =
+                dest.list_dir(folder.to_string()).await.ok().map(|entries| {
+                    Listing::of(folder.to_string(), entries, dest.name_comparison())
+                });
+            self.listed.insert(folder.to_string(), listing);
         }
-        self.listed.get(folder).and_then(Option::as_deref)
+        self.listed.get(folder).and_then(Option::as_ref)
     }
 
     async fn before(&mut self, dest: &Rc<dyn FileSystemRpc>, folder: &str, name: &str) -> Before {
         if self.made.contains(folder) {
             return Before::Absent;
         }
-        if let Some(entries) = self.listing(dest, folder).await {
-            return matching(entries, name)
+        if let Some(listing) = self.listing(dest, folder).await {
+            return listing
+                .find(name)
                 .cloned()
                 .map_or(Before::Absent, Before::Was);
         }
@@ -1106,7 +1177,7 @@ impl DestFolders {
             return Before::Unknown;
         };
         match self.listing(dest, above).await {
-            Some(entries) if matching(entries, own).is_none() => Before::Absent,
+            Some(listing) if listing.find(own).is_none() => Before::Absent,
             _ => Before::Unknown,
         }
     }
@@ -1124,7 +1195,7 @@ impl DestFolders {
         } else {
             self.listing(dest, parent)
                 .await
-                .and_then(|entries| entries.iter().find(|entry| entry.name == name))
+                .and_then(|listing| listing.find(name))
                 .map(|entry| entry.is_dir)
         };
         if let Some(is_dir) = seen {
@@ -1140,7 +1211,7 @@ impl DestFolders {
             return created;
         }
         let entries = dest.list_dir(parent.to_string()).await.unwrap_or_default();
-        let Some(entry) = matching(&entries, name) else {
+        let Some(entry) = matching(&entries, name, dest.name_comparison()) else {
             return created;
         };
         if entry.is_dir || dest.list_dir(join_path(parent, &entry.name)).await.is_ok() {
@@ -1154,6 +1225,7 @@ pub async fn execute_transfer(
     src_provider: std::rc::Rc<dyn FileSystemRpc>,
     dest_provider: std::rc::Rc<dyn FileSystemRpc>,
     items: Vec<TransferItem>,
+    mut skipped: Vec<String>,
     dest_parent: String,
     is_move: bool,
     progress_tx: std::sync::mpsc::Sender<CopyMessage>,
@@ -1179,8 +1251,6 @@ pub async fn execute_transfer(
         && !dest_is_local
         && src_provider.connection_id().is_some()
         && src_provider.connection_id() == dest_provider.connection_id();
-
-    let mut skipped: Vec<String> = Vec::new();
 
     if src_is_local && dest_is_local {
         let items_c = items.clone();
@@ -1328,15 +1398,50 @@ pub async fn execute_transfer(
             Ok::<Vec<String>, std::io::Error>(skipped_local)
         });
 
-        skipped = join_handle
-            .await
-            .map_err(|e| AppError::Other(format!("Blocking task panicked: {}", e)))?
-            .map_err(AppError::from)?;
+        skipped.extend(
+            join_handle
+                .await
+                .map_err(|e| AppError::Other(format!("Blocking task panicked: {}", e)))?
+                .map_err(AppError::from)?,
+        );
     } else {
         let mut overall_copied_bytes = 0u64;
         let one_filesystem = one_filesystem(&src_provider, &dest_provider);
         let mut folders = DestFolders::default();
+        let mut refused: std::collections::HashSet<&str> = std::collections::HashSet::new();
         for item in items.iter() {
+            if dest_is_local {
+                let refusal = refusal(item);
+                let inside_refused =
+                    held_by(&item.relative_path).any(|above| refused.contains(above));
+                if let (Some(why), false) = (&refusal, inside_refused) {
+                    loop {
+                        if cancellation_flag.load(Ordering::Relaxed) {
+                            return Err(AppError::Cancelled);
+                        }
+                        match request_error_decision_async(&error_tx, &item.name, why.to_string())
+                            .await
+                        {
+                            ErrorAction::Retry => continue,
+                            ErrorAction::Skip => break,
+                            ErrorAction::Abort => return Err(AppError::Cancelled),
+                        }
+                    }
+                }
+                if refusal.is_some() || inside_refused {
+                    skipped.push(item.relative_path.clone());
+                    if item.is_dir {
+                        refused.insert(&item.relative_path);
+                    } else {
+                        let _ = progress_tx.send(CopyMessage::FileSkipped);
+                    }
+                    continue;
+                }
+            }
+            let permissions = match item.permissions {
+                Some(mode) if !src_is_local => Some(mode & !SETID_BITS),
+                kept => kept,
+            };
             let dest_path = join_path(&dest_parent, &item.relative_path);
             let (folder, name) = parent_and_name(&item.relative_path);
             let dest_folder = if folder.is_empty() {
@@ -1373,7 +1478,7 @@ pub async fn execute_transfer(
                 let mut written = false;
                 let attempt: Result<(), AppError> = if item.is_dir {
                     folders
-                        .make(&dest_provider, &dest_folder, &item.name, item.permissions)
+                        .make(&dest_provider, &dest_folder, &item.name, permissions)
                         .await
                 } else {
                     let _ = progress_tx.send(CopyMessage::FileStart {
@@ -1410,7 +1515,7 @@ pub async fn execute_transfer(
                             &dest_provider,
                             &dest_path,
                             item.size,
-                            item.permissions,
+                            permissions,
                             Some(&report),
                             &cancellation_flag,
                         )
@@ -1514,7 +1619,7 @@ pub async fn execute_transfer(
                                 dest_provider.clone(),
                                 dest_path.clone(),
                                 content,
-                                item.permissions,
+                                permissions,
                                 Rc::new(move |bytes_written| {
                                     if write_throttle_c.borrow_mut().ready() {
                                         let stored = half + bytes_written / 2;
@@ -1620,6 +1725,7 @@ pub async fn execute_transfer_offthread(
     src_factory: ProviderFactory,
     dest_factory: ProviderFactory,
     items: Vec<TransferItem>,
+    skipped: Vec<String>,
     dest_parent: String,
     is_move: bool,
     progress_tx: std::sync::mpsc::Sender<CopyMessage>,
@@ -1639,6 +1745,7 @@ pub async fn execute_transfer_offthread(
                 src_provider,
                 dest_provider,
                 items,
+                skipped,
                 dest_parent,
                 is_move,
                 progress_tx,
@@ -1747,6 +1854,7 @@ mod tests {
                 from,
                 into,
                 items,
+                Vec::new(),
                 "/to".to_string(),
                 is_move,
                 progress_tx,
@@ -1977,6 +2085,7 @@ mod tests {
                 src,
                 dest,
                 vec![file_of(size)],
+                Vec::new(),
                 "/dest".to_string(),
                 false,
                 progress_tx,
@@ -2035,6 +2144,7 @@ mod tests {
                 Rc::new(Remote { size }),
                 Rc::new(Remote { size }),
                 vec![file_of(size)],
+                Vec::new(),
                 "/dest".to_string(),
                 false,
                 progress_tx,
@@ -2136,6 +2246,7 @@ mod tests {
                     size: size as u64,
                     permissions: None,
                 }],
+                Vec::new(),
                 landing.to_string_lossy().to_string(),
                 false,
                 progress_tx,
@@ -2738,6 +2849,7 @@ mod tests {
                     Rc::new(OnThisDisk),
                     Rc::new(OnThisDisk),
                     found,
+                    Vec::new(),
                     into.0.to_string_lossy().to_string(),
                     false,
                     progress_tx,

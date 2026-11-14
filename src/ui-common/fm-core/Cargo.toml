@@ -12,6 +12,7 @@ ic-plugin-api = { workspace = true }
 uuid = { version = "1.7", features = ["v4", "fast-rng"] }
 tokio = { version = "1.36", features = ["rt", "sync"] }
 ic-platform = { workspace = true }
+icu_normalizer = { version = "2", default-features = false, features = ["compiled_data"] }
 
 [dev-dependencies]
 futures = "0.3"

@@ -167,6 +167,7 @@ pub async fn stage(
             stamped: None,
         });
     }
+    crate::names::one_component(&name)?;
     let bytes = parent.read_file(relative_path.to_string(), None).await?;
     let scratch = Scratch::made().map_err(|e| common::AppError::Other(e.to_string()))?;
     let at = scratch.path().join(&name);

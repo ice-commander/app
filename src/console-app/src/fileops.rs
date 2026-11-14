@@ -60,16 +60,33 @@ impl App {
         let other = self.active ^ 1;
         let src_dir = self.panes[self.active].active_relative();
         let dst_dir = self.panes[other].active_relative();
-        let items: Vec<(String, String)> = chosen
+        let items: Vec<(String, String, String)> = chosen
             .iter()
-            .map(|r| (join_rel(&src_dir, &r.name), join_rel(&dst_dir, &r.name)))
+            .map(|r| {
+                (
+                    join_rel(&src_dir, &r.name),
+                    join_rel(&dst_dir, &r.name),
+                    r.name.clone(),
+                )
+            })
             .collect();
         let dst_abs = self.panes[other].core.path.borrow().absolute_path();
         let verb = if move_it { "Move" } else { "Copy" };
-        let message = match chosen.as_slice() {
+        let mut message = match chosen.as_slice() {
             [one] => format!("{verb} \"{}\" to {dst_abs}?", one.name),
             many => format!("{verb} {} marked items to {dst_abs}?", many.len()),
         };
+        let refused: Vec<&str> = chosen
+            .iter()
+            .map(|r| r.name.as_str())
+            .filter(|name| fm_core::names::one_component(name).is_err())
+            .collect();
+        if !refused.is_empty() && self.panes[other].core.active_provider().is_local() {
+            message.push_str("\nThese names cannot be written here and will be skipped:");
+            for name in refused {
+                message.push_str(&format!("\n  \"{name}\""));
+            }
+        }
         self.overlay = Overlay::Confirm {
             title: verb.into(),
             message,
@@ -122,7 +139,11 @@ impl App {
         }
     }
 
-    pub(crate) async fn do_transfer(&mut self, move_it: bool, items: Vec<(String, String)>) {
+    pub(crate) async fn do_transfer(
+        &mut self,
+        move_it: bool,
+        items: Vec<(String, String, String)>,
+    ) {
         let other = self.active ^ 1;
         let src_core = self.panes[self.active].core.clone();
         let dst_core = self.panes[other].core.clone();
@@ -130,17 +151,28 @@ impl App {
         let dst_provider = dst_core.active_provider();
         let mut moved: Vec<String> = Vec::new();
         let mut trouble = None;
-        for (src_rel, dst_rel) in items {
+        let mut refused = Vec::new();
+        for (src_rel, dst_rel, name) in items {
+            if let (true, Err(why)) = (
+                dst_provider.is_local(),
+                fm_core::names::one_component(&name),
+            ) {
+                refused.push(why.to_string());
+                continue;
+            }
+            if trouble.is_some() {
+                continue;
+            }
             let data = match src_provider.read_file(src_rel.clone(), None).await {
                 Ok(d) => d,
                 Err(e) => {
                     trouble = Some(("Read failed", e.to_string()));
-                    break;
+                    continue;
                 }
             };
             if let Err(e) = dst_provider.write_file(dst_rel, data, None, None).await {
                 trouble = Some(("Write failed", e.to_string()));
-                break;
+                continue;
             }
             moved.push(src_rel);
         }
@@ -149,8 +181,12 @@ impl App {
             let _ = src_core.refresh().await;
         }
         let _ = dst_core.refresh().await;
-        if let Some((what, why)) = trouble {
-            self.set_message(what, why);
+        let refused = refused.join("\n");
+        match trouble {
+            Some((what, why)) if refused.is_empty() => self.set_message(what, why),
+            Some((what, why)) => self.set_message(what, format!("{why}\n{refused}")),
+            None if !refused.is_empty() => self.set_message("Skipped", refused),
+            None => {}
         }
     }
 }

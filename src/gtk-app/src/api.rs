@@ -856,8 +856,9 @@ async fn transfer_batch(
     is_move: bool,
     op: OpGuard,
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
-) {
+) -> Vec<String> {
     let (mut done_files, mut done_bytes) = (0usize, 0u64);
+    let mut refused = Vec::new();
     for src_path in paths {
         if cancel.load(std::sync::atomic::Ordering::Relaxed) {
             break;
@@ -868,12 +869,22 @@ async fn transfer_batch(
             .unwrap_or(&src_path)
             .to_string();
         op.update(&file_name, done_bytes, done_files);
+        if let (true, Err(why)) = (
+            dst_provider.is_local(),
+            fm_core::names::one_component(&file_name),
+        ) {
+            ic_logging::warn!("{src_path}: {why}");
+            refused.push(format!("{src_path}: {why}"));
+            done_files += 1;
+            continue;
+        }
         let dst_file = format!("{}/{}", dst_path.trim_end_matches('/'), file_name);
         done_bytes += transfer_one(&src_provider, &dst_provider, src_path, dst_file, is_move).await;
         done_files += 1;
         op.update(&file_name, done_bytes, done_files);
     }
     drop(op);
+    refused
 }
 
 impl GtkBackend {
@@ -900,7 +911,7 @@ impl GtkBackend {
         let plans = crate::transfer_plan::EndpointPlan::of(&src_provider)
             .zip(crate::transfer_plan::EndpointPlan::of(&dst_provider));
 
-        match plans {
+        let refused = match plans {
             Some((src_plan, dst_plan)) => {
                 let (src_factory, dst_factory) = (src_plan.into_factory(), dst_plan.into_factory());
                 let handle = tokio::task::spawn_blocking(move || {
@@ -909,7 +920,7 @@ impl GtkBackend {
                         .build()
                     {
                         Ok(rt) => rt,
-                        Err(_) => return,
+                        Err(_) => return Vec::new(),
                     };
                     let local = tokio::task::LocalSet::new();
                     local.block_on(&rt, async move {
@@ -922,10 +933,10 @@ impl GtkBackend {
                             op,
                             cancel,
                         )
-                        .await;
-                    });
+                        .await
+                    })
                 });
-                let _ = handle.await;
+                handle.await.unwrap_or_default()
             }
             None => {
                 transfer_batch(
@@ -937,12 +948,16 @@ impl GtkBackend {
                     op,
                     cancel,
                 )
-                .await;
+                .await
             }
-        }
+        };
 
         let _ = dst_router.refresh().await;
         let _ = src_router.refresh().await;
-        Ok(())
+        if refused.is_empty() {
+            Ok(())
+        } else {
+            Err(refused.join("\n"))
+        }
     }
 }

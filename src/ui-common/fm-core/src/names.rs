@@ -30,6 +30,95 @@ pub fn keep_or_number(
     first_free(name, is_dir, taken, make)
 }
 
+const WINDOWS_DEVICES: &[&str] = &["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"];
+
+pub fn windows_refuses(name: &str) -> bool {
+    let device = name
+        .split_once('.')
+        .map_or(name, |(before, _)| before)
+        .trim_end_matches(' ');
+    let port = device.get(..3).unwrap_or_default();
+    let mut number = device.get(3..).unwrap_or_default().chars();
+    let numbered_port = (port.eq_ignore_ascii_case("COM") || port.eq_ignore_ascii_case("LPT"))
+        && matches!(
+            (number.next(), number.next()),
+            (Some('0'..='9' | '¹' | '²' | '³'), None)
+        );
+    let reserved = WINDOWS_DEVICES
+        .iter()
+        .any(|reserved| device.eq_ignore_ascii_case(reserved));
+    let unwritable = |c: char| c < ' ' || matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*');
+    numbered_port || reserved || name.ends_with(['.', ' ']) || name.chars().any(unwritable)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Comparison {
+    Exact,
+    Windows,
+    MacOs,
+}
+
+impl Comparison {
+    pub const THIS_SYSTEM: Self = if cfg!(windows) {
+        Self::Windows
+    } else if cfg!(any(target_os = "macos", target_os = "android")) {
+        Self::MacOs
+    } else {
+        Self::Exact
+    };
+}
+
+fn upcased(c: char) -> char {
+    let mut upper = c.to_uppercase();
+    match (c, upper.next(), upper.next()) {
+        ('\u{1f80}'..='\u{1f87}' | '\u{1f90}'..='\u{1f97}' | '\u{1fa0}'..='\u{1fa7}', ..) => {
+            char::from_u32(u32::from(c) + 8).unwrap_or(c)
+        }
+        ('\u{1fb3}' | '\u{1fc3}' | '\u{1ff3}', ..) => char::from_u32(u32::from(c) + 9).unwrap_or(c),
+        (_, Some(one), None) if one.to_lowercase().eq([c]) => one,
+        _ => c,
+    }
+}
+
+pub fn folded(name: &str, by: Comparison) -> std::borrow::Cow<'_, str> {
+    match by {
+        Comparison::Exact => std::borrow::Cow::Borrowed(name),
+        Comparison::Windows => name
+            .chars()
+            .map(|c| if c <= '\u{ffff}' { upcased(c) } else { c })
+            .collect(),
+        Comparison::MacOs => {
+            let nfd = icu_normalizer::DecomposingNormalizerBorrowed::new_nfd();
+            let mut caseless = String::new();
+            for c in nfd.normalize(name).chars() {
+                match c {
+                    'ı' => caseless.push(c),
+                    _ => caseless.extend(
+                        c.to_lowercase()
+                            .flat_map(char::to_uppercase)
+                            .flat_map(char::to_lowercase),
+                    ),
+                }
+            }
+            std::borrow::Cow::Owned(nfd.normalize(&caseless).into_owned())
+        }
+    }
+}
+
+pub fn one_component(name: &str) -> Result<(), common::AppError> {
+    let mut parts = std::path::Path::new(name).components();
+    match (parts.next(), parts.next()) {
+        (Some(std::path::Component::Normal(only)), None)
+            if only == std::ffi::OsStr::new(name) && !(cfg!(windows) && windows_refuses(name)) =>
+        {
+            Ok(())
+        }
+        _ => Err(common::AppError::Other(format!(
+            "\"{name}\" is not a valid file name on this system"
+        ))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
