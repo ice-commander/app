@@ -348,9 +348,6 @@ pub fn setup_column_view(
                 crate::utils::FileIcon::Resource(res) => {
                     image_wg.set_property("resource", res);
                 }
-                crate::utils::FileIcon::IconName(icon) => {
-                    image_wg.set_icon_name(Some(&icon));
-                }
                 crate::utils::FileIcon::GeneratedSvg(svg) => {
                     if let Some(p) = generated_svg_paintable(svg, icon_px) {
                         image_wg.set_paintable(Some(&p));
@@ -809,9 +806,6 @@ pub fn create_grid_factory(
             match crate::utils::get_file_icon(&name, is_dir, svg_size_u32, item.permissions()) {
                 crate::utils::FileIcon::Resource(res) => {
                     set_fixed_resource_icon(&picture_wg, &res, svg_size_u32);
-                }
-                crate::utils::FileIcon::IconName(_) => {
-                    set_fixed_resource_icon(&picture_wg, "/com/fm-ui/gtk/file.svg", svg_size_u32);
                 }
                 crate::utils::FileIcon::GeneratedSvg(svg) => {
                     if let Some(p) = generated_svg_paintable(svg, svg_size_u32 as i32) {

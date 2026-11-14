@@ -163,13 +163,10 @@ pub fn update_status_bar_text(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FileIcon {
     Resource(String),
-    IconName(String),
     GeneratedSvg(String),
 }
 
 pub fn get_file_icon(name: &str, is_dir: bool, size: u32, permissions: Option<u32>) -> FileIcon {
-    let resource_size = size;
-
     if is_dir {
         return FileIcon::Resource("/com/fm-ui/gtk/folder.svg".to_string());
     }
@@ -228,16 +225,16 @@ pub fn get_file_icon(name: &str, is_dir: bool, size: u32, permissions: Option<u3
                 crate::icon_generator::FileType::Executable,
                 "APK".to_string(),
             )),
-            "exe" => Some((
+            "exe" | "bat" => Some((
                 crate::icon_generator::FileType::Executable,
-                "EXE".to_string(),
+                ext.to_uppercase(),
             )),
             "dll" => Some((
                 crate::icon_generator::FileType::Developer,
                 "DLL".to_string(),
             )),
             _ => {
-                if let Some(mode) = permissions {
+                if let Some(mode) = permissions.filter(|_| !cfg!(windows)) {
                     if (mode & 0o111) != 0 {
                         Some((
                             crate::icon_generator::FileType::Executable,
@@ -257,27 +254,7 @@ pub fn get_file_icon(name: &str, is_dir: bool, size: u32, permissions: Option<u3
         let svg = crate::icon_generator::generate_svg_icon(&text, file_type, size);
         FileIcon::GeneratedSvg(svg)
     } else {
-        if resource_size == 30 {
-            let icon = match ext.as_str() {
-                "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" | "nef" | "cr2" | "cr3" | "arw"
-                | "dng" | "raf" | "orf" | "rw2" | "pef" => "image-x-generic",
-                "mp4" | "mkv" | "avi" | "webm" | "mov" => "video-x-generic",
-                "mp3" | "wav" | "ogg" | "flac" => "audio-x-generic",
-                "rs" | "js" | "ts" | "html" | "css" | "json" | "toml" | "yml" | "txt" | "ini" => {
-                    "text-x-script"
-                }
-                "pdf" => "application-pdf",
-                "exe" | "sh" | "bash" | "bin" => "application-x-executable",
-                _ => "text-x-generic",
-            };
-            if icon == "text-x-generic" || icon == "text-x-script" {
-                FileIcon::Resource("/com/fm-ui/gtk/file.svg".to_string())
-            } else {
-                FileIcon::IconName(icon.to_string())
-            }
-        } else {
-            FileIcon::Resource("/com/fm-ui/gtk/file.svg".to_string())
-        }
+        FileIcon::Resource("/com/fm-ui/gtk/file.svg".to_string())
     }
 }
 
@@ -598,30 +575,37 @@ mod tests {
     }
 
     #[test]
-    fn themed_icon_names_are_used_only_at_list_size() {
-        assert_eq!(
-            get_file_icon("clip.webm", false, LIST_SIZE, None),
-            FileIcon::IconName("video-x-generic".to_string())
-        );
-        assert_eq!(
-            get_file_icon("clip.webm", false, 80, None),
-            FileIcon::Resource(FILE_RES.to_string())
-        );
-        assert_eq!(
-            get_file_icon("clip.webm", false, 25, None),
-            FileIcon::Resource(FILE_RES.to_string())
-        );
+    fn unknown_extensions_get_the_plain_file_icon_at_every_size() {
+        for size in [25, LIST_SIZE, 80] {
+            assert_eq!(
+                get_file_icon("clip.webm", false, size, None),
+                FileIcon::Resource(FILE_RES.to_string())
+            );
+            assert_eq!(
+                get_file_icon("data.bin", false, size, Some(0o644)),
+                FileIcon::Resource(FILE_RES.to_string())
+            );
+        }
     }
 
     #[test]
-    fn shell_scripts_without_the_executable_bit_use_the_theme_executable_icon() {
+    fn the_executable_bit_marks_an_unknown_file_red_except_on_windows() {
+        let marked = get_file_icon("run.sh", false, LIST_SIZE, Some(0o755));
+        if cfg!(windows) {
+            assert_eq!(marked, FileIcon::Resource(FILE_RES.to_string()));
+        } else {
+            assert_eq!(
+                marked,
+                FileIcon::GeneratedSvg(generate_svg_icon("BIN", FileType::Executable, LIST_SIZE))
+            );
+        }
         assert_eq!(
             get_file_icon("run.sh", false, LIST_SIZE, None),
-            FileIcon::IconName("application-x-executable".to_string())
+            FileIcon::Resource(FILE_RES.to_string())
         );
         assert_eq!(
-            get_file_icon("run.sh", false, LIST_SIZE, Some(0o755)),
-            FileIcon::GeneratedSvg(generate_svg_icon("BIN", FileType::Executable, LIST_SIZE))
+            get_file_icon("setup.bat", false, LIST_SIZE, None),
+            FileIcon::GeneratedSvg(generate_svg_icon("BAT", FileType::Executable, LIST_SIZE))
         );
     }
 }
